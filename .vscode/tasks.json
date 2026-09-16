@@ -1,0 +1,97 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build PMUX Plugin",
+            "type": "shell",
+            "command": "yosys-config",
+            "args": [
+                "--build",
+                "build/pmux_opt.so",
+                "src/pmux_opt.cc"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "Run PMUX Tcl Test",
+            "type": "shell",
+            "command": "yosys",
+            "args": [
+                "-m",
+                "./build/pmux_opt.so",
+                "-c",
+                "scripts/test_pmux.tcl"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run EQY Self Check",
+            "type": "shell",
+            "command": "eqy",
+            "args": [
+                "-f",
+                "formal/pmux_self.eqy"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Generate PMUX Stats",
+            "type": "shell",
+            "command": "yosys",
+            "args": [
+                "-s",
+                "scripts/stat_pmux.ys"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Measure PMUX Performance",
+            "type": "shell",
+            "command": "/usr/bin/time",
+            "args": [
+                "-v",
+                "-o",
+                "results/pmux_perf.txt",
+                "yosys",
+                "-m",
+                "./build/pmux_opt.so",
+                "-c",
+                "scripts/test_pmux.tcl"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "PMUX Full Check",
+            "dependsOn": [
+                "Build PMUX Plugin",
+                "Run PMUX Tcl Test",
+                "Run EQY Self Check",
+                "Generate PMUX Stats",
+                "Measure PMUX Performance"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        }
+    ]
+}

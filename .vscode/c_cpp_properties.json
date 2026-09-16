@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "WSL-Yosys",
+            "compilerPath": "/usr/bin/g++",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/fpga/eda/yosys/build/share/include"
+            ],
+            "defines": [],
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
