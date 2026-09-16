@@ -1,0 +1,6 @@
+read_verilog -sv tests/pmux_basic.sv
+hierarchy -check -top pmux_basic
+proc
+opt_clean
+
+tee -o results/pmux_stat.json stat -json

@@ -1,0 +1,26 @@
+# C/C++ and Yosys build products
+build/
+*.so
+*.o
+
+# Generated test results
+results/
+
+# EQY generated work directories
+pmux_self/
+*_work/
+
+# Logs
+*.log
+
+# Simulation output
+*.vcd
+*.fst
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary/editor files
+*~
+*.swp

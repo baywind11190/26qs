@@ -1,0 +1,11 @@
+[gold]
+read_verilog -sv tests/pmux_basic.sv
+prep -top pmux_basic
+
+[gate]
+read_verilog -sv tests/pmux_basic.sv
+prep -top pmux_basic
+
+[strategy simple]
+use sat
+depth 5
