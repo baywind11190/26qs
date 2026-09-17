@@ -1,0 +1,13 @@
+[gold]
+read_verilog tests/pair_swap_probe.sv
+read_verilog tests/pair_gold_wrap.sv
+prep -top pair_probe
+
+[gate]
+read_verilog tests/pair_swap_probe.sv
+read_verilog tests/pair_gate_wrap.sv
+prep -top pair_probe
+
+[strategy simple]
+use sat
+depth 5

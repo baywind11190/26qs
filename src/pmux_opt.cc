@@ -4,6 +4,7 @@
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
+
 struct SelectorCondition
 {
     bool valid = false;
@@ -11,305 +12,1306 @@ struct SelectorCondition
     RTLIL::Const value;
 };
 
+
+struct PmuxInfo
+{
+    RTLIL::Cell *cell = nullptr;
+
+    int width = 0;
+    int s_width = 0;
+    int ctrl_width = 0;
+
+    RTLIL::SigSpec port_a;
+    RTLIL::SigSpec port_b;
+    RTLIL::SigSpec port_s;
+    RTLIL::SigSpec port_y;
+
+    RTLIL::SigSpec control;
+
+    std::vector<SelectorCondition> conditions;
+
+    bool selector_bank_valid = false;
+    bool full_decode = false;
+
+    // control value -> 原 PMUX branch index
+    std::vector<int> branch_for_value;
+};
+
+
+struct PairSwapCandidate
+{
+    // members[] 中的下标
+    int member_a = -1;
+    int member_b = -1;
+
+    int swapped_pairs = 0;
+
+    // 不满足 pair-swap 的 even state
+    std::vector<int> special_even_values;
+};
+
+
 struct PmuxOptPass : public Pass
 {
     PmuxOptPass()
-        : Pass("pmux_opt", "inspect and optimize $pmux cells")
+        : Pass(
+            "pmux_opt",
+            "optimize shared-selector PMUX pair-swap structures")
     {
     }
+
 
     void help() override
     {
         log("\n");
         log("    pmux_opt [selection]\n");
         log("\n");
-        log("Inspect $pmux cells in the current design.\n");
-        log("Current version also detects repeated B input slices.\n");
+        log("Detect shared-selector $pmux groups and optimize\n");
+        log("pair-swap structures across two PMUX cells.\n");
+        log("\n");
+        log("Recommended flow:\n");
+        log("    proc\n");
+        log("    opt\n");
+        log("    pmux_opt\n");
         log("\n");
     }
 
-    void execute(std::vector<std::string> args,
-                 RTLIL::Design *design) override
+
+    void execute(
+        std::vector<std::string> args,
+        RTLIL::Design *design) override
     {
-        log_header(design, "Executing PMUX_OPT pass.\n");
+        log_header(
+            design,
+            "Executing PMUX_OPT pair-swap optimization.\n");
 
         extra_args(args, 1, design);
 
-        int pmux_count = 0;
+        int total_pmux = 0;
+        int total_groups = 0;
+        int total_pair_candidates = 0;
+        int total_pair_rebuilt = 0;
+
 
         for (auto module : design->selected_modules())
         {
-            // SigMap 用于把等价的连线规范到统一表示。
             SigMap sigmap(module);
-dict<RTLIL::SigBit, RTLIL::Cell *> driver_map;
 
-for (auto driver_cell : module->cells())
-{
-    for (auto &conn : driver_cell->connections())
-    {
-        if (!driver_cell->output(conn.first))
-            continue;
+            /*
+             * ==================================================
+             * 建立：
+             *
+             * signal bit -> driver cell
+             * ==================================================
+             */
+            dict<RTLIL::SigBit, RTLIL::Cell *> driver_map;
 
-        RTLIL::SigSpec output_sig =
-            sigmap(conn.second);
+            for (auto driver_cell : module->cells())
+            {
+                for (auto &conn :
+                     driver_cell->connections())
+                {
+                    if (!driver_cell->output(conn.first))
+                        continue;
 
-        for (auto bit : output_sig)
-            driver_map[bit] = driver_cell;
-    }
-}
+                    RTLIL::SigSpec output =
+                        sigmap(conn.second);
+
+                    for (auto bit : output)
+                        driver_map[bit] =
+                            driver_cell;
+                }
+            }
+
+
+            /*
+             * ==================================================
+             * 第一部分
+             *
+             * 分析每一个 $pmux
+             * ==================================================
+             */
+            std::vector<PmuxInfo> pmux_infos;
+
             for (auto cell : module->selected_cells())
             {
                 if (cell->type != ID($pmux))
                     continue;
 
-                pmux_count++;
+                total_pmux++;
 
-                int width =
+                PmuxInfo info;
+
+                info.cell = cell;
+
+                info.width =
                     cell->getParam(ID::WIDTH).as_int();
 
-                int s_width =
+                info.s_width =
                     cell->getParam(ID::S_WIDTH).as_int();
 
-                RTLIL::SigSpec port_a =
+                info.port_a =
                     cell->getPort(ID::A);
 
-                RTLIL::SigSpec port_b =
+                info.port_b =
                     cell->getPort(ID::B);
 
-                RTLIL::SigSpec port_s =
+                info.port_s =
                     cell->getPort(ID::S);
 
-                RTLIL::SigSpec port_y =
+                info.port_y =
                     cell->getPort(ID::Y);
 
-                log("\n");
-                log("Found $pmux\n");
-                log("  module   : %s\n",
-                    log_id(module));
-                log("  cell     : %s\n",
-                    log_id(cell));
-                log("  WIDTH    : %d\n",
-                    width);
-                log("  S_WIDTH  : %d\n",
-                    s_width);
+                info.conditions.resize(
+                    info.s_width);
 
-                log("  A        : %s\n",
-                    log_signal(port_a));
 
-                log("  Y        : %s\n",
-                    log_signal(port_y));
-
-                // 保存不同的 B 数据值。
-                std::vector<RTLIL::SigSpec> group_values;
-
-                // 保存每一种 B 数据值对应哪些 input。
-                std::vector<std::vector<int>> group_indices;
-
-                std::vector<SelectorCondition> selector_conditions(s_width);
-                for (int i = 0; i < s_width; i++)
+                /*
+                 * ----------------------------------------------
+                 * 解析每个 S[i]
+                 * ----------------------------------------------
+                 */
+                for (int i = 0;
+                     i < info.s_width;
+                     i++)
                 {
                     RTLIL::SigSpec s_bit =
-                        port_s.extract(i, 1);
-                        RTLIL::SigSpec normalized_s =
-    sigmap(s_bit);
+                        sigmap(
+                            info.port_s.extract(
+                                i,
+                                1));
 
-RTLIL::Cell *driver = nullptr;
+                    if (s_bit.size() != 1)
+                        continue;
 
-if (normalized_s.size() == 1)
-{
-    RTLIL::SigBit key =
-        normalized_s.as_bit();
+                    auto it =
+                        driver_map.find(
+                            s_bit.as_bit());
 
-    auto it = driver_map.find(key);
+                    if (it == driver_map.end())
+                        continue;
 
-    if (it != driver_map.end())
-        driver = it->second;
-}
+                    RTLIL::Cell *driver =
+                        it->second;
 
-                    RTLIL::SigSpec b_slice =
-                        port_b.extract(i * width, width);
 
-                    log("  input[%d]\n", i);
-                    log("    S[%d]   : %s\n",
-                        i,
-                        log_signal(s_bit));
-                        if (driver != nullptr)
-{
-    log("    driver : %s (%s)\n",
-        log_id(driver),
-        log_id(driver->type));
-
-    if (driver->type == ID($eq))
-    {
-        RTLIL::SigSpec cond_a =
-            sigmap(driver->getPort(ID::A));
-
-        RTLIL::SigSpec cond_b =
-            sigmap(driver->getPort(ID::B));
-
-        log("    cond A : %s\n",
-            log_signal(cond_a));
-
-        log("    cond B : %s\n",
-            log_signal(cond_b));
-            if (!cond_a.is_fully_const() &&
-    cond_b.is_fully_const())
-{
-    selector_conditions[i].valid = true;
-    selector_conditions[i].signal = cond_a;
-    selector_conditions[i].value =
-        cond_b.as_const();
-}
-else if (cond_a.is_fully_const() &&
-         !cond_b.is_fully_const())
-{
-    selector_conditions[i].valid = true;
-    selector_conditions[i].signal = cond_b;
-    selector_conditions[i].value =
-        cond_a.as_const();
-}
-    }
-    else if (driver->type == ID($logic_not))
-    {
-        RTLIL::SigSpec cond_a =
-            sigmap(driver->getPort(ID::A));
-
-        log("    cond A : %s\n",
-            log_signal(cond_a));
-
-        log("    cond B : zero\n");
-        if (!cond_a.is_fully_const())
-{
-    selector_conditions[i].valid = true;
-    selector_conditions[i].signal = cond_a;
-    selector_conditions[i].value =
-        RTLIL::Const(0, cond_a.size());
-}
-    }
-}
-else
-{
-    log("    driver : <not found>\n");
-}
-
-                    log("    B[%d:%d]: %s\n",
-                        i * width + width - 1,
-                        i * width,
-                        log_signal(b_slice));
-
-                    // 将信号规范化，便于比较两个 B 是否实际上相同。
-                    RTLIL::SigSpec normalized_b =
-                        sigmap(b_slice);
-
-                    int group_id = -1;
-
-                    // 查找之前是否已经出现过相同的 B。
-                    for (int g = 0;
-                         g < int(group_values.size());
-                         g++)
+                    /*
+                     * selector = control == constant
+                     */
+                    if (driver->type == ID($eq))
                     {
-                        if (group_values[g] == normalized_b)
+                        RTLIL::SigSpec cond_a =
+                            sigmap(
+                                driver->getPort(ID::A));
+
+                        RTLIL::SigSpec cond_b =
+                            sigmap(
+                                driver->getPort(ID::B));
+
+
+                        if (!cond_a.is_fully_const() &&
+                            cond_b.is_fully_const())
                         {
-                            group_id = g;
-                            break;
+                            info.conditions[i].valid =
+                                true;
+
+                            info.conditions[i].signal =
+                                cond_a;
+
+                            info.conditions[i].value =
+                                cond_b.as_const();
+                        }
+                        else if (
+                            cond_a.is_fully_const() &&
+                            !cond_b.is_fully_const())
+                        {
+                            info.conditions[i].valid =
+                                true;
+
+                            info.conditions[i].signal =
+                                cond_b;
+
+                            info.conditions[i].value =
+                                cond_a.as_const();
                         }
                     }
 
-                    // 第一次出现这种 B，就新建一组。
-                    if (group_id == -1)
-                    {
-                        group_values.push_back(normalized_b);
-                        group_indices.push_back(
-                            std::vector<int>());
 
-                        group_id =
-                            int(group_values.size()) - 1;
+                    /*
+                     * selector = !control
+                     *
+                     * 多位 control 时：
+                     *
+                     * !control
+                     *
+                     * 等价于：
+                     *
+                     * control == 0
+                     */
+                    else if (
+                        driver->type ==
+                        ID($logic_not))
+                    {
+                        RTLIL::SigSpec cond_a =
+                            sigmap(
+                                driver->getPort(ID::A));
+
+                        if (!cond_a.is_fully_const())
+                        {
+                            info.conditions[i].valid =
+                                true;
+
+                            info.conditions[i].signal =
+                                cond_a;
+
+                            info.conditions[i].value =
+                                RTLIL::Const(
+                                    0,
+                                    cond_a.size());
+                        }
+                    }
+                }
+
+
+                /*
+                 * ----------------------------------------------
+                 * 所有 selector 必须来自同一个 control
+                 * ----------------------------------------------
+                 */
+                bool valid = true;
+                bool first = true;
+
+                for (int i = 0;
+                     i < info.s_width;
+                     i++)
+                {
+                    const auto &cond =
+                        info.conditions[i];
+
+                    if (!cond.valid)
+                    {
+                        valid = false;
+                        break;
                     }
 
-                    group_indices[group_id].push_back(i);
+                    if (first)
+                    {
+                        info.control =
+                            cond.signal;
+
+                        first = false;
+                    }
+                    else if (
+                        cond.signal !=
+                        info.control)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    if (cond.value.size() !=
+                        info.control.size())
+                    {
+                        valid = false;
+                        break;
+                    }
                 }
 
-                log("  Duplicate B analysis:\n");
+                info.selector_bank_valid =
+                    valid;
 
-                int duplicate_groups = 0;
+                if (valid)
+                    info.ctrl_width =
+                        info.control.size();
 
-                for (int g = 0;
-     g < int(group_values.size());
-     g++)
-{
-    if (group_indices[g].size() < 2)
-        continue;
 
-    duplicate_groups++;
-
-    log("    value %s appears in inputs:",
-        log_signal(group_values[g]));
-
-    for (int index : group_indices[g])
-        log(" %d", index);
-
-    log("\n");
-
-    bool mutually_exclusive = true;
-    bool first_condition = true;
-
-    RTLIL::SigSpec common_signal;
-    std::vector<RTLIL::Const> seen_values;
-
-    for (int index : group_indices[g])
-    {
-        const auto &cond =
-            selector_conditions[index];
-
-        if (!cond.valid)
-        {
-            mutually_exclusive = false;
-            break;
-        }
-
-        if (first_condition)
-        {
-            common_signal = cond.signal;
-            first_condition = false;
-        }
-        else if (cond.signal != common_signal)
-        {
-            mutually_exclusive = false;
-            break;
-        }
-
-        for (const auto &value : seen_values)
-        {
-            if (value == cond.value)
-            {
-                mutually_exclusive = false;
-                break;
-            }
-        }
-
-        if (!mutually_exclusive)
-            break;
-
-        seen_values.push_back(cond.value);
-    }
-
-    if (mutually_exclusive)
-        log("    mutual exclusion: PROVED\n");
-    else
-        log("    mutual exclusion: NOT PROVED\n");
-}
-
-                if (duplicate_groups == 0)
+                /*
+                 * ----------------------------------------------
+                 * 判断是否完整覆盖：
+                 *
+                 * 0 ... 2^k - 1
+                 * ----------------------------------------------
+                 */
+                if (valid &&
+                    info.ctrl_width > 0 &&
+                    info.ctrl_width < 31)
                 {
-                    log("    No duplicate B groups.\n");
+                    int expected_choices =
+                        1 << info.ctrl_width;
+
+                    if (info.s_width ==
+                        expected_choices)
+                    {
+                        info.branch_for_value.assign(
+                            expected_choices,
+                            -1);
+
+                        bool full = true;
+
+                        for (int branch = 0;
+                             branch <
+                             info.s_width;
+                             branch++)
+                        {
+                            bool matched = false;
+
+                            for (int value = 0;
+                                 value <
+                                 expected_choices;
+                                 value++)
+                            {
+                                RTLIL::Const
+                                    expected_value(
+                                        value,
+                                        info.ctrl_width);
+
+                                if (info.
+                                        conditions[branch].
+                                        value ==
+                                    expected_value)
+                                {
+                                    if (info.
+                                            branch_for_value[
+                                                value] !=
+                                        -1)
+                                    {
+                                        full = false;
+                                        break;
+                                    }
+
+                                    info.
+                                        branch_for_value[
+                                            value] =
+                                        branch;
+
+                                    matched = true;
+                                    break;
+                                }
+                            }
+
+                            if (!matched)
+                            {
+                                full = false;
+                                break;
+                            }
+
+                            if (!full)
+                                break;
+                        }
+
+
+                        if (full)
+                        {
+                            for (int value = 0;
+                                 value <
+                                 expected_choices;
+                                 value++)
+                            {
+                                if (info.
+                                        branch_for_value[
+                                            value] ==
+                                    -1)
+                                {
+                                    full = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        info.full_decode =
+                            full;
+                    }
                 }
+
+
+                pmux_infos.push_back(
+                    info);
+            }
+
+
+            /*
+             * ==================================================
+             * 第二部分
+             *
+             * 找 shared-selector group
+             * ==================================================
+             */
+            std::vector<bool> grouped(
+                pmux_infos.size(),
+                false);
+
+            for (int i = 0;
+                 i < int(pmux_infos.size());
+                 i++)
+            {
+                if (grouped[i])
+                    continue;
+
+                if (!pmux_infos[i].
+                        selector_bank_valid ||
+                    !pmux_infos[i].
+                        full_decode)
+                    continue;
+
+
+                std::vector<int> members;
+
+                members.push_back(i);
+
+
+                for (int j = i + 1;
+                     j < int(pmux_infos.size());
+                     j++)
+                {
+                    if (grouped[j])
+                        continue;
+
+                    if (!pmux_infos[j].
+                            selector_bank_valid ||
+                        !pmux_infos[j].
+                            full_decode)
+                        continue;
+
+                    if (pmux_infos[j].
+                            ctrl_width !=
+                        pmux_infos[i].
+                            ctrl_width)
+                        continue;
+
+                    if (pmux_infos[j].
+                            control !=
+                        pmux_infos[i].
+                            control)
+                        continue;
+
+                    members.push_back(j);
+                }
+
+
+                if (members.size() < 2)
+                    continue;
+
+
+                for (int index : members)
+                    grouped[index] = true;
+
+
+                total_groups++;
+
+                auto &base =
+                    pmux_infos[
+                        members[0]];
+
+                int choices =
+                    1 << base.ctrl_width;
+
+                int pair_count =
+                    choices / 2;
+
+
+                log("\n");
+                log(
+                    "========================================\n");
+
+                log(
+                    "SHARED SELECTOR GROUP %d\n",
+                    total_groups);
+
+                log(
+                    "  control    : %s\n",
+                    log_signal(
+                        base.control));
+
+                log(
+                    "  ctrl_width : %d\n",
+                    base.ctrl_width);
+
+                log(
+                    "  choices    : %d\n",
+                    choices);
+
+                log(
+                    "  members    : %zu\n",
+                    members.size());
+
+
+                for (int m = 0;
+                     m <
+                     int(members.size());
+                     m++)
+                {
+                    auto &info =
+                        pmux_infos[
+                            members[m]];
+
+                    log(
+                        "    member[%d] : %s WIDTH=%d\n",
+                        m,
+                        log_id(info.cell),
+                        info.width);
+                }
+
+
+                /*
+                 * ==================================================
+                 * 第三部分
+                 *
+                 * 找 pair-swap candidate
+                 * ==================================================
+                 */
+                std::vector<PairSwapCandidate>
+                    candidates;
+
+
+                for (int a = 0;
+                     a < int(members.size());
+                     a++)
+                {
+                    for (int b = a + 1;
+                         b <
+                         int(members.size());
+                         b++)
+                    {
+                        auto &info_a =
+                            pmux_infos[
+                                members[a]];
+
+                        auto &info_b =
+                            pmux_infos[
+                                members[b]];
+
+
+                        /*
+                         * 目前只优化同宽 PMUX。
+                         */
+                        if (info_a.width !=
+                            info_b.width)
+                            continue;
+
+
+                        /*
+                         * 至少需要：
+                         *
+                         * control[0]
+                         * +
+                         * 一个更高位
+                         */
+                        if (base.ctrl_width < 2)
+                            continue;
+
+
+                        int swapped_pairs = 0;
+
+                        std::vector<int>
+                            special_even_values;
+
+
+                        for (int pair = 0;
+                             pair <
+                             pair_count;
+                             pair++)
+                        {
+                            int even_value =
+                                pair * 2;
+
+                            int odd_value =
+                                even_value + 1;
+
+
+                            int a_even_branch =
+                                info_a.
+                                    branch_for_value[
+                                        even_value];
+
+                            int a_odd_branch =
+                                info_a.
+                                    branch_for_value[
+                                        odd_value];
+
+                            int b_even_branch =
+                                info_b.
+                                    branch_for_value[
+                                        even_value];
+
+                            int b_odd_branch =
+                                info_b.
+                                    branch_for_value[
+                                        odd_value];
+
+
+                            RTLIL::SigSpec a_even =
+                                sigmap(
+                                    info_a.port_b.extract(
+                                        a_even_branch *
+                                            info_a.width,
+                                        info_a.width));
+
+                            RTLIL::SigSpec a_odd =
+                                sigmap(
+                                    info_a.port_b.extract(
+                                        a_odd_branch *
+                                            info_a.width,
+                                        info_a.width));
+
+                            RTLIL::SigSpec b_even =
+                                sigmap(
+                                    info_b.port_b.extract(
+                                        b_even_branch *
+                                            info_b.width,
+                                        info_b.width));
+
+                            RTLIL::SigSpec b_odd =
+                                sigmap(
+                                    info_b.port_b.extract(
+                                        b_odd_branch *
+                                            info_b.width,
+                                        info_b.width));
+
+
+                            bool swapped =
+                                (a_even == b_odd) &&
+                                (b_even == a_odd);
+
+
+                            if (swapped)
+                            {
+                                swapped_pairs++;
+                            }
+                            else
+                            {
+                                special_even_values.
+                                    push_back(
+                                        even_value);
+                            }
+                        }
+
+
+                        /*
+                         * --------------------------------------------------
+                         * 当前第一版真正优化规则：
+                         *
+                         * 1. 至少 75% pair 满足 swap
+                         * 2. 最多只允许 1 个 special pair
+                         *
+                         * test1:
+                         *
+                         * 7 / 8 swap
+                         * special = state 0
+                         * --------------------------------------------------
+                         */
+                        bool profitable_pattern =
+                            swapped_pairs >= 2 &&
+                            swapped_pairs * 4 >=
+                                pair_count * 3 &&
+                            special_even_values.
+                                size() <= 1;
+
+
+                        if (!profitable_pattern)
+                            continue;
+
+
+                        PairSwapCandidate candidate;
+
+                        candidate.member_a = a;
+                        candidate.member_b = b;
+
+                        candidate.swapped_pairs =
+                            swapped_pairs;
+
+                        candidate.
+                            special_even_values =
+                            special_even_values;
+
+                        candidates.push_back(
+                            candidate);
+
+                        total_pair_candidates++;
+
+
+                        log("\n");
+                        log(
+                            "PAIR-SWAP CANDIDATE\n");
+
+                        log(
+                            "  A             : %s\n",
+                            log_id(info_a.cell));
+
+                        log(
+                            "  B             : %s\n",
+                            log_id(info_b.cell));
+
+                        log(
+                            "  data_width    : %d\n",
+                            info_a.width);
+
+                        log(
+                            "  swapped_pairs : %d / %d\n",
+                            swapped_pairs,
+                            pair_count);
+
+                        log(
+                            "  special_pairs : %zu\n",
+                            special_even_values.
+                                size());
+
+                        if (!special_even_values.
+                                empty())
+                        {
+                            log(
+                                "  special even states:");
+
+                            for (int value :
+                                 special_even_values)
+                                log(
+                                    " %d",
+                                    value);
+
+                            log("\n");
+                        }
+                    }
+                }
+
+
+                /*
+                 * ==================================================
+                 * 第四部分
+                 *
+                 * 真正执行 pair-swap rebuilding
+                 * ==================================================
+                 *
+                 * 同一个 PMUX 一次只能参加一个 pair。
+                 */
+                std::vector<bool> member_used(
+                    members.size(),
+                    false);
+
+
+                for (const auto &candidate :
+                     candidates)
+                {
+                    int a =
+                        candidate.member_a;
+
+                    int b =
+                        candidate.member_b;
+
+
+                    if (member_used[a] ||
+                        member_used[b])
+                        continue;
+
+
+                    auto &info_a =
+                        pmux_infos[
+                            members[a]];
+
+                    auto &info_b =
+                        pmux_infos[
+                            members[b]];
+
+
+                    int width =
+                        info_a.width;
+
+
+                    RTLIL::IdString
+                        old_name_a =
+                            info_a.cell->name;
+
+                    RTLIL::IdString
+                        old_name_b =
+                            info_b.cell->name;
+
+
+                    /*
+                     * --------------------------------------------------
+                     * helper 1
+                     *
+                     * 两根 selector 做 OR
+                     *
+                     * high_sel[p] =
+                     * S[2p] | S[2p+1]
+                     *
+                     * 表示：
+                     *
+                     * control[高位] == p
+                     * --------------------------------------------------
+                     */
+                    auto make_selector_or =
+                        [&](RTLIL::SigSpec s0,
+                            RTLIL::SigSpec s1)
+                        -> RTLIL::SigSpec
+                    {
+                        RTLIL::SigSpec inputs;
+
+                        inputs.append(s0);
+                        inputs.append(s1);
+
+                        RTLIL::Wire *wire =
+                            module->addWire(
+                                NEW_ID,
+                                1);
+
+                        RTLIL::Cell *cell =
+                            module->addCell(
+                                NEW_ID,
+                                ID($reduce_or));
+
+                        cell->setParam(
+                            ID::A_SIGNED,
+                            0);
+
+                        cell->setParam(
+                            ID::A_WIDTH,
+                            2);
+
+                        cell->setParam(
+                            ID::Y_WIDTH,
+                            1);
+
+                        cell->setPort(
+                            ID::A,
+                            inputs);
+
+                        cell->setPort(
+                            ID::Y,
+                            RTLIL::SigSpec(
+                                wire));
+
+                        return RTLIL::SigSpec(
+                            wire);
+                    };
+
+
+                    /*
+                     * --------------------------------------------------
+                     * helper 2
+                     *
+                     * 创建普通 2:1 $mux
+                     * --------------------------------------------------
+                     */
+                    auto make_mux =
+                        [&](RTLIL::SigSpec in_a,
+                            RTLIL::SigSpec in_b,
+                            RTLIL::SigSpec select)
+                        -> RTLIL::SigSpec
+                    {
+                        RTLIL::Wire *wire =
+                            module->addWire(
+                                NEW_ID,
+                                width);
+
+                        RTLIL::Cell *cell =
+                            module->addCell(
+                                NEW_ID,
+                                ID($mux));
+
+                        cell->setParam(
+                            ID::WIDTH,
+                            width);
+
+                        cell->setPort(
+                            ID::A,
+                            in_a);
+
+                        cell->setPort(
+                            ID::B,
+                            in_b);
+
+                        cell->setPort(
+                            ID::S,
+                            select);
+
+                        cell->setPort(
+                            ID::Y,
+                            RTLIL::SigSpec(
+                                wire));
+
+                        return RTLIL::SigSpec(
+                            wire);
+                    };
+
+
+                    /*
+                     * --------------------------------------------------
+                     * helper 3
+                     *
+                     * 创建共享 selector 的 PMUX。
+                     * --------------------------------------------------
+                     */
+                    auto make_pmux =
+                        [&](RTLIL::SigSpec data_b,
+                            RTLIL::SigSpec selectors)
+                        -> RTLIL::SigSpec
+                    {
+                        RTLIL::Wire *wire =
+                            module->addWire(
+                                NEW_ID,
+                                width);
+
+                        RTLIL::Cell *cell =
+                            module->addCell(
+                                NEW_ID,
+                                ID($pmux));
+
+                        cell->setParam(
+                            ID::WIDTH,
+                            width);
+
+                        cell->setParam(
+                            ID::S_WIDTH,
+                            selectors.size());
+
+                        RTLIL::SigSpec undef_data =
+                            RTLIL::Const(
+                                State::Sx,
+                                width);
+
+                        cell->setPort(
+                            ID::A,
+                            undef_data);
+
+                        cell->setPort(
+                            ID::B,
+                            data_b);
+
+                        cell->setPort(
+                            ID::S,
+                            selectors);
+
+                        cell->setPort(
+                            ID::Y,
+                            RTLIL::SigSpec(
+                                wire));
+
+                        return RTLIL::SigSpec(
+                            wire);
+                    };
+
+
+                    /*
+                     * ==================================================
+                     * A/B 原来各自是 16 路。
+                     *
+                     * 现在先把：
+                     *
+                     * state 0/1
+                     * state 2/3
+                     * ...
+                     *
+                     * 合并成 8 组。
+                     * ==================================================
+                     */
+                    RTLIL::SigSpec high_selectors;
+
+                    RTLIL::SigSpec pair_x_data;
+                    RTLIL::SigSpec pair_y_data;
+
+
+                    for (int pair = 0;
+                         pair < pair_count;
+                         pair++)
+                    {
+                        int even_value =
+                            pair * 2;
+
+                        int odd_value =
+                            even_value + 1;
+
+
+                        /*
+                         * 用 A PMUX 的 selector bank
+                         * 生成 pair selector。
+                         */
+                        int even_branch =
+                            info_a.
+                                branch_for_value[
+                                    even_value];
+
+                        int odd_branch =
+                            info_a.
+                                branch_for_value[
+                                    odd_value];
+
+
+                        RTLIL::SigSpec even_s =
+                            info_a.port_s.extract(
+                                even_branch,
+                                1);
+
+                        RTLIL::SigSpec odd_s =
+                            info_a.port_s.extract(
+                                odd_branch,
+                                1);
+
+
+                        RTLIL::SigSpec pair_s =
+                            make_selector_or(
+                                even_s,
+                                odd_s);
+
+                        high_selectors.append(
+                            pair_s);
+
+
+                        /*
+                         * --------------------------------------------------
+                         * 用 odd state 的两个数据定义 pair。
+                         *
+                         * pair_x = B(odd)
+                         * pair_y = A(odd)
+                         *
+                         * 对正常 swap pair：
+                         *
+                         * even:
+                         *   A = pair_x
+                         *   B = pair_y
+                         *
+                         * odd:
+                         *   A = pair_y
+                         *   B = pair_x
+                         * --------------------------------------------------
+                         */
+                        int a_odd_branch =
+                            info_a.
+                                branch_for_value[
+                                    odd_value];
+
+                        int b_odd_branch =
+                            info_b.
+                                branch_for_value[
+                                    odd_value];
+
+
+                        RTLIL::SigSpec a_odd =
+                            info_a.port_b.extract(
+                                a_odd_branch *
+                                    width,
+                                width);
+
+                        RTLIL::SigSpec b_odd =
+                            info_b.port_b.extract(
+                                b_odd_branch *
+                                    width,
+                                width);
+
+
+                        pair_x_data.append(
+                            b_odd);
+
+                        pair_y_data.append(
+                            a_odd);
+                    }
+
+
+                    /*
+                     * 两个 8 路 PMUX：
+                     *
+                     * 根据 state[3:1]
+                     * 选择 pair_x / pair_y
+                     *
+                     * 两者共享完全相同的
+                     * high_selectors。
+                     */
+                    RTLIL::SigSpec pair_x =
+                        make_pmux(
+                            pair_x_data,
+                            high_selectors);
+
+                    RTLIL::SigSpec pair_y =
+                        make_pmux(
+                            pair_y_data,
+                            high_selectors);
+
+
+                    /*
+                     * control[0] 负责交换。
+                     *
+                     * control[0] = 0:
+                     *
+                     *   A = pair_x
+                     *   B = pair_y
+                     *
+                     * control[0] = 1:
+                     *
+                     *   A = pair_y
+                     *   B = pair_x
+                     */
+                    RTLIL::SigSpec swap_bit =
+                        info_a.control.extract(
+                            0,
+                            1);
+
+
+                    RTLIL::SigSpec final_a =
+                        make_mux(
+                            pair_x,
+                            pair_y,
+                            swap_bit);
+
+                    RTLIL::SigSpec final_b =
+                        make_mux(
+                            pair_y,
+                            pair_x,
+                            swap_bit);
+
+
+                    /*
+                     * ==================================================
+                     * 处理 special even state。
+                     *
+                     * test1 中只有：
+                     *
+                     * state = 0
+                     *
+                     * 这一对不是标准交换。
+                     * ==================================================
+                     */
+                    for (int even_value :
+                         candidate.
+                             special_even_values)
+                    {
+                        int a_even_branch =
+                            info_a.
+                                branch_for_value[
+                                    even_value];
+
+                        int b_even_branch =
+                            info_b.
+                                branch_for_value[
+                                    even_value];
+
+
+                        RTLIL::SigSpec special_s =
+                            info_a.port_s.extract(
+                                a_even_branch,
+                                1);
+
+
+                        RTLIL::SigSpec special_a =
+                            info_a.port_b.extract(
+                                a_even_branch *
+                                    width,
+                                width);
+
+                        RTLIL::SigSpec special_b =
+                            info_b.port_b.extract(
+                                b_even_branch *
+                                    width,
+                                width);
+
+
+                        final_a =
+                            make_mux(
+                                final_a,
+                                special_a,
+                                special_s);
+
+                        final_b =
+                            make_mux(
+                                final_b,
+                                special_b,
+                                special_s);
+                    }
+
+
+                    /*
+                     * 保存原输出。
+                     */
+                    RTLIL::SigSpec old_y_a =
+                        info_a.port_y;
+
+                    RTLIL::SigSpec old_y_b =
+                        info_b.port_y;
+
+
+                    /*
+                     * 删除原来的两个大 PMUX。
+                     */
+                    module->remove(
+                        info_a.cell);
+
+                    module->remove(
+                        info_b.cell);
+
+
+                    /*
+                     * 新结构接回原输出。
+                     */
+                    module->connect(
+                        old_y_a,
+                        final_a);
+
+                    module->connect(
+                        old_y_b,
+                        final_b);
+
+
+                    member_used[a] = true;
+                    member_used[b] = true;
+
+                    total_pair_rebuilt++;
+
+
+                    log("\n");
+
+                    log(
+                        "PAIR-SWAP REBUILT\n");
+
+                    log(
+                        "  A          : %s\n",
+                        log_id(old_name_a));
+
+                    log(
+                        "  B          : %s\n",
+                        log_id(old_name_b));
+
+                    log(
+                        "  old choices: %d + %d\n",
+                        choices,
+                        choices);
+
+                    log(
+                        "  new pair choices: %d\n",
+                        pair_count);
+
+                    log(
+                        "  swap bit   : control[0]\n");
+
+                    log(
+                        "  special    : %zu\n",
+                        candidate.
+                            special_even_values.
+                            size());
+                }
+
+
+                log(
+                    "========================================\n");
             }
         }
+
 
         log("\n");
-        log("Total $pmux cells: %d\n",
-            pmux_count);
+
+        log(
+            "Total $pmux cells: %d\n",
+            total_pmux);
+
+        log(
+            "Total shared-selector groups: %d\n",
+            total_groups);
+
+        log(
+            "Total pair-swap candidates: %d\n",
+            total_pair_candidates);
+
+        log(
+            "Total pair-swap rebuilt: %d\n",
+            total_pair_rebuilt);
     }
 } PmuxOptPass;
+
 
 PRIVATE_NAMESPACE_END

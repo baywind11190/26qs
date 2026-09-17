@@ -1,0 +1,23 @@
+[gold]
+read_verilog pmux_case/competition_case/test4/test4.v
+hierarchy -check -top test4
+proc
+opt
+memory_map
+opt
+prep -top test4
+
+[gate]
+plugin -i ./pmux_opt.so
+read_verilog pmux_case/competition_case/test4/test4.v
+hierarchy -check -top test4
+proc
+opt
+pmux_opt
+memory_map
+opt
+prep -top test4
+
+[strategy simple]
+use sat
+depth 5

@@ -1,0 +1,19 @@
+[gold]
+read_verilog pmux_case/competition_case/test1/test1.v
+hierarchy -check -top test1
+proc
+opt
+prep -top test1
+
+[gate]
+plugin -i ./pmux_opt.so
+read_verilog pmux_case/competition_case/test1/test1.v
+hierarchy -check -top test1
+proc
+opt
+pmux_opt
+prep -top test1
+
+[strategy simple]
+use sat
+depth 5
