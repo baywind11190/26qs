@@ -1,0 +1,13 @@
+[gold]
+read_verilog -sv pmux_case/competition_case/test4/test4.v
+prep -top test4
+memory_map
+
+[gate]
+read_verilog -sv pmux_case/competition_case/test4/test4.v
+prep -top test4
+memory_map
+
+[strategy simple]
+use sat
+depth 5

@@ -1,0 +1,11 @@
+[gold]
+read_verilog -sv pmux_case/competition_case/test2/test2.v
+prep -top test2
+
+[gate]
+read_verilog -sv pmux_case/competition_case/test2/test2.v
+prep -top test2
+
+[strategy simple]
+use sat
+depth 5

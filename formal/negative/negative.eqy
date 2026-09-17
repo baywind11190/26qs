@@ -1,0 +1,11 @@
+[gold]
+read_verilog -sv formal/negative/gold.v
+prep -top negative_test
+
+[gate]
+read_verilog -sv formal/negative/gate.v
+prep -top negative_test
+
+[strategy simple]
+use sat
+depth 5

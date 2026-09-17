@@ -24,3 +24,10 @@ __pycache__/
 # Temporary/editor files
 *~
 *.swp
+
+# EQY generated competition/negative work directories
+/test1/
+/test2/
+/test3/
+/test4/
+/negative/
