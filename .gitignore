@@ -24,3 +24,5 @@ __pycache__/
 # Temporary/editor files
 *~
 *.swp
+
+/test*_pairswap/
