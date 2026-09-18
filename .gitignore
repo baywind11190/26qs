@@ -29,3 +29,7 @@ __pycache__/
 
 /test*_branch_const/
 /check/
+/pmux_opt.so
+/results/pattern_a/
+/results/pattern_a_profitability/
+/results/pattern_b/
