@@ -135,7 +135,641 @@ struct PmuxOptPass : public Pass
                             driver_cell;
                 }
             }
+            /*
+ * ==================================================
+ * Pattern D 使用：
+ *
+ * signal bit -> consumer cells
+ *
+ * 与 driver_map 相反，用于从 comparator 输出向后
+ * 跟踪它是否只在 guard 条件下产生可观察影响。
+ * ==================================================
+ */
+dict<RTLIL::SigBit, std::vector<RTLIL::Cell *>> user_map;
 
+for (auto user_cell : module->cells())
+{
+    for (auto &conn : user_cell->connections())
+    {
+        if (!user_cell->input(conn.first))
+            continue;
+
+        RTLIL::SigSpec input =
+            sigmap(conn.second);
+
+        for (auto bit : input)
+            user_map[bit].push_back(user_cell);
+    }
+}
+/*
+ * ==================================================
+ * Pattern D 安全保护：
+ *
+ * 记录所有直接可观察的 module output bit。
+ *
+ * 如果 comparator 输出本身、或者 PMUX 输出直接
+ * 接到模块输出，则不能依赖内部 DFFE guard 来缩窄。
+ * ==================================================
+ */
+pool<RTLIL::SigBit> module_output_bits;
+
+for (auto wire : module->wires())
+{
+    if (!wire->port_output)
+        continue;
+
+    RTLIL::SigSpec output =
+        sigmap(RTLIL::SigSpec(wire));
+
+    for (auto bit : output)
+        module_output_bits.insert(bit);
+}
+/*
+ * ==================================================
+ * Pattern D:
+ *
+ * Guard-aware comparator narrowing
+ *
+ * 第一阶段只检测，不修改网表。
+ *
+ * 当前只识别：
+ *
+ *     control[k] == 1
+ *
+ * 作为正向 guard。
+ *
+ * 一个 $eq comparator 只有在它的所有有效用途都受到
+ * 同一 control[k] guard 保护时，才作为候选。
+ * ==================================================
+ */
+
+auto sig_contains_bit =
+    [&](RTLIL::SigSpec signal,
+        RTLIL::SigBit wanted)
+    -> bool
+{
+    signal = sigmap(signal);
+    wanted = sigmap(wanted);
+
+    for (auto bit : signal)
+        if (bit == wanted)
+            return true;
+
+    return false;
+};
+
+
+auto positive_guard_in_signal =
+    [&](RTLIL::SigSpec signal,
+        RTLIL::SigBit guard_bit)
+    -> bool
+{
+    signal = sigmap(signal);
+    guard_bit = sigmap(guard_bit);
+
+    /*
+     * guard 直接就是 EN。
+     */
+    if (signal.size() == 1 &&
+        signal.as_bit() == guard_bit)
+        return true;
+
+    if (signal.size() != 1)
+        return false;
+
+    auto it =
+        driver_map.find(
+            signal.as_bit());
+
+    if (it == driver_map.end())
+        return false;
+
+    RTLIL::Cell *driver =
+        it->second;
+
+    /*
+     * $reduce_and(... guard_bit ...)
+     */
+    if (driver->type == ID($reduce_and))
+    {
+        RTLIL::SigSpec input =
+            driver->getPort(ID::A);
+
+        return sig_contains_bit(
+            input,
+            guard_bit);
+    }
+
+    /*
+     * $and 的任意一侧出现 guard_bit。
+     */
+    if (driver->type == ID($and))
+{
+    return
+        sig_contains_bit(
+            driver->getPort(ID::A),
+            guard_bit) ||
+        sig_contains_bit(
+            driver->getPort(ID::B),
+            guard_bit);
+}
+
+/*
+ * Verilog:
+ *
+ *     a && guard
+ *
+ * 常被 Yosys 保留为 $logic_and。
+ *
+ * v1 只接受两个输入都是 1 bit 的情况，
+ * 避免多位 logic truth-value 带来的歧义。
+ */
+if (driver->type == ID($logic_and))
+{
+    RTLIL::SigSpec logic_a =
+        sigmap(
+            driver->getPort(ID::A));
+
+    RTLIL::SigSpec logic_b =
+        sigmap(
+            driver->getPort(ID::B));
+
+    if (logic_a.size() != 1 ||
+        logic_b.size() != 1)
+        return false;
+
+    return
+        logic_a.as_bit() == guard_bit ||
+        logic_b.as_bit() == guard_bit;
+}
+
+return false;
+};
+
+
+std::function<bool(
+    RTLIL::SigBit,
+    RTLIL::SigBit,
+    int)> guarded_use;
+
+
+/*
+ * 检查一个 PMUX 的输出是否只进入：
+ *
+ *     guard 控制的 $dffe.D
+ *
+ * 第一版故意严格。
+ */
+auto guarded_pmux_output =
+    [&](RTLIL::Cell *pmux,
+        RTLIL::SigBit guard_bit)
+    -> bool
+{
+    RTLIL::SigSpec output =
+        sigmap(
+            pmux->getPort(ID::Y));
+
+    bool found_user = false;
+
+    pool<RTLIL::Cell *> checked_cells;
+
+    for (auto out_bit : output)
+    {        /*
+         * PMUX 输出直接可观察时不能做这种优化。
+         */
+        if (module_output_bits.count(out_bit))
+            return false;
+        auto uit =
+            user_map.find(out_bit);
+
+        if (uit == user_map.end())
+            continue;
+
+        for (auto user : uit->second)
+        {
+            if (checked_cells.count(user))
+                continue;
+
+            checked_cells.insert(user);
+            found_user = true;
+
+            if (user->type != ID($dffe))
+                return false;
+
+            RTLIL::SigSpec d =
+                sigmap(
+                    user->getPort(ID::D));
+
+            bool uses_pmux_data = false;
+
+            for (auto bit : output)
+            {
+                if (sig_contains_bit(
+                        d,
+                        bit))
+                {
+                    uses_pmux_data = true;
+                    break;
+                }
+            }
+
+            if (!uses_pmux_data)
+                return false;
+
+            RTLIL::Const en_polarity =
+                user->getParam(
+                    ID::EN_POLARITY);
+
+            /*
+             * 第一版只支持正使能。
+             */
+            if (!en_polarity.as_bool())
+                return false;
+
+            RTLIL::SigSpec enable =
+                user->getPort(ID::EN);
+
+            if (!positive_guard_in_signal(
+                    enable,
+                    guard_bit))
+                return false;
+        }
+    }
+
+    return found_user;
+};
+
+
+/*
+ * 从 comparator 输出向后检查。
+ *
+ * 允许穿过：
+ *
+ *     $reduce_bool
+ *     $reduce_or
+ *     $not
+ *
+ * 最终必须：
+ *
+ *   1. 进入包含 guard_bit 的 $reduce_and；
+ *      或
+ *   2. 作为 PMUX selector，而 PMUX 输出只写入
+ *      guard 保护的 $dffe。
+ */
+guarded_use =
+    [&](RTLIL::SigBit signal,
+        RTLIL::SigBit guard_bit,
+        int depth)
+    -> bool
+{
+    if (depth > 6)
+        return false;
+
+    signal =
+        sigmap(signal);
+
+    auto it =
+        user_map.find(signal);
+
+    if (it == user_map.end() ||
+        it->second.empty())
+        return false;
+
+    pool<RTLIL::Cell *> checked_users;
+
+    for (auto user : it->second)
+    {
+        if (checked_users.count(user))
+            continue;
+
+        checked_users.insert(user);
+
+        /*
+         * 到达正向 guard AND。
+         *
+         * 一旦 comparator 结果和 guard_bit 在这里
+         * 做 AND，后续逻辑已经被 guard 保护。
+         */
+        if (user->type == ID($reduce_and))
+        {
+            RTLIL::SigSpec input =
+                user->getPort(ID::A);
+
+            if (!sig_contains_bit(
+                    input,
+                    guard_bit))
+                return false;
+
+            continue;
+        }
+
+
+        /*
+         * 普通 AND。
+         */
+        if (user->type == ID($and))
+        {
+            bool contains_guard =
+                sig_contains_bit(
+                    user->getPort(ID::A),
+                    guard_bit) ||
+                sig_contains_bit(
+                    user->getPort(ID::B),
+                    guard_bit);
+
+            if (!contains_guard)
+                return false;
+
+            continue;
+        }
+
+
+        /*
+         * 允许经过简单控制逻辑。
+         */
+        if (user->type == ID($reduce_bool) ||
+            user->type == ID($reduce_or) ||
+            user->type == ID($not))
+        {
+            RTLIL::SigSpec out =
+                sigmap(
+                    user->getPort(ID::Y));
+
+            if (out.size() != 1)
+                return false;
+
+            if (!guarded_use(
+                    out.as_bit(),
+                    guard_bit,
+                    depth + 1))
+                return false;
+
+            continue;
+        }
+
+
+        /*
+         * comparator 用作 PMUX selector。
+         */
+        if (user->type == ID($pmux))
+        {
+            RTLIL::SigSpec selectors =
+                sigmap(
+                    user->getPort(ID::S));
+
+            if (!sig_contains_bit(
+                    selectors,
+                    signal))
+                return false;
+
+            /*
+             * 如果同时被 A/B 当数据使用，
+             * 第一版直接拒绝。
+             */
+            if (sig_contains_bit(
+                    user->getPort(ID::A),
+                    signal) ||
+                sig_contains_bit(
+                    user->getPort(ID::B),
+                    signal))
+                return false;
+
+            if (!guarded_pmux_output(
+                    user,
+                    guard_bit))
+                return false;
+
+            continue;
+        }
+
+
+        /*
+         * 未知用途一律拒绝。
+         */
+        return false;
+    }
+
+    return true;
+};
+
+
+int pattern_d_candidates = 0;
+
+for (auto eq_cell : module->cells())
+{
+    if (eq_cell->type != ID($eq))
+        continue;
+
+    RTLIL::SigSpec eq_a =
+        sigmap(
+            eq_cell->getPort(ID::A));
+
+    RTLIL::SigSpec eq_b =
+        sigmap(
+            eq_cell->getPort(ID::B));
+
+    RTLIL::SigSpec control;
+RTLIL::Const constant;
+
+/*
+ * constant_on_b == true:
+ *
+ *     A = signal
+ *     B = constant
+ *
+ * false:
+ *
+ *     A = constant
+ *     B = signal
+ */
+bool constant_on_b = false;
+
+    if (!eq_a.is_fully_const() &&
+    eq_b.is_fully_const())
+{
+    control = eq_a;
+    constant = eq_b.as_const();
+    constant_on_b = true;
+}
+else if (
+    eq_a.is_fully_const() &&
+    !eq_b.is_fully_const())
+{
+    control = eq_b;
+    constant = eq_a.as_const();
+    constant_on_b = false;
+}
+    else
+    {
+        continue;
+    }
+
+    if (control.size() < 2 ||
+        constant.size() != control.size())
+        continue;
+        /*
+ * Pattern D v1 只处理最容易证明安全的形式：
+ *
+ *     unsigned N-bit == unsigned N-bit constant
+ *
+ * 暂时拒绝 signed / unequal-width comparator。
+ */
+int a_width =
+    eq_cell->getParam(
+        ID::A_WIDTH).as_int();
+
+int b_width =
+    eq_cell->getParam(
+        ID::B_WIDTH).as_int();
+
+bool a_signed =
+    eq_cell->getParam(
+        ID::A_SIGNED).as_bool();
+
+bool b_signed =
+    eq_cell->getParam(
+        ID::B_SIGNED).as_bool();
+
+if (a_signed ||
+    b_signed ||
+    a_width != b_width ||
+    a_width != control.size())
+    continue;
+
+    RTLIL::SigSpec eq_y =
+    sigmap(
+        eq_cell->getPort(ID::Y));
+
+if (eq_y.size() != 1)
+    continue;
+
+/*
+ * comparator 自己直接连到模块输出：
+ * 不能缩窄。
+ */
+if (module_output_bits.count(
+        eq_y.as_bit()))
+    continue;
+
+    for (int bit = 0;
+         bit < control.size();
+         bit++)
+    {
+        /*
+         * 第一版只考虑：
+         *
+         *     control[bit] == 1
+         */
+        if (constant[bit] != RTLIL::State::S1)
+            continue;
+
+        RTLIL::SigBit guard_bit =
+            sigmap(control[bit]);
+
+        if (!guarded_use(
+                eq_y.as_bit(),
+                guard_bit,
+                0))
+            continue;
+
+        pattern_d_candidates++;
+
+int old_width =
+    control.size();
+
+RTLIL::SigSpec narrowed_control;
+RTLIL::Const narrowed_constant;
+
+/*
+ * RTLIL SigSpec/Const 的 bit 顺序都是：
+ *
+ * bit 0, bit 1, ...
+ *
+ * 所以逐位复制，跳过 guard bit 即可。
+ */
+for (int keep = 0;
+     keep < old_width;
+     keep++)
+{
+    if (keep == bit)
+        continue;
+
+    narrowed_control.append(
+        control.extract(
+            keep,
+            1));
+
+    narrowed_constant.append(
+        RTLIL::Const(
+            constant[keep],
+            1));
+}
+
+if (narrowed_control.size() !=
+        old_width - 1 ||
+    narrowed_constant.size() !=
+        old_width - 1)
+{
+    log_error(
+        "Pattern D internal width mismatch.\n");
+}
+
+/*
+ * 保持原来的 constant/signal 左右位置。
+ */
+if (constant_on_b)
+{
+    eq_cell->setPort(
+        ID::A,
+        narrowed_control);
+
+    eq_cell->setPort(
+        ID::B,
+        narrowed_constant);
+}
+else
+{
+    eq_cell->setPort(
+        ID::A,
+        narrowed_constant);
+
+    eq_cell->setPort(
+        ID::B,
+        narrowed_control);
+}
+
+eq_cell->setParam(
+    ID::A_WIDTH,
+    old_width - 1);
+
+eq_cell->setParam(
+    ID::B_WIDTH,
+    old_width - 1);
+
+log("\n");
+log("GUARD-AWARE EQ REWRITE\n");
+log("  eq          : %s\n",
+    log_id(eq_cell));
+log("  old width   : %d\n",
+    old_width);
+log("  guard bit   : %d\n",
+    bit);
+log("  guard value : 1\n");
+log("  new width   : %d\n",
+    old_width - 1);
+
+break;
+    }
+}
+
+if (pattern_d_candidates > 0)
+{
+    log("\n");
+    log(
+        "Pattern D candidates in module %s: %d\n",
+        log_id(module),
+        pattern_d_candidates);
+}
 
             /*
              * ==================================================

@@ -1,0 +1,16 @@
+module top(
+    input clk,
+    input cs,
+    input [7:0] sr,
+    output reg q
+);
+
+wire hit = (sr == 8'hAA);
+
+always @(posedge clk)
+begin
+    if (cs && hit)
+        q <= ~q;
+end
+
+endmodule

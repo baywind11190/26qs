@@ -36,6 +36,7 @@ run_regression()
 run_regression "pattern_a" "$ROOT/scripts/run_pattern_a_regression.sh"
 run_regression "pattern_b" "$ROOT/scripts/run_pattern_b_regression.sh"
 run_regression "pattern_c" "$ROOT/scripts/run_pattern_c_regression.sh"
+run_regression "pattern_d" "$ROOT/scripts/run_pattern_d_regression.sh"
 
 echo
 echo "========================================"
