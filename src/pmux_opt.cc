@@ -966,9 +966,12 @@ struct PmuxOptPass : public Pass
                             (1 << candidate.swap_bit);
 
                         int base_branch =
-                            info_a.branch_for_value[base_value];
+                            info_a.branch_for_value[
+                                base_value];
+
                         int mate_branch =
-                            info_a.branch_for_value[mate_value];
+                            info_a.branch_for_value[
+                                mate_value];
 
                         RTLIL::SigSpec base_s =
                             info_a.port_s.extract(
@@ -978,27 +981,80 @@ struct PmuxOptPass : public Pass
                             info_a.port_s.extract(
                                 mate_branch, 1);
 
-                        high_selectors.append(
-                            make_selector_or(
-                                base_s, mate_s));
+                        bool special = false;
 
-                        int a_mate_branch =
-                            info_a.branch_for_value[
-                                mate_value];
+                        for (int v :
+                             candidate.special_base_values)
+                            if (v == base_value)
+                                special = true;
 
-                        int b_mate_branch =
-                            info_b.branch_for_value[
-                                mate_value];
+                        if (special)
+                        {
+                            int a_base_branch =
+                                info_a.branch_for_value[
+                                    base_value];
 
-                        pair_x_data.append(
-                            info_b.port_b.extract(
-                                b_mate_branch * width,
-                                width));
+                            int b_base_branch =
+                                info_b.branch_for_value[
+                                    base_value];
 
-                        pair_y_data.append(
-                            info_a.port_b.extract(
-                                a_mate_branch * width,
-                                width));
+                            int a_mate_branch =
+                                info_a.branch_for_value[
+                                    mate_value];
+
+                            int b_mate_branch =
+                                info_b.branch_for_value[
+                                    mate_value];
+
+                            high_selectors.append(base_s);
+
+                            pair_x_data.append(
+                                info_a.port_b.extract(
+                                    a_base_branch * width,
+                                    width));
+
+                            pair_y_data.append(
+                                info_b.port_b.extract(
+                                    b_base_branch * width,
+                                    width));
+
+                            high_selectors.append(mate_s);
+
+                            pair_x_data.append(
+                                info_b.port_b.extract(
+                                    b_mate_branch * width,
+                                    width));
+
+                            pair_y_data.append(
+                                info_a.port_b.extract(
+                                    a_mate_branch * width,
+                                    width));
+                        }
+                        else
+                        {
+                            high_selectors.append(
+                                make_selector_or(
+                                    base_s,
+                                    mate_s));
+
+                            int a_mate_branch =
+                                info_a.branch_for_value[
+                                    mate_value];
+
+                            int b_mate_branch =
+                                info_b.branch_for_value[
+                                    mate_value];
+
+                            pair_x_data.append(
+                                info_b.port_b.extract(
+                                    b_mate_branch * width,
+                                    width));
+
+                            pair_y_data.append(
+                                info_a.port_b.extract(
+                                    a_mate_branch * width,
+                                    width));
+                        }
                     }
 
                     RTLIL::SigSpec pair_x =
@@ -1028,44 +1084,6 @@ struct PmuxOptPass : public Pass
                             pair_x,
                             swap_bit);
 
-                    for (int base_value :
-                         candidate.special_base_values)
-                    {
-                        int a_base_branch =
-                            info_a.branch_for_value[
-                                base_value];
-
-                        int b_base_branch =
-                            info_b.branch_for_value[
-                                base_value];
-
-                        RTLIL::SigSpec special_s =
-                            info_a.port_s.extract(
-                                a_base_branch,
-                                1);
-
-                        RTLIL::SigSpec special_a =
-                            info_a.port_b.extract(
-                                a_base_branch * width,
-                                width);
-
-                        RTLIL::SigSpec special_b =
-                            info_b.port_b.extract(
-                                b_base_branch * width,
-                                width);
-
-                        final_a =
-                            make_mux(
-                                final_a,
-                                special_a,
-                                special_s);
-
-                        final_b =
-                            make_mux(
-                                final_b,
-                                special_b,
-                                special_s);
-                    }
 
 
                     /*
