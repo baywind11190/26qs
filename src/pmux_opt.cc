@@ -44,10 +44,11 @@ struct PairSwapCandidate
     int member_a = -1;
     int member_b = -1;
 
+    int swap_bit = -1;
     int swapped_pairs = 0;
 
-    // 不满足 pair-swap 的 even state
-    std::vector<int> special_even_values;
+    // swap_bit=0 一侧不满足 pair-swap 的状态
+    std::vector<int> special_base_values;
 };
 
 
@@ -600,175 +601,120 @@ struct PmuxOptPass : public Pass
                             continue;
 
 
-                        int swapped_pairs = 0;
+                        PairSwapCandidate best_candidate;
+                        bool have_candidate = false;
 
-                        std::vector<int>
-                            special_even_values;
-
-
-                        for (int pair = 0;
-                             pair <
-                             pair_count;
-                             pair++)
+                        for (int swap_bit_index = 0;
+                             swap_bit_index < base.ctrl_width;
+                             swap_bit_index++)
                         {
-                            int even_value =
-                                pair * 2;
+                            int swapped_pairs = 0;
+                            std::vector<int> special_base_values;
 
-                            int odd_value =
-                                even_value + 1;
+                            for (int base_value = 0;
+                                 base_value < choices;
+                                 base_value++)
+                            {
+                                if ((base_value >> swap_bit_index) & 1)
+                                    continue;
 
+                                int mate_value =
+                                    base_value |
+                                    (1 << swap_bit_index);
 
-                            int a_even_branch =
-                                info_a.
-                                    branch_for_value[
-                                        even_value];
+                                int a_base_branch =
+                                    info_a.branch_for_value[base_value];
+                                int a_mate_branch =
+                                    info_a.branch_for_value[mate_value];
+                                int b_base_branch =
+                                    info_b.branch_for_value[base_value];
+                                int b_mate_branch =
+                                    info_b.branch_for_value[mate_value];
 
-                            int a_odd_branch =
-                                info_a.
-                                    branch_for_value[
-                                        odd_value];
-
-                            int b_even_branch =
-                                info_b.
-                                    branch_for_value[
-                                        even_value];
-
-                            int b_odd_branch =
-                                info_b.
-                                    branch_for_value[
-                                        odd_value];
-
-
-                            RTLIL::SigSpec a_even =
-                                sigmap(
-                                    info_a.port_b.extract(
-                                        a_even_branch *
-                                            info_a.width,
+                                RTLIL::SigSpec a_base =
+                                    sigmap(info_a.port_b.extract(
+                                        a_base_branch * info_a.width,
                                         info_a.width));
 
-                            RTLIL::SigSpec a_odd =
-                                sigmap(
-                                    info_a.port_b.extract(
-                                        a_odd_branch *
-                                            info_a.width,
+                                RTLIL::SigSpec a_mate =
+                                    sigmap(info_a.port_b.extract(
+                                        a_mate_branch * info_a.width,
                                         info_a.width));
 
-                            RTLIL::SigSpec b_even =
-                                sigmap(
-                                    info_b.port_b.extract(
-                                        b_even_branch *
-                                            info_b.width,
+                                RTLIL::SigSpec b_base =
+                                    sigmap(info_b.port_b.extract(
+                                        b_base_branch * info_b.width,
                                         info_b.width));
 
-                            RTLIL::SigSpec b_odd =
-                                sigmap(
-                                    info_b.port_b.extract(
-                                        b_odd_branch *
-                                            info_b.width,
+                                RTLIL::SigSpec b_mate =
+                                    sigmap(info_b.port_b.extract(
+                                        b_mate_branch * info_b.width,
                                         info_b.width));
 
-
-                            bool swapped =
-                                (a_even == b_odd) &&
-                                (b_even == a_odd);
-
-
-                            if (swapped)
-                            {
-                                swapped_pairs++;
+                                if ((a_base == b_mate) &&
+                                    (b_base == a_mate))
+                                    swapped_pairs++;
+                                else
+                                    special_base_values.push_back(
+                                        base_value);
                             }
-                            else
-                            {
-                                special_even_values.
-                                    push_back(
-                                        even_value);
-                            }
+
+                            bool profitable_pattern =
+                                swapped_pairs >= 2 &&
+                                swapped_pairs * 4 >=
+                                    pair_count * 3 &&
+                                special_base_values.size() <= 1;
+
+                            if (!profitable_pattern)
+                                continue;
+
+                            bool better =
+                                !have_candidate ||
+                                swapped_pairs >
+                                    best_candidate.swapped_pairs ||
+                                (swapped_pairs ==
+                                     best_candidate.swapped_pairs &&
+                                 special_base_values.size() <
+                                     best_candidate.
+                                         special_base_values.size());
+
+                            if (!better)
+                                continue;
+
+                            have_candidate = true;
+
+                            best_candidate.member_a = a;
+                            best_candidate.member_b = b;
+                            best_candidate.swap_bit =
+                                swap_bit_index;
+                            best_candidate.swapped_pairs =
+                                swapped_pairs;
+                            best_candidate.special_base_values =
+                                special_base_values;
                         }
 
-
-                        /*
-                         * --------------------------------------------------
-                         * 当前第一版真正优化规则：
-                         *
-                         * 1. 至少 75% pair 满足 swap
-                         * 2. 最多只允许 1 个 special pair
-                         *
-                         * test1:
-                         *
-                         * 7 / 8 swap
-                         * special = state 0
-                         * --------------------------------------------------
-                         */
-                        bool profitable_pattern =
-                            swapped_pairs >= 2 &&
-                            swapped_pairs * 4 >=
-                                pair_count * 3 &&
-                            special_even_values.
-                                size() <= 1;
-
-
-                        if (!profitable_pattern)
+                        if (!have_candidate)
                             continue;
 
-
-                        PairSwapCandidate candidate;
-
-                        candidate.member_a = a;
-                        candidate.member_b = b;
-
-                        candidate.swapped_pairs =
-                            swapped_pairs;
-
-                        candidate.
-                            special_even_values =
-                            special_even_values;
-
-                        candidates.push_back(
-                            candidate);
-
+                        candidates.push_back(best_candidate);
                         total_pair_candidates++;
 
-
                         log("\n");
-                        log(
-                            "PAIR-SWAP CANDIDATE\n");
-
-                        log(
-                            "  A             : %s\n",
+                        log("PAIR-SWAP CANDIDATE\n");
+                        log("  A             : %s\n",
                             log_id(info_a.cell));
-
-                        log(
-                            "  B             : %s\n",
+                        log("  B             : %s\n",
                             log_id(info_b.cell));
-
-                        log(
-                            "  data_width    : %d\n",
+                        log("  data_width    : %d\n",
                             info_a.width);
-
-                        log(
-                            "  swapped_pairs : %d / %d\n",
-                            swapped_pairs,
+                        log("  swap_bit      : control[%d]\n",
+                            best_candidate.swap_bit);
+                        log("  swapped_pairs : %d / %d\n",
+                            best_candidate.swapped_pairs,
                             pair_count);
-
-                        log(
-                            "  special_pairs : %zu\n",
-                            special_even_values.
-                                size());
-
-                        if (!special_even_values.
-                                empty())
-                        {
-                            log(
-                                "  special even states:");
-
-                            for (int value :
-                                 special_even_values)
-                                log(
-                                    " %d",
-                                    value);
-
-                            log("\n");
-                        }
+                        log("  special_pairs : %zu\n",
+                            best_candidate.
+                                special_base_values.size());
                     }
                 }
 
@@ -1004,116 +950,57 @@ struct PmuxOptPass : public Pass
                      * ==================================================
                      */
                     RTLIL::SigSpec high_selectors;
-
                     RTLIL::SigSpec pair_x_data;
                     RTLIL::SigSpec pair_y_data;
 
-
-                    for (int pair = 0;
-                         pair < pair_count;
-                         pair++)
+                    for (int base_value = 0;
+                         base_value < choices;
+                         base_value++)
                     {
-                        int even_value =
-                            pair * 2;
+                        if ((base_value >>
+                             candidate.swap_bit) & 1)
+                            continue;
 
-                        int odd_value =
-                            even_value + 1;
+                        int mate_value =
+                            base_value |
+                            (1 << candidate.swap_bit);
 
+                        int base_branch =
+                            info_a.branch_for_value[base_value];
+                        int mate_branch =
+                            info_a.branch_for_value[mate_value];
 
-                        /*
-                         * 用 A PMUX 的 selector bank
-                         * 生成 pair selector。
-                         */
-                        int even_branch =
-                            info_a.
-                                branch_for_value[
-                                    even_value];
-
-                        int odd_branch =
-                            info_a.
-                                branch_for_value[
-                                    odd_value];
-
-
-                        RTLIL::SigSpec even_s =
+                        RTLIL::SigSpec base_s =
                             info_a.port_s.extract(
-                                even_branch,
-                                1);
+                                base_branch, 1);
 
-                        RTLIL::SigSpec odd_s =
+                        RTLIL::SigSpec mate_s =
                             info_a.port_s.extract(
-                                odd_branch,
-                                1);
-
-
-                        RTLIL::SigSpec pair_s =
-                            make_selector_or(
-                                even_s,
-                                odd_s);
+                                mate_branch, 1);
 
                         high_selectors.append(
-                            pair_s);
+                            make_selector_or(
+                                base_s, mate_s));
 
+                        int a_mate_branch =
+                            info_a.branch_for_value[
+                                mate_value];
 
-                        /*
-                         * --------------------------------------------------
-                         * 用 odd state 的两个数据定义 pair。
-                         *
-                         * pair_x = B(odd)
-                         * pair_y = A(odd)
-                         *
-                         * 对正常 swap pair：
-                         *
-                         * even:
-                         *   A = pair_x
-                         *   B = pair_y
-                         *
-                         * odd:
-                         *   A = pair_y
-                         *   B = pair_x
-                         * --------------------------------------------------
-                         */
-                        int a_odd_branch =
-                            info_a.
-                                branch_for_value[
-                                    odd_value];
-
-                        int b_odd_branch =
-                            info_b.
-                                branch_for_value[
-                                    odd_value];
-
-
-                        RTLIL::SigSpec a_odd =
-                            info_a.port_b.extract(
-                                a_odd_branch *
-                                    width,
-                                width);
-
-                        RTLIL::SigSpec b_odd =
-                            info_b.port_b.extract(
-                                b_odd_branch *
-                                    width,
-                                width);
-
+                        int b_mate_branch =
+                            info_b.branch_for_value[
+                                mate_value];
 
                         pair_x_data.append(
-                            b_odd);
+                            info_b.port_b.extract(
+                                b_mate_branch * width,
+                                width));
 
                         pair_y_data.append(
-                            a_odd);
+                            info_a.port_b.extract(
+                                a_mate_branch * width,
+                                width));
                     }
 
-
-                    /*
-                     * 两个 8 路 PMUX：
-                     *
-                     * 根据 state[3:1]
-                     * 选择 pair_x / pair_y
-                     *
-                     * 两者共享完全相同的
-                     * high_selectors。
-                     */
                     RTLIL::SigSpec pair_x =
                         make_pmux(
                             pair_x_data,
@@ -1124,25 +1011,10 @@ struct PmuxOptPass : public Pass
                             pair_y_data,
                             high_selectors);
 
-
-                    /*
-                     * control[0] 负责交换。
-                     *
-                     * control[0] = 0:
-                     *
-                     *   A = pair_x
-                     *   B = pair_y
-                     *
-                     * control[0] = 1:
-                     *
-                     *   A = pair_y
-                     *   B = pair_x
-                     */
                     RTLIL::SigSpec swap_bit =
                         info_a.control.extract(
-                            0,
+                            candidate.swap_bit,
                             1);
-
 
                     RTLIL::SigSpec final_a =
                         make_mux(
@@ -1156,51 +1028,31 @@ struct PmuxOptPass : public Pass
                             pair_x,
                             swap_bit);
 
-
-                    /*
-                     * ==================================================
-                     * 处理 special even state。
-                     *
-                     * test1 中只有：
-                     *
-                     * state = 0
-                     *
-                     * 这一对不是标准交换。
-                     * ==================================================
-                     */
-                    for (int even_value :
-                         candidate.
-                             special_even_values)
+                    for (int base_value :
+                         candidate.special_base_values)
                     {
-                        int a_even_branch =
-                            info_a.
-                                branch_for_value[
-                                    even_value];
+                        int a_base_branch =
+                            info_a.branch_for_value[
+                                base_value];
 
-                        int b_even_branch =
-                            info_b.
-                                branch_for_value[
-                                    even_value];
-
+                        int b_base_branch =
+                            info_b.branch_for_value[
+                                base_value];
 
                         RTLIL::SigSpec special_s =
                             info_a.port_s.extract(
-                                a_even_branch,
+                                a_base_branch,
                                 1);
-
 
                         RTLIL::SigSpec special_a =
                             info_a.port_b.extract(
-                                a_even_branch *
-                                    width,
+                                a_base_branch * width,
                                 width);
 
                         RTLIL::SigSpec special_b =
                             info_b.port_b.extract(
-                                b_even_branch *
-                                    width,
+                                b_base_branch * width,
                                 width);
-
 
                         final_a =
                             make_mux(
@@ -1277,12 +1129,13 @@ struct PmuxOptPass : public Pass
                         pair_count);
 
                     log(
-                        "  swap bit   : control[0]\n");
+                        "  swap bit   : control[%d]\n",
+                        candidate.swap_bit);
 
                     log(
                         "  special    : %zu\n",
                         candidate.
-                            special_even_values.
+                            special_base_values.
                             size());
                 }
 
