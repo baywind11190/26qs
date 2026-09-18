@@ -750,14 +750,33 @@ struct PmuxOptPass : public Pass
                                         base_value);
                             }
 
-                            bool profitable_pattern =
-                                swapped_pairs >= 2 &&
-                                swapped_pairs * 4 >=
-                                    pair_count * 3 &&
-                                special_base_values.size() <= 1;
+                            /*
+ * Pattern A profitability gate
+ *
+ * 无特殊 pair：
+ *     保留原 pair-swap 优化。
+ *
+ * 有 1 个特殊 pair：
+ *     pair_count >= 8 时允许优化；
+ *     pair_count == 4 且 WIDTH <= 2 时允许优化；
+ *     其他情况跳过，避免面积反而增大。
+ */
+bool special_case_profitable =
+    special_base_values.empty() ||
+    (special_base_values.size() == 1 &&
+     (pair_count >= 8 ||
+      (pair_count == 4 &&
+       info_a.width <= 2)));
 
-                            if (!profitable_pattern)
-                                continue;
+bool profitable_pattern =
+    swapped_pairs >= 2 &&
+    swapped_pairs * 4 >=
+        pair_count * 3 &&
+    special_base_values.size() <= 1 &&
+    special_case_profitable;
+
+if (!profitable_pattern)
+    continue;
 
                             bool better =
                                 !have_candidate ||

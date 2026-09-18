@@ -28,3 +28,4 @@ __pycache__/
 /test*_pairswap/
 
 /test*_branch_const/
+/check/
