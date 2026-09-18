@@ -26,3 +26,5 @@ __pycache__/
 *.swp
 
 /test*_pairswap/
+
+/test*_branch_const/
