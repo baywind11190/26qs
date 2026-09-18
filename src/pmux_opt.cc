@@ -328,6 +328,97 @@ struct PmuxOptPass : public Pass
 
                 /*
                  * ----------------------------------------------
+                 * Pattern B:
+                 * selector-conditioned branch constant folding
+                 *
+                 * S[i] = (control == CONST) 时，
+                 * branch B[i] 中直接引用的 control bit
+                 * 可以替换为对应常量。
+                 * ----------------------------------------------
+                 */
+                if (info.selector_bank_valid)
+                {
+                    RTLIL::SigSpec new_port_b;
+                    int replaced_bits = 0;
+
+                    for (int branch = 0;
+                         branch < info.s_width;
+                         branch++)
+                    {
+                        RTLIL::SigSpec raw_branch =
+                            info.port_b.extract(
+                                branch * info.width,
+                                info.width);
+
+                        RTLIL::SigSpec mapped_branch =
+                            sigmap(raw_branch);
+
+                        const auto &cond =
+                            info.conditions[branch];
+
+                        for (int data_bit = 0;
+                             data_bit < info.width;
+                             data_bit++)
+                        {
+                            bool replaced = false;
+
+                            for (int ctrl_bit = 0;
+                                 ctrl_bit < info.ctrl_width;
+                                 ctrl_bit++)
+                            {
+                                if (mapped_branch[data_bit] !=
+                                    info.control[ctrl_bit])
+                                    continue;
+
+                                RTLIL::State value =
+                                    cond.value[ctrl_bit];
+
+                                if (value != RTLIL::State::S0 &&
+                                    value != RTLIL::State::S1)
+                                    continue;
+
+                                new_port_b.append(
+                                    RTLIL::SigSpec(
+                                        RTLIL::Const(
+                                            value,
+                                            1)));
+
+                                replaced = true;
+                                replaced_bits++;
+                                break;
+                            }
+
+                            if (!replaced)
+                            {
+                                new_port_b.append(
+                                    raw_branch.extract(
+                                        data_bit,
+                                        1));
+                            }
+                        }
+                    }
+
+                    if (replaced_bits > 0)
+                    {
+                        info.cell->setPort(
+                            ID::B,
+                            new_port_b);
+
+                        info.port_b =
+                            new_port_b;
+
+                        log("\n");
+                        log("BRANCH-CONST FOLD\n");
+                        log("  cell          : %s\n",
+                            log_id(info.cell));
+                        log("  replaced bits : %d\n",
+                            replaced_bits);
+                    }
+                }
+
+
+                /*
+                 * ----------------------------------------------
                  * 判断是否完整覆盖：
                  *
                  * 0 ... 2^k - 1
