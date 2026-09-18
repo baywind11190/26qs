@@ -18,6 +18,7 @@ cases=(
     "mixed_1000:mixed:1000"
     "pattern_a_1000:pattern_a:1000"
     "expr_1000:expr:1000"
+    "negative_250:negative:250"
     "negative_1000:negative:1000"
 )
 
@@ -175,16 +176,23 @@ EOF
 
     rm -rf "$case_out/eqy"
 
-    if eqy -f \
+    if timeout 60s eqy -j "$(nproc)" -f \
         -d "$case_out/eqy" \
         "$case_out/check.eqy" \
         > "$case_out/eqy.log" 2>&1; then
+
         eqy_status="PASS"
     else
-        eqy_status="FAIL"
-        fail=1
-    fi
+        rc=$?
 
+        if [[ "$rc" -eq 124 ]]; then
+            eqy_status="TIMEOUT"
+            fail=1
+        else
+            eqy_status="FAIL"
+            fail=1
+        fi
+    fi
     status="PASS"
 
     if (( comb_o > comb_b || total_o > total_b )); then
