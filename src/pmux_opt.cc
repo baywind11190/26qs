@@ -1,5 +1,6 @@
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include "kernel/consteval.h"
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -97,6 +98,17 @@ struct PmuxOptPass : public Pass
         for (auto module : design->selected_modules())
         {
             SigMap sigmap(module);
+
+            /*
+             * Pattern C 使用：
+             * 在 selector 已知 control == CONST 的前提下，
+             * 对 branch 数据锥进行条件常量传播。
+             *
+             * 其他未知输入统一视为 X。
+             */
+            ConstEval branch_consteval(
+                module,
+                RTLIL::State::Sx);
 
             /*
              * ==================================================
@@ -413,6 +425,177 @@ struct PmuxOptPass : public Pass
                             log_id(info.cell));
                         log("  replaced bits : %d\n",
                             replaced_bits);
+                    }
+                }
+
+
+                /*
+                 * ----------------------------------------------
+                 * Pattern C:
+                 * selector-conditioned expression
+                 * constant folding
+                 *
+                 * S[i] = (control == CONST) 时，
+                 * 在该 branch 中临时令：
+                 *
+                 *     control = CONST
+                 *
+                 * 然后使用 ConstEval 对 branch 数据锥
+                 * 做按需常量传播。
+                 *
+                 * 能确定为 0/1 的 bit 替换为常量；
+                 * 仍为 X 的 bit 保持原信号。
+                 *
+                 * Pattern B 已先处理直接 control bit，
+                 * 因此这里主要覆盖：
+                 *
+                 *   $not
+                 *   $xor
+                 *   $and
+                 *   $or
+                 *   $reduce_*
+                 *   以及其他 ConstEval 可安全求值的
+                 *   组合表达式。
+                 * ----------------------------------------------
+                 */
+                if (info.selector_bank_valid)
+                {
+                    RTLIL::SigSpec new_port_b;
+                    int replaced_expr_bits = 0;
+
+                    for (int branch = 0;
+                         branch < info.s_width;
+                         branch++)
+                    {
+                        RTLIL::SigSpec raw_branch =
+                            info.port_b.extract(
+                                branch * info.width,
+                                info.width);
+
+                        const auto &cond =
+                            info.conditions[branch];
+
+                        /*
+                         * 每个 branch 都有自己独立的
+                         * control == CONST 条件。
+                         */
+                        branch_consteval.clear();
+
+                        branch_consteval.set(
+                            info.control,
+                            cond.value);
+
+                        RTLIL::SigSpec evaluated_branch =
+                            raw_branch;
+
+                        RTLIL::SigSpec undef;
+
+                        bool eval_ok =
+                            branch_consteval.eval(
+                                evaluated_branch,
+                                undef);
+
+                        /*
+                         * eval 失败时完全保持原 branch。
+                         *
+                         * eval 成功后不要求整个 branch
+                         * 都是常量：
+                         *
+                         *   0 / 1 -> 替换
+                         *   X / Z -> 保留原信号
+                         *
+                         * 这样可以处理：
+                         *
+                         *   { external_data,
+                         *     expression(control),
+                         *     external_data,
+                         *     expression(control) }
+                         *
+                         * 这种部分可折叠的 branch。
+                         */
+                        if (!eval_ok)
+                        {
+                            new_port_b.append(
+                                raw_branch);
+                            continue;
+                        }
+
+                        RTLIL::SigSpec mapped_branch =
+                            sigmap(raw_branch);
+
+                        for (int data_bit = 0;
+                             data_bit < info.width;
+                             data_bit++)
+                        {
+                            RTLIL::State value =
+                                evaluated_branch[data_bit].data;
+
+                            bool definite =
+                                value == RTLIL::State::S0 ||
+                                value == RTLIL::State::S1;
+
+                            bool already_same_const =
+                                false;
+
+                            RTLIL::SigSpec mapped_bit =
+                                mapped_branch.extract(
+                                    data_bit,
+                                    1);
+
+                            /*
+                             * 原本已经是同一个常量，
+                             * 不计为 Pattern C 的收益。
+                             */
+                            if (definite &&
+                                mapped_bit.is_fully_const())
+                            {
+                                RTLIL::Const original =
+                                    mapped_bit.as_const();
+
+                                if (original.size() == 1 &&
+                                    original[0] == value)
+                                {
+                                    already_same_const =
+                                        true;
+                                }
+                            }
+
+                            if (definite &&
+                                !already_same_const)
+                            {
+                                new_port_b.append(
+                                    RTLIL::SigSpec(
+                                        RTLIL::Const(
+                                            value,
+                                            1)));
+
+                                replaced_expr_bits++;
+                            }
+                            else
+                            {
+                                new_port_b.append(
+                                    raw_branch.extract(
+                                        data_bit,
+                                        1));
+                            }
+                        }
+                    }
+
+                    if (replaced_expr_bits > 0)
+                    {
+                        info.cell->setPort(
+                            ID::B,
+                            new_port_b);
+
+                        info.port_b =
+                            new_port_b;
+
+                        log("\n");
+                        log("BRANCH-EXPR CONST FOLD\n");
+                        log("  cell          : %s\n",
+                            log_id(info.cell));
+                        log("  replaced bits : %d\n",
+                            replaced_expr_bits);
                     }
                 }
 
