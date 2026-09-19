@@ -4,7 +4,13 @@ build/
 *.o
 
 # Generated test results
-results/
+results/**
+
+# Allow Git to traverse subdirectories
+!results/**/
+
+# Keep Markdown reports and summaries
+!results/**/*.md
 
 # EQY generated work directories
 pmux_self/
