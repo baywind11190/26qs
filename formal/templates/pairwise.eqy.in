@@ -1,0 +1,11 @@
+[gold]
+read_rtlil {gold}
+prep -top {top}
+
+[gate]
+read_rtlil {gate}
+prep -top {top}
+
+[strategy simple]
+use sat
+depth 10
