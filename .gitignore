@@ -12,6 +12,10 @@ results/**
 # Keep Markdown reports and summaries
 !results/**/*.md
 
+# Machine-readable summaries
+!results/**/*summary*.csv
+!results/**/manifest.json
+
 # EQY generated work directories
 pmux_self/
 *_work/

@@ -1,0 +1,22 @@
+{
+  "run_id": "smoke-test2-v1",
+  "project_commit": "b600a038edfec8c42457fb81b685a7b41697f460",
+  "baseline_yosys_path": "/home/fpga/eda/yosys-baseline/build/yosys",
+  "baseline_yosys_sha256": "9e3010374552c4e0b5e3057f8ecdf974a47e554f0d68ff2175a9723af22a0e56",
+  "baseline_yosys_version": "Yosys 0.69 (git sha1 9f75ca1f9, Release, GNU /usr/bin/c++ 13.3.0)",
+  "optimized_yosys_path": "/home/fpga/eda/yosys-optimized/build/yosys",
+  "optimized_yosys_sha256": "ad95aaff56a11b2464febce7abe87e22146d83d5465ce9dff4f3915524c68214",
+  "optimized_yosys_version": "Yosys 0.69 (git sha1 9f75ca1f9, Release, GNU /usr/bin/c++ 13.3.0)",
+  "eval_script_path": "scripts/official_eval/run_case.tcl",
+  "eval_script_sha256": "31290047ff4804b694c9409132771bcab5002ef673915442067b351c3f66552e",
+  "mapping_family": "cycloneiv",
+  "repeat": 1,
+  "eqy_path": "/home/fpga/eda/eqy/install/bin/eqy",
+  "time_path": "/usr/bin/time",
+  "cases": {
+    "test2": {
+      "rtl_path": "pmux_case/competition_case/test2/test2.v",
+      "rtl_sha256": "82ef15cf6e75d502633efea71c20d93b0447001974d558a7739dbb1d7bfdf88f"
+    }
+  }
+}

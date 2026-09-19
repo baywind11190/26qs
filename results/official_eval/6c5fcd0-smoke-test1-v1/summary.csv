@@ -1,0 +1,2 @@
+case,eqy_status,baseline_total_cells,optimized_total_cells,total_cell_reduction_pct,baseline_cycloneiv_lcell_comb,optimized_cycloneiv_lcell_comb,comb_reduction_pct,baseline_dffeas,optimized_dffeas,dffeas_reduction_pct,baseline_time_median_s,optimized_time_median_s,time_overhead_pct,baseline_rss_max_kb,optimized_rss_max_kb,rss_overhead_pct
+test1,PASS,510,431,15.490196,286,207,27.622378,222,222,0.000000,0.250000,0.250000,0.000000,36268,36340,0.198522

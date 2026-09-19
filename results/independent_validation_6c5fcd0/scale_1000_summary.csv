@@ -1,0 +1,4 @@
+case,nodes,eqy,total_before,total_after,comb_before,comb_after,dff_before,dff_after,time_before_median_s,time_after_median_s,rss_before_max_kb,rss_after_max_kb,status
+mixed_1000,995,PASS,2341,1675,2341,1675,0,0,1.110,0.960,70120,62236,PASS
+pattern_a_1000,996,PASS,4150,2656,4150,2656,0,0,1.660,1.080,95148,77108,PASS
+negative_1000,1000,PASS,2600,2600,2600,2600,0,0,1.150,1.160,74088,74184,PASS

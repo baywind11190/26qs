@@ -1,0 +1,9 @@
+case,purpose,trigger,eqy,total_before,total_after,total_reduction_pct,comb_before,comb_after,dff_before,dff_after,time_before_s,time_after_s,rss_before_kb,rss_after_kb,status,reasons
+blind01,Selector order shuffled; one selector drives permuted case blocks (non-ascending case values).,True,PASS,31,19,38.70967741935484,31,19,0,0,0.08,0.08,29348,29552,PASS,
+blind02,Partial decode; control width exceeds the set of present case values.,False,PASS,45,45,0.0,45,45,0,0,0.08,0.08,29568,29468,PASS,
+blind03,Multiple independent control domains (ca/cb/cc) must not interfere.,True,PASS,57,49,14.035087719298245,56,48,0,0,0.08,0.08,29816,29564,PASS,
+blind04,Branches mix control-derived expressions with external-data dependencies (no illegal constant folding).,True,PASS,53,53,0.0,53,53,0,0,0.09,0.09,29764,29828,PASS,
+blind05,No optimizable structure; expect EQY PASS and no obvious resource regression.,False,PASS,29,29,0.0,29,29,0,0,0.07,0.08,29464,29636,PASS,
+blind06,PMUX mixed with and/or/xor/not/reduce/ordinary mux logic.,True,PASS,47,33,29.78723404255319,47,33,0,0,0.08,0.08,29632,29716,PASS,
+blind07,"Boundary widths: 1,2,4,8,12,16.",True,PASS,259,172,33.59073359073359,259,172,0,0,0.14,0.11,30356,30104,PASS,
+blind08,"Multiple PMUX structures: optimizable, non-optimizable, shared and independent controls.",True,PASS,52,42,19.230769230769234,52,42,0,0,0.08,0.08,29496,29864,PASS,

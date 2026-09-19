@@ -1,0 +1,4 @@
+case,nodes,eqy,total_before,total_after,total_reduction_pct,comb_before,comb_after,comb_reduction_pct,dff_before,dff_after,dff_reduction_pct,baseline_time_median_s,optimized_time_median_s,baseline_rss_max_kb,optimized_rss_max_kb,trigger_detected,status,reasons
+mixed_1000,995,PASS,2341,1675,28.449380606578384,2341,1675,28.449380606578384,0,0,,1.05,0.79,70240,62632,True,PASS,
+pattern_a_1000,996,PASS,4150,2656,36.0,4150,2656,36.0,0,0,,1.52,1.02,94568,78080,True,PASS,
+negative_1000,1000,PASS,2600,2600,0.0,2600,2600,0.0,0,0,,1.02,1.03,73776,74100,False,PASS,

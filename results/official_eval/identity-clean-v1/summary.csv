@@ -1,0 +1,5 @@
+case,eqy_status,baseline_total_cells,optimized_total_cells,total_cell_reduction_pct,baseline_cycloneiv_lcell_comb,optimized_cycloneiv_lcell_comb,comb_reduction_pct,baseline_dffeas,optimized_dffeas,dffeas_reduction_pct,baseline_time_median_s,optimized_time_median_s,time_overhead_pct,baseline_rss_max_kb,optimized_rss_max_kb,rss_overhead_pct
+test1,PASS,510,510,0.000000,286,286,0.000000,222,222,0.000000,0.220000,0.220000,0.000000,36360,36100,-0.715072
+test2,PASS,25,25,0.000000,25,25,0.000000,0,0,,0.080000,0.080000,0.000000,31724,31760,0.113479
+test3,PASS,30,30,0.000000,12,12,0.000000,17,17,0.000000,0.090000,0.090000,0.000000,32000,31628,-1.162500
+test4,PASS,46,46,0.000000,35,35,0.000000,10,10,0.000000,0.100000,0.100000,0.000000,32292,32660,1.139601

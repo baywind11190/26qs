@@ -1,0 +1,5 @@
+case,eqy,total_before,total_after,comb_before,comb_after,dff_before,dff_after,time_before_s,time_after_s,rss_before_kb,rss_after_kb
+test1,PASS,510,431,286,207,222,222,0.22,0.19,36324,36564
+test2,PASS,25,25,25,25,0,0,0.08,0.08,31196,32668
+test3,PASS,30,24,12,11,17,12,0.09,0.09,31804,32992
+test4,PASS,46,46,35,35,10,10,0.11,0.11,32236,33512

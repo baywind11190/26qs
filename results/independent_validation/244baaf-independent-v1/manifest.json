@@ -1,0 +1,82 @@
+{
+  "target_commit": "244baaf19c8abf62443aabfb5ff449ff535a447d",
+  "run_id": "244baaf-independent-v1",
+  "overall_status": "PASS",
+  "official_correct": true,
+  "official_total_reduction_pct": 13.911620294599016,
+  "official_area_10_met": true,
+  "official_area_20_met": false,
+  "scale_cases": [
+    {
+      "case_id": "mixed_1000",
+      "node_count": 995,
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "pattern_a_1000",
+      "node_count": 996,
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "negative_1000",
+      "node_count": 1000,
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    }
+  ],
+  "blind_cases": [
+    {
+      "case_id": "blind01",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind02",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind03",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind04",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind05",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind06",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind07",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    },
+    {
+      "case_id": "blind08",
+      "eqy_status": "PASS",
+      "status": "PASS",
+      "reasons": []
+    }
+  ]
+}
