@@ -1583,13 +1583,15 @@ bool special_case_profitable =
     (special_base_values.size() == 1 &&
      (pair_count >= 8 ||
       (pair_count == 4 &&
-       info_a.width <= 2)));
+       info_a.width <= 2))) ||
+    (special_base_values.size() == 2 &&
+     pair_count >= 8);
 
 bool profitable_pattern =
     swapped_pairs >= 2 &&
     swapped_pairs * 4 >=
         pair_count * 3 &&
-    special_base_values.size() <= 1 &&
+    special_base_values.size() <= 2 &&
     special_case_profitable;
 
 if (!profitable_pattern)
