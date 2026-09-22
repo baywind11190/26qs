@@ -100,6 +100,8 @@ struct PmuxOptPass : public Pass
         int total_pair_rebuilt = 0;
 
 
+        int total_h3_candidates = 0;
+        int total_h3_rebuilt = 0;
         for (auto module : design->selected_modules())
         {
             SigMap sigmap(module);
@@ -2556,6 +2558,599 @@ if (!profitable_pattern)
                 log(
                     "========================================\n");
             }
+
+        /*
+         * ==================================================
+         * H3 Stage 1
+         *
+         * Priority $mux chain candidate detection.
+         *
+         * 识别候选结构；通过安全检查后由 Stage 2 重写 selector。
+         *
+         * 目标结构：
+         *
+         *   CONST_BASE
+         *       |
+         *   mux(lowest)
+         *       |
+         *      ...
+         *       |
+         *   mux(highest)
+         *       |
+         *      OUT
+         *
+         * 要求：
+         *   - 连续 $mux
+         *   - WIDTH 相同
+         *   - S 均为 1 bit
+         *   - child.Y == parent.A
+         *   - 最低层 A 为常量
+         *   - selector 不重复
+         *   - depth >= 3
+         * ==================================================
+         */
+        {
+            SigMap h3_sigmap(module);
+
+            std::vector<RTLIL::Cell *> h3_muxes;
+
+            for (auto cell : module->cells())
+            {
+                if (cell->type != ID($mux))
+                    continue;
+
+                int width =
+                    cell->getParam(ID::WIDTH).as_int();
+
+                RTLIL::SigSpec a =
+                    h3_sigmap(cell->getPort(ID::A));
+
+                RTLIL::SigSpec b =
+                    h3_sigmap(cell->getPort(ID::B));
+
+                RTLIL::SigSpec sel =
+                    h3_sigmap(cell->getPort(ID::S));
+
+                RTLIL::SigSpec y =
+                    h3_sigmap(cell->getPort(ID::Y));
+
+                if (width <= 0)
+                    continue;
+
+                if (GetSize(a) != width ||
+                    GetSize(b) != width ||
+                    GetSize(y) != width ||
+                    GetSize(sel) != 1)
+                    continue;
+
+                h3_muxes.push_back(cell);
+            }
+
+
+            /*
+             * 当前 mux 的 Y 如果接到另一个 mux 的 A，
+             * 那它就不是整条链最靠近输出的一层。
+             */
+            auto h3_has_parent =
+                [&](RTLIL::Cell *cell) -> bool
+            {
+                int width =
+                    cell->getParam(ID::WIDTH).as_int();
+
+                RTLIL::SigSpec y =
+                    h3_sigmap(
+                        cell->getPort(ID::Y));
+
+                for (auto other : h3_muxes)
+                {
+                    if (other == cell)
+                        continue;
+
+                    if (other->getParam(
+                            ID::WIDTH).as_int() != width)
+                        continue;
+
+                    RTLIL::SigSpec other_a =
+                        h3_sigmap(
+                            other->getPort(ID::A));
+
+                    if (other_a == y)
+                        return true;
+                }
+
+                return false;
+            };
+
+
+            /*
+             * 查找某个 A 是否来自另一个同宽 mux 的 Y。
+             */
+            auto h3_find_child =
+                [&](const RTLIL::SigSpec &a,
+                    int width,
+                    bool &ambiguous)
+                    -> RTLIL::Cell *
+            {
+                RTLIL::Cell *found = nullptr;
+                ambiguous = false;
+
+                for (auto candidate : h3_muxes)
+                {
+                    if (candidate->getParam(
+                            ID::WIDTH).as_int() != width)
+                        continue;
+
+                    RTLIL::SigSpec candidate_y =
+                        h3_sigmap(
+                            candidate->getPort(ID::Y));
+
+                    if (candidate_y != a)
+                        continue;
+
+                    if (found != nullptr)
+                    {
+                        ambiguous = true;
+                        return nullptr;
+                    }
+
+                    found = candidate;
+                }
+
+                return found;
+            };
+
+
+
+            /*
+             * 判断两个 canonical SigSpec 是否有任意 bit 重叠。
+             */
+            auto h3_sig_overlap =
+                [&](const RTLIL::SigSpec &lhs,
+                    const RTLIL::SigSpec &rhs)
+                    -> bool
+            {
+                for (auto lhs_bit : lhs)
+                    for (auto rhs_bit : rhs)
+                        if (lhs_bit == rhs_bit)
+                            return true;
+
+                return false;
+            };
+
+
+            /*
+             * 中间 mux 的 Y 必须是私有链路：
+             *
+             * child.Y 只能被 parent.A 使用。
+             *
+             * 如果还被其他 cell 输入或 module output 使用，
+             * rewrite 会改变可观察的中间值，因此拒绝优化。
+             */
+            auto h3_intermediate_is_private =
+                [&](RTLIL::Cell *child,
+                    RTLIL::Cell *parent)
+                    -> bool
+            {
+                RTLIL::SigSpec y =
+                    h3_sigmap(
+                        child->getPort(ID::Y));
+
+                bool saw_expected_parent = false;
+
+                for (auto user_cell : module->cells())
+                {
+                    for (auto &conn :
+                         user_cell->connections())
+                    {
+                        if (!user_cell->input(
+                                conn.first))
+                            continue;
+
+                        RTLIL::SigSpec input =
+                            h3_sigmap(
+                                conn.second);
+
+                        if (!h3_sig_overlap(
+                                input,
+                                y))
+                            continue;
+
+                        /*
+                         * 唯一允许的使用：
+                         *
+                         * child.Y -> parent.A
+                         */
+                        if (user_cell == parent &&
+                            conn.first == ID::A &&
+                            input == y &&
+                            !saw_expected_parent)
+                        {
+                            saw_expected_parent = true;
+                            continue;
+                        }
+
+                        return false;
+                    }
+                }
+
+                if (!saw_expected_parent)
+                    return false;
+
+
+                /*
+                 * 中间节点也不能直接成为 module output。
+                 */
+                for (auto wire : module->wires())
+                {
+                    if (!wire->port_output)
+                        continue;
+
+                    RTLIL::SigSpec output =
+                        h3_sigmap(
+                            RTLIL::SigSpec(wire));
+
+                    if (h3_sig_overlap(
+                            output,
+                            y))
+                        return false;
+                }
+
+                return true;
+            };
+
+
+            /*
+             * 创建 1-bit $not。
+             */
+            auto h3_make_not =
+                [&](RTLIL::SigSpec input)
+                    -> RTLIL::SigSpec
+            {
+                RTLIL::Wire *wire =
+                    module->addWire(
+                        NEW_ID,
+                        1);
+
+                RTLIL::Cell *cell =
+                    module->addCell(
+                        NEW_ID,
+                        ID($not));
+
+                cell->setParam(
+                    ID::A_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::A_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::Y_WIDTH,
+                    1);
+
+                cell->setPort(
+                    ID::A,
+                    input);
+
+                cell->setPort(
+                    ID::Y,
+                    RTLIL::SigSpec(wire));
+
+                return RTLIL::SigSpec(wire);
+            };
+
+
+            /*
+             * 创建 1-bit $and。
+             */
+            auto h3_make_and =
+                [&](RTLIL::SigSpec lhs,
+                    RTLIL::SigSpec rhs)
+                    -> RTLIL::SigSpec
+            {
+                RTLIL::Wire *wire =
+                    module->addWire(
+                        NEW_ID,
+                        1);
+
+                RTLIL::Cell *cell =
+                    module->addCell(
+                        NEW_ID,
+                        ID($and));
+
+                cell->setParam(
+                    ID::A_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::B_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::A_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::B_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::Y_WIDTH,
+                    1);
+
+                cell->setPort(
+                    ID::A,
+                    lhs);
+
+                cell->setPort(
+                    ID::B,
+                    rhs);
+
+                cell->setPort(
+                    ID::Y,
+                    RTLIL::SigSpec(wire));
+
+                return RTLIL::SigSpec(wire);
+            };
+
+
+            for (auto start : h3_muxes)
+            {
+                /*
+                 * 只从最高优先级、最靠近输出的一层开始，
+                 * 防止同一条链重复报告。
+                 */
+                if (h3_has_parent(start))
+                    continue;
+
+                int width =
+                    start->getParam(ID::WIDTH).as_int();
+
+                std::vector<RTLIL::Cell *> chain;
+                std::vector<RTLIL::SigBit> selectors;
+                std::vector<RTLIL::Cell *> visited;
+
+                bool valid = true;
+                RTLIL::Cell *current = start;
+
+                while (current != nullptr)
+                {
+                    bool repeated_cell = false;
+
+                    for (auto old_cell : visited)
+                        if (old_cell == current)
+                            repeated_cell = true;
+
+                    if (repeated_cell)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    visited.push_back(current);
+                    chain.push_back(current);
+
+
+                    RTLIL::SigSpec sel =
+                        h3_sigmap(
+                            current->getPort(ID::S));
+
+                    if (GetSize(sel) != 1)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    bool repeated_selector = false;
+
+                    for (auto old_sel : selectors)
+                        if (old_sel == sel[0])
+                            repeated_selector = true;
+
+                    if (repeated_selector)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    selectors.push_back(sel[0]);
+
+
+                    RTLIL::SigSpec a =
+                        h3_sigmap(
+                            current->getPort(ID::A));
+
+                    bool ambiguous = false;
+
+                    RTLIL::Cell *child =
+                        h3_find_child(
+                            a,
+                            width,
+                            ambiguous);
+
+                    if (ambiguous)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    /*
+                     * 找不到下一层，说明到达链底。
+                     */
+                    if (child == nullptr)
+                    {
+                        if (!a.is_fully_const())
+                            valid = false;
+
+                        break;
+                    }
+
+                    current = child;
+                }
+
+
+                if (!valid)
+                    continue;
+
+                if (chain.size() < 3)
+                    continue;
+
+
+                log("\n");
+                total_h3_candidates++;
+
+                log(
+                    "H3 PRIORITY MUX CHAIN CANDIDATE\n");
+
+                log(
+                    "  width       : %d\n",
+                    width);
+
+                log(
+                    "  depth       : %zu\n",
+                    chain.size());
+
+                log(
+                    "  priority    : high -> low\n");
+
+                for (size_t k = 0;
+                     k < chain.size();
+                     k++)
+                {
+                    log(
+                        "    [%zu] %s\n",
+                        k,
+                        log_id(chain[k]));
+                }
+
+
+                /*
+                 * ==================================================
+                 * H3 Stage 2
+                 *
+                 * Safety check:
+                 * 所有中间 Y 都必须只服务于上一层 A。
+                 * ==================================================
+                 */
+                bool private_chain = true;
+
+                for (size_t k = 1;
+                     k < chain.size();
+                     k++)
+                {
+                    if (!h3_intermediate_is_private(
+                            chain[k],
+                            chain[k - 1]))
+                    {
+                        private_chain = false;
+                        break;
+                    }
+                }
+
+                if (!private_chain)
+                {
+                    log(
+                        "H3 PRIORITY MUX CHAIN SKIPPED"
+                        " (shared intermediate Y)\n");
+
+                    continue;
+                }
+
+
+                /*
+                 * 保存原 selector。
+                 *
+                 * chain 顺序：
+                 *
+                 *   [0] highest priority
+                 *   [1] next
+                 *   ...
+                 *   [N-1] lowest priority
+                 */
+                std::vector<RTLIL::SigSpec>
+                    original_selectors;
+
+                for (auto mux : chain)
+                {
+                    original_selectors.push_back(
+                        h3_sigmap(
+                            mux->getPort(ID::S)));
+                }
+
+
+                /*
+                 * highest selector 保持原样。
+                 *
+                 * effective[0] = s0
+                 *
+                 * 后续：
+                 *
+                 * effective[1] =
+                 *     ~s0 & s1
+                 *
+                 * effective[2] =
+                 *     ~s0 & ~s1 & s2
+                 *
+                 * ...
+                 */
+                RTLIL::SigSpec prefix =
+                    h3_make_not(
+                        original_selectors[0]);
+
+                for (size_t k = 1;
+                     k < chain.size();
+                     k++)
+                {
+                    RTLIL::SigSpec effective =
+                        h3_make_and(
+                            prefix,
+                            original_selectors[k]);
+
+                    /*
+                     * 只修改 S。
+                     *
+                     * A / B / Y 完全保持不动。
+                     */
+                    chain[k]->setPort(
+                        ID::S,
+                        effective);
+
+
+                    /*
+                     * 最后一层后面不再需要 prefix。
+                     */
+                    if (k + 1 < chain.size())
+                    {
+                        RTLIL::SigSpec not_sel =
+                            h3_make_not(
+                                original_selectors[k]);
+
+                        prefix =
+                            h3_make_and(
+                                prefix,
+                                not_sel);
+                    }
+                }
+
+
+                total_h3_rebuilt++;
+
+                log(
+                    "H3 PRIORITY MUX CHAIN REBUILT\n");
+
+                log(
+                    "  width       : %d\n",
+                    width);
+
+                log(
+                    "  depth       : %zu\n",
+                    chain.size());
+
+                log(
+                    "  transform   : priority -> mutually-exclusive selectors\n");
+            }
+        }
+
         }
 
 
@@ -2576,6 +3171,14 @@ if (!profitable_pattern)
         log(
             "Total pair-swap rebuilt: %d\n",
             total_pair_rebuilt);
+
+            log(
+                "Total H3 candidates: %d\n",
+                total_h3_candidates);
+
+            log(
+                "Total H3 rebuilt: %d\n",
+                total_h3_rebuilt);
     }
 } PmuxOptPass;
 
