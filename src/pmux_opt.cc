@@ -34,6 +34,11 @@ struct PmuxInfo
     bool selector_bank_valid = false;
     bool full_decode = false;
 
+    // H2 four-lane cyclic rotation metadata.
+    bool h2_rotation_candidate = false;
+    int h2_lane_width = 0;
+    int h2_bank_count = 0;
+
     // control value -> 原 PMUX branch index
     std::vector<int> branch_for_value;
 };
@@ -119,6 +124,12 @@ struct PmuxOptPass : public Pass
              */
             dict<RTLIL::SigBit, RTLIL::Cell *> driver_map;
 
+            // H2 safety only:
+            // 记录 canonical bit 是否由多个不同 cell 驱动。
+            // driver_map 本身仍保持原有行为，避免影响
+            // Pattern A/B/C/D。
+            pool<RTLIL::SigBit> multi_driver_bits;
+
             for (auto driver_cell : module->cells())
             {
                 for (auto &conn :
@@ -131,8 +142,22 @@ struct PmuxOptPass : public Pass
                         sigmap(conn.second);
 
                     for (auto bit : output)
+                    {
+                        auto existing =
+                            driver_map.find(bit);
+
+                        if (existing != driver_map.end() &&
+                            existing->second != driver_cell)
+                        {
+                            multi_driver_bits.insert(bit);
+
+                                                    }
+
+                        // 保留原行为：
+                        // 后遇到的 driver 仍覆盖 driver_map。
                         driver_map[bit] =
                             driver_cell;
+                    }
                 }
             }
             /*
@@ -1332,9 +1357,448 @@ if (pattern_d_candidates > 0)
                     }
                 }
 
+                /*
+                 * H2 safety:
+                 * 每个原 PMUX selector bit 必须只有唯一 cell driver。
+                 *
+                 * 这里只限制 H2，不改变现有 Pattern A/B/C/D。
+                 */
+                bool h2_selector_drivers_unique = true;
 
+                for (int selector_index = 0;
+                     selector_index < info.s_width;
+                     selector_index++)
+                {
+                    RTLIL::SigSpec selector_bit =
+                        sigmap(
+                            info.port_s.extract(
+                                selector_index,
+                                1));
+
+                    
+                    if (selector_bit.size() != 1 ||
+                        multi_driver_bits.count(
+                            selector_bit.as_bit()))
+                    {
+                        h2_selector_drivers_unique = false;
+                        break;
+                    }
+                }
+
+                // H2：低两位控制轮换，
+                // 其余控制位选择数据组。
+                if (info.selector_bank_valid &&
+                    info.full_decode &&
+                    h2_selector_drivers_unique &&
+                    info.ctrl_width >= 3 &&
+                    info.ctrl_width <= 10 &&
+                    info.width >= 4 &&
+                    info.width % 4 == 0)
+                {
+                    const int lane_width = info.width / 4;
+                    const int bank_count =
+                        (1 << info.ctrl_width) / 4;
+
+                    bool rotation_match = true;
+                    bool meaningful_rotation = false;
+
+                    for (int bank = 0;
+                         bank < bank_count && rotation_match;
+                         bank++)
+                    {
+                        const int base_branch =
+                            info.branch_for_value[bank * 4];
+
+                        RTLIL::SigSpec base_data = sigmap(
+                            info.port_b.extract(
+                                base_branch * info.width,
+                                info.width));
+
+                        // 第一版拒绝数据中的 X/Z 常量。
+                        for (auto bit : base_data)
+                        {
+                            if (bit.wire == nullptr &&
+                                bit.data != RTLIL::State::S0 &&
+                                bit.data != RTLIL::State::S1)
+                            {
+                                rotation_match = false;
+                                break;
+                            }
+                        }
+
+                        for (int phase = 1;
+                             phase < 4 && rotation_match;
+                             phase++)
+                        {
+                            const int branch =
+                                info.branch_for_value[
+                                    bank * 4 + phase];
+
+                            RTLIL::SigSpec actual = sigmap(
+                                info.port_b.extract(
+                                    branch * info.width,
+                                    info.width));
+
+                            RTLIL::SigSpec expected;
+
+                            for (int lane = 0; lane < 4; lane++)
+                            {
+                                const int source_lane =
+                                    (lane + phase) % 4;
+
+                                expected.append(
+                                    base_data.extract(
+                                        source_lane * lane_width,
+                                        lane_width));
+                            }
+
+                            if (actual != expected)
+                            {
+                                rotation_match = false;
+                                break;
+                            }
+
+                            if (actual != base_data)
+                                meaningful_rotation = true;
+                        }
+                    }
+
+                    if (rotation_match && meaningful_rotation)
+                    {
+                        info.h2_rotation_candidate = true;
+                        info.h2_lane_width = lane_width;
+                        info.h2_bank_count = bank_count;
+
+                        log("\nH2 ROTATION CANDIDATE (analysis only)\n");
+                        log("  cell       : %s\n", log_id(info.cell));
+                        log("  control    : %s\n",
+                            log_signal(info.control));
+                        log("  width      : %d\n", info.width);
+                        log("  lane_width : %d\n", lane_width);
+                        log("  banks      : %d\n", bank_count);
+                        log("  coverage   : 100%%\n");
+                        log("  exceptions : 0\n");
+                        log("  gain       : not estimated\n");
+                    }
+                }
                 pmux_infos.push_back(
                     info);
+            }
+
+
+            /*
+             * ==================================================
+             * H2 Stage 2
+             *
+             * 四 lane 循环换位重构：
+             *
+             * control[k-1:2] -> bank mux tree
+             * control[0]     -> rotate 1 lane
+             * control[1]     -> rotate 2 lanes
+             *
+             * detector 已保证：
+             * - full decode
+             * - 4 个等宽 lane
+             * - 低两位为 phase
+             * - 零 exception
+             * ==================================================
+             */
+            std::vector<bool> h2_reserved(
+                pmux_infos.size(),
+                false);
+
+            for (int h2_index = 0;
+                 h2_index < int(pmux_infos.size());
+                 h2_index++)
+            {
+                auto &info =
+                    pmux_infos[h2_index];
+
+                if (!info.h2_rotation_candidate)
+                    continue;
+
+                h2_reserved[h2_index] = true;
+
+                const int width =
+                    info.width;
+
+                const int lane_width =
+                    info.h2_lane_width;
+
+                const int bank_count =
+                    info.h2_bank_count;
+
+                const int bank_ctrl_width =
+                    info.ctrl_width - 2;
+
+                if (lane_width <= 0 ||
+                    lane_width * 4 != width ||
+                    bank_ctrl_width <= 0 ||
+                    bank_count !=
+                        (1 << bank_ctrl_width))
+                {
+                    log_error(
+                        "H2 internal parameter mismatch.\n");
+                }
+
+                RTLIL::IdString old_name =
+                    info.cell->name;
+
+                RTLIL::SigSpec old_y =
+                    info.port_y;
+
+
+                /*
+                 * 创建 WIDTH-bit 2:1 mux。
+                 */
+                auto h2_make_mux =
+                    [&](RTLIL::SigSpec in_a,
+                        RTLIL::SigSpec in_b,
+                        RTLIL::SigSpec select)
+                    -> RTLIL::SigSpec
+                {
+                    if (in_a.size() != width ||
+                        in_b.size() != width ||
+                        select.size() != 1)
+                    {
+                        log_error(
+                            "H2 mux width mismatch.\n");
+                    }
+
+                    RTLIL::Wire *wire =
+                        module->addWire(
+                            NEW_ID,
+                            width);
+
+                    RTLIL::Cell *cell =
+                        module->addCell(
+                            NEW_ID,
+                            ID($mux));
+
+                    cell->setParam(
+                        ID::WIDTH,
+                        width);
+
+                    cell->setPort(
+                        ID::A,
+                        in_a);
+
+                    cell->setPort(
+                        ID::B,
+                        in_b);
+
+                    cell->setPort(
+                        ID::S,
+                        select);
+
+                    cell->setPort(
+                        ID::Y,
+                        RTLIL::SigSpec(wire));
+
+                    return RTLIL::SigSpec(wire);
+                };
+
+
+                /*
+                 * 四 lane 循环换位。
+                 *
+                 * RTLIL SigSpec 按低位到高位组织：
+                 *
+                 * shift=1:
+                 * lane0 <- lane1
+                 * lane1 <- lane2
+                 * lane2 <- lane3
+                 * lane3 <- lane0
+                 */
+                auto h2_rotate =
+                    [&](RTLIL::SigSpec data,
+                        int shift)
+                    -> RTLIL::SigSpec
+                {
+                    RTLIL::SigSpec rotated;
+
+                    for (int lane = 0;
+                         lane < 4;
+                         lane++)
+                    {
+                        int source_lane =
+                            (lane + shift) % 4;
+
+                        rotated.append(
+                            data.extract(
+                                source_lane *
+                                    lane_width,
+                                lane_width));
+                    }
+
+                    return rotated;
+                };
+
+
+                /*
+                 * 每个 bank 只保留 phase=0：
+                 *
+                 * control value = bank * 4
+                 */
+                std::vector<RTLIL::SigSpec>
+                    bank_level;
+
+                for (int bank = 0;
+                     bank < bank_count;
+                     bank++)
+                {
+                    int branch =
+                        info.branch_for_value[
+                            bank * 4];
+
+                    if (branch < 0 ||
+                        branch >= info.s_width)
+                    {
+                        log_error(
+                            "H2 invalid branch mapping.\n");
+                    }
+
+                    bank_level.push_back(
+                        info.port_b.extract(
+                            branch * width,
+                            width));
+                }
+
+
+                /*
+                 * 用 control[2], control[3], ...
+                 * 构造二叉 mux tree。
+                 *
+                 * level 0:
+                 *   bank0/1, bank2/3, ...
+                 *
+                 * level 1:
+                 *   group0/1, ...
+                 */
+                for (int level = 0;
+                     level < bank_ctrl_width;
+                     level++)
+                {
+                    if (bank_level.size() < 2 ||
+                        (bank_level.size() & 1))
+                    {
+                        log_error(
+                            "H2 bank mux tree mismatch.\n");
+                    }
+
+                    std::vector<RTLIL::SigSpec>
+                        next_level;
+
+                    RTLIL::SigSpec select =
+                        info.control.extract(
+                            2 + level,
+                            1);
+
+                    for (int index = 0;
+                         index <
+                             int(bank_level.size());
+                         index += 2)
+                    {
+                        next_level.push_back(
+                            h2_make_mux(
+                                bank_level[index],
+                                bank_level[index + 1],
+                                select));
+                    }
+
+                    bank_level.swap(
+                        next_level);
+                }
+
+                if (bank_level.size() != 1)
+                {
+                    log_error(
+                        "H2 final bank selection mismatch.\n");
+                }
+
+                RTLIL::SigSpec bank_data =
+                    bank_level[0];
+
+
+                /*
+                 * phase bit 0:
+                 *
+                 * 0 -> rotate 0
+                 * 1 -> rotate 1
+                 */
+                RTLIL::SigSpec stage1 =
+                    h2_make_mux(
+                        bank_data,
+                        h2_rotate(
+                            bank_data,
+                            1),
+                        info.control.extract(
+                            0,
+                            1));
+
+
+                /*
+                 * phase bit 1:
+                 *
+                 * 0 -> 保持
+                 * 1 -> 再 rotate 2
+                 *
+                 * phase:
+                 * 00 -> 0
+                 * 01 -> 1
+                 * 10 -> 2
+                 * 11 -> 3
+                 */
+                RTLIL::SigSpec final_data =
+                    h2_make_mux(
+                        stage1,
+                        h2_rotate(
+                            stage1,
+                            2),
+                        info.control.extract(
+                            1,
+                            1));
+
+
+                /*
+                 * 删除原大 PMUX，
+                 * 新结构接回原输出。
+                 */
+                module->remove(
+                    info.cell);
+
+                info.cell = nullptr;
+
+                module->connect(
+                    old_y,
+                    final_data);
+
+
+                log("\n");
+                log("H2 ROTATION REBUILT\n");
+
+                log(
+                    "  old cell    : %s\n",
+                    log_id(old_name));
+
+                log(
+                    "  width       : %d\n",
+                    width);
+
+                log(
+                    "  lane_width  : %d\n",
+                    lane_width);
+
+                log(
+                    "  banks       : %d\n",
+                    bank_count);
+
+                log(
+                    "  bank_ctrl   : %d bits\n",
+                    bank_ctrl_width);
+
+                log(
+                    "  phase       : control[1:0]\n");
             }
 
 
@@ -1353,7 +1817,8 @@ if (pattern_d_candidates > 0)
                  i < int(pmux_infos.size());
                  i++)
             {
-                if (grouped[i])
+                if (grouped[i] ||
+                    h2_reserved[i])
                     continue;
 
                 if (!pmux_infos[i].
@@ -1372,7 +1837,8 @@ if (pattern_d_candidates > 0)
                      j < int(pmux_infos.size());
                      j++)
                 {
-                    if (grouped[j])
+                    if (grouped[j] ||
+                        h2_reserved[j])
                         continue;
 
                     if (!pmux_infos[j].
