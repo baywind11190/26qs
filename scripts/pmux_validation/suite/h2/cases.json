@@ -1,0 +1,226 @@
+{
+  "seed": "fixed-1 (deterministic generator, no randomness)",
+  "reference_semantics": "phase = ctrl[1:0]; bank = ctrl[high bits]; lane i output = bank lane (i+phase)%4; lane0 = LSB",
+  "cases": [
+    {
+      "name": "h2p_c3_lw1",
+      "kind": "positive",
+      "ctrl_width": 3,
+      "lane_width": 1,
+      "width": 4,
+      "banks": 2,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "2 banks, lane=1"
+    },
+    {
+      "name": "h2p_c3_lw2",
+      "kind": "positive",
+      "ctrl_width": 3,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 2,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "2 banks, lane=2"
+    },
+    {
+      "name": "h2p_c3_lw4",
+      "kind": "positive",
+      "ctrl_width": 3,
+      "lane_width": 4,
+      "width": 16,
+      "banks": 2,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "2 banks, lane=4"
+    },
+    {
+      "name": "h2p_c4_lw1",
+      "kind": "positive",
+      "ctrl_width": 4,
+      "lane_width": 1,
+      "width": 4,
+      "banks": 4,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "4 banks, lane=1"
+    },
+    {
+      "name": "h2p_c4_lw2",
+      "kind": "positive",
+      "ctrl_width": 4,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 4,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "4 banks, lane=2"
+    },
+    {
+      "name": "h2p_c4_lw4",
+      "kind": "positive",
+      "ctrl_width": 4,
+      "lane_width": 4,
+      "width": 16,
+      "banks": 4,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "4 banks, lane=4"
+    },
+    {
+      "name": "h2p_c4_lw8",
+      "kind": "positive",
+      "ctrl_width": 4,
+      "lane_width": 8,
+      "width": 32,
+      "banks": 4,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "4 banks, lane=8"
+    },
+    {
+      "name": "h2p_c5_lw2",
+      "kind": "positive",
+      "ctrl_width": 5,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 8,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "8 banks, lane=2"
+    },
+    {
+      "name": "h2p_c5_lw4",
+      "kind": "positive",
+      "ctrl_width": 5,
+      "lane_width": 4,
+      "width": 16,
+      "banks": 8,
+      "variant": "basic",
+      "expect": "H2_TRIGGER",
+      "desc": "8 banks, lane=4"
+    },
+    {
+      "name": "h2p_c4_lw2_shuffled",
+      "kind": "positive",
+      "ctrl_width": 4,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 4,
+      "variant": "shuffled",
+      "expect": "H2_TRIGGER",
+      "desc": "4 banks, lane=2, case 值乱序"
+    },
+    {
+      "name": "h2n_wrong_rotation",
+      "kind": "reject",
+      "ctrl_width": 4,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 4,
+      "variant": "wrong_rotation",
+      "expect": "H2_REJECT",
+      "desc": "phase=1 左旋（错误方向）"
+    },
+    {
+      "name": "h2n_partial_decode",
+      "kind": "reject",
+      "ctrl_width": 4,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 4,
+      "variant": "partial_decode",
+      "expect": "H2_REJECT",
+      "desc": "缺少一个 control 值分支"
+    },
+    {
+      "name": "h2n_no_rotation",
+      "kind": "reject",
+      "ctrl_width": 3,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 2,
+      "variant": "no_rotation",
+      "expect": "H2_REJECT",
+      "desc": "所有 phase 同数据（无意义旋转）"
+    },
+    {
+      "name": "h2n_xz_data",
+      "kind": "reject",
+      "ctrl_width": 3,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 2,
+      "variant": "xz_data",
+      "expect": "H2_REJECT",
+      "desc": "末尾分支数据为常量 x"
+    },
+    {
+      "name": "h2n_width_not_div4",
+      "kind": "reject",
+      "ctrl_width": 4,
+      "lane_width": null,
+      "width": 6,
+      "banks": null,
+      "variant": "width_not_div4",
+      "expect": "H2_REJECT",
+      "desc": "数据宽度 6 不整除 4"
+    },
+    {
+      "name": "h2n_ctrl2",
+      "kind": "reject",
+      "ctrl_width": 2,
+      "lane_width": 2,
+      "width": 8,
+      "banks": 1,
+      "variant": "ctrl_width_below",
+      "expect": "H2_REJECT",
+      "desc": "控制宽度 2 低于下限（no_rotation 双保险）"
+    },
+    {
+      "name": "h2n_diff_control",
+      "kind": "reject",
+      "ctrl_width": 4,
+      "lane_width": 2,
+      "width": 8,
+      "banks": null,
+      "variant": "different_control",
+      "expect": "H2_REJECT_OR_OTHER_PATTERN",
+      "desc": "两个 pmux 使用不同 control（不构成同一 selector 组；不禁止其他 Pattern 合法优化）"
+    },
+    {
+      "name": "h2n_non_target",
+      "kind": "reject",
+      "ctrl_width": 1,
+      "lane_width": null,
+      "width": 8,
+      "banks": null,
+      "variant": "non_target_mux",
+      "expect": "H2_REJECT",
+      "desc": "普通 2:1 mux，无 $pmux 结构"
+    },
+    {
+      "name": "h2p_c10_lw1",
+      "kind": "positive",
+      "ctrl_width": 10,
+      "lane_width": 1,
+      "width": 4,
+      "banks": 256,
+      "variant": "ctrl_width_max_inside",
+      "expect": "H2_TRIGGER",
+      "desc": "控制宽度 10 边界（上限内）"
+    },
+    {
+      "name": "h2n_ctrl11",
+      "kind": "reject",
+      "ctrl_width": 11,
+      "lane_width": 1,
+      "width": 4,
+      "banks": 512,
+      "variant": "ctrl_width_above",
+      "expect": "H2_REJECT",
+      "desc": "控制宽度 11 超出上限（512 banks 大例）"
+    }
+  ]
+}

@@ -465,8 +465,12 @@ python3 tools/collect_baseline.py
 Generated CSV:
 
 ```text
-results/baseline/baseline_summary.csv
+results/01_基础基线_baseline/baseline_summary.csv
 ```
+
+> 迁移说明（2026-09-20 目录整理）：原 `results/baseline/baseline_summary.csv`
+> 已迁移至上述路径（见 `results/90_整理记录_management/2026-09-20_212729/新旧路径对照.csv`）；
+> 本文其余内容未改动。
 
 Current summary values:
 

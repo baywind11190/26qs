@@ -1,0 +1,48 @@
+{
+  "suite_version": "official4-v1",
+  "scope": "官方公开四例（test1~test4）+ 形式化/测量自检素材；四例输入冻结，不随算法提交更换。",
+  "frozen_from": "由已验收套件 h1h2-p3-v1 的四例与 selfcheck 条目复制；逐条 origin 来源见 source 字段（源自 2026-09-22_H1H2-P3_1dceb17_第01轮 冻结输入）。",
+  "note": "预检仅核对本清单文件；同包 suite/（h1h2-p3-v1）内的 H2、规模、回归资产保留原位、不在默认四例流程中使用。本清单不代表官方隐藏题。",
+  "files": [
+    {
+      "file": "tree/pmux_case/competition_case/test1/test1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test1/test1.v",
+      "sha256": "2ac40f33e7395f1fe8437e3da232733e32e79607e37871b616bab8184b6fd4aa"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test2/test2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test2/test2.v",
+      "sha256": "82ef15cf6e75d502633efea71c20d93b0447001974d558a7739dbb1d7bfdf88f"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test3/test3.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test3/test3.v",
+      "sha256": "46ef97a9c39b8b38d00cc6a7e273890e3aea1700e77c141aa2213d33a8b02a61"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test4/test4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test4/test4.v",
+      "sha256": "87043df2ba5293da863ddd96525a548640fb826f7012d6d2af9920a1e5a0d384"
+    },
+    {
+      "file": "selfcheck/positive_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gold.v",
+      "sha256": "f34f15d142a3bfcef6ffead3027d264542216b89616308dcddb099583aa11b60"
+    },
+    {
+      "file": "selfcheck/positive_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gate.v",
+      "sha256": "c5fd539cdcd6d19ac304de28023169c5a1889fdf1f5246fa3bd2e9f83a1af97d"
+    },
+    {
+      "file": "selfcheck/negative_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gold.v",
+      "sha256": "9d1785fb7cba9ee427a34c3aa67e29cdb50fc03ab12cae9f086c4fa2d6c85ea9"
+    },
+    {
+      "file": "selfcheck/negative_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gate.v",
+      "sha256": "b6393ea7992e66337b3d32c68b7fbe19c7e7fd5cb88fe0a0a8cc8837f42681ae"
+    }
+  ]
+}

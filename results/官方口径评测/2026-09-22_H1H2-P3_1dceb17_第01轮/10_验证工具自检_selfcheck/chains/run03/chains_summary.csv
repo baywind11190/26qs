@@ -1,0 +1,29 @@
+case,chain,rc,state,proved,total,failed,failed_detail,error
+test1,c1_local,0,PASS,47,47,0,,
+test1,c2_stage,0,PASS,47,47,0,,
+test1,c3a_rtl_opt,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN,
+test1,c3b_rtl_base,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN,
+test1,c4a_rtl_opt_mapped,2,FAIL_PARTITIONS,0,43,43,test1.state=FAIL; test1.q7=UNKNOWN; test1.q6=UNKNOWN; test1.q5=UNKNOWN; test1.q4=UNKNOWN; test1.q3=UNKNOWN; test1.q2=UNKNOWN; test1.q1=UNKNOWN; test1.q0=UNKNOWN; test1.por6_out=FAIL; test1.inter0009_out.11=UNKNOWN; test1.inter0009_out.10=UNKNOWN; test1.inter0009_out.9=UNKNOWN; test1.inter0009_out.8=UNKNOWN; test1.inter0009_out.7=UNKNOWN; test1.inter0009_out.6=UNKNOWN; test1.inter0009_out.5=UNKNOWN; test1.inter0009_out.4=UNKNOWN; test1.inter0009_out.3=UNKNOWN; test1.inter0009_out.2=UNKNOWN; test1.inter0009_out.1=UNKNOWN; test1.inter0009_out.0=UNKNOWN; test1.inter0008_out.11=UNKNOWN; test1.inter0008_out.10=UNKNOWN; test1.inter0008_out.9=UNKNOWN; test1.inter0008_out.8=UNKNOWN; test1.inter0008_out.7=UNKNOWN; test1.inter0008_out.6=UNKNOWN; test1.inter0008_out.5=UNKNOWN; test1.inter0008_out.4=UNKNOWN; test1.inter0008_out.3=UNKNOWN; test1.inter0008_out.2=UNKNOWN; test1.inter0008_out.1=UNKNOWN; test1.inter0008_out.0=UNKNOWN; test1.inter0007_out=FAIL; test1.i7=UNKNOWN; test1.i6=UNKNOWN; test1.i5=UNKNOWN; test1.i4=UNKNOWN; test1.i3=UNKNOWN; test1.i2=UNKNOWN; test1.i1=UNKNOWN; test1.i0=UNKNOWN,
+test1,c4b_rtl_base_mapped,2,FAIL_PARTITIONS,0,43,43,test1.state=FAIL; test1.q7=UNKNOWN; test1.q6=UNKNOWN; test1.q5=UNKNOWN; test1.q4=UNKNOWN; test1.q3=UNKNOWN; test1.q2=UNKNOWN; test1.q1=UNKNOWN; test1.q0=UNKNOWN; test1.por6_out=FAIL; test1.inter0009_out.11=UNKNOWN; test1.inter0009_out.10=UNKNOWN; test1.inter0009_out.9=UNKNOWN; test1.inter0009_out.8=UNKNOWN; test1.inter0009_out.7=UNKNOWN; test1.inter0009_out.6=UNKNOWN; test1.inter0009_out.5=UNKNOWN; test1.inter0009_out.4=UNKNOWN; test1.inter0009_out.3=UNKNOWN; test1.inter0009_out.2=UNKNOWN; test1.inter0009_out.1=UNKNOWN; test1.inter0009_out.0=UNKNOWN; test1.inter0008_out.11=UNKNOWN; test1.inter0008_out.10=UNKNOWN; test1.inter0008_out.9=UNKNOWN; test1.inter0008_out.8=UNKNOWN; test1.inter0008_out.7=UNKNOWN; test1.inter0008_out.6=UNKNOWN; test1.inter0008_out.5=UNKNOWN; test1.inter0008_out.4=UNKNOWN; test1.inter0008_out.3=UNKNOWN; test1.inter0008_out.2=UNKNOWN; test1.inter0008_out.1=UNKNOWN; test1.inter0008_out.0=UNKNOWN; test1.inter0007_out=FAIL; test1.i7=UNKNOWN; test1.i6=UNKNOWN; test1.i5=UNKNOWN; test1.i4=UNKNOWN; test1.i3=UNKNOWN; test1.i2=UNKNOWN; test1.i1=UNKNOWN; test1.i0=UNKNOWN,
+test1,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,conflicting matches for gold bit \i0 [5]: \i0 [5] vs \i0 [1]
+test2,c1_local,0,PASS,6,6,0,,
+test2,c2_stage,0,PASS,6,6,0,,
+test2,c3a_rtl_opt,0,PASS,6,6,0,,
+test2,c3b_rtl_base,0,PASS,6,6,0,,
+test2,c4a_rtl_opt_mapped,0,PASS,1,1,0,,
+test2,c4b_rtl_base_mapped,0,PASS,1,1,0,,
+test2,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,A problem occurred during equivalence check.
+test3,c1_local,0,PASS,6,6,0,,
+test3,c2_stage,0,PASS,6,6,0,,
+test3,c3a_rtl_opt,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN,
+test3,c3b_rtl_base,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN,
+test3,c4a_rtl_opt_mapped,2,FAIL_PARTITIONS,1,4,3,test3.sr=UNKNOWN; test3.rw=FAIL; test3.gpioout=UNKNOWN,
+test3,c4b_rtl_base_mapped,2,FAIL_PARTITIONS,1,4,3,test3.sr=UNKNOWN; test3.rw=FAIL; test3.gpioout=UNKNOWN,
+test3,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,conflicting matches for gold bit \gpioout [6]: \gpioout [6] vs \gpioout [1]
+test4,c1_local,0,PASS,5,5,0,,
+test4,c2_stage,0,PASS,5,5,0,,
+test4,c3a_rtl_opt,0,PASS,5,5,0,,
+test4,c3b_rtl_base,0,PASS,5,5,0,,
+test4,c4a_rtl_opt_mapped,2,FAIL_PARTITIONS,4,5,1,test4.dataout=UNKNOWN,
+test4,c4b_rtl_base_mapped,2,FAIL_PARTITIONS,4,5,1,test4.dataout=UNKNOWN,
+test4,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,A problem occurred during equivalence check.

@@ -69,7 +69,7 @@
             "args": [
                 "-v",
                 "-o",
-                "results/pmux_perf.txt",
+                "results/04_早期调试_early_debug/pmux_perf.txt",
                 "yosys",
                 "-m",
                 "./build/pmux_opt.so",

@@ -1,0 +1,14 @@
+{
+  "mode": "h1h2",
+  "target": 1000,
+  "nodes_generator_caliber": 952,
+  "units": {
+    "mode": "h1h2",
+    "a": 72,
+    "h2": 8
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "49f3113c5563fa2fa8a57324b4f53623257e6df9482cec0be1db7397efc6489b",
+  "elapsed_s": 4.43
+}

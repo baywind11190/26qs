@@ -1,0 +1,13 @@
+{
+  "mode": "pattern_a",
+  "target": 1000,
+  "nodes_generator_caliber": 996,
+  "units": {
+    "mode": "pattern_a",
+    "units": 166
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "6cb0dd76042c7a4d384f2b019eae7d6012b528233c8cd4171fd23d2a093058a9",
+  "elapsed_s": 2.13
+}

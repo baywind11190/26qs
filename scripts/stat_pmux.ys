@@ -3,4 +3,4 @@ hierarchy -check -top pmux_basic
 proc
 opt_clean
 
-tee -o results/pmux_stat.json stat -json
+tee -o results/04_早期调试_early_debug/pmux_stat.json stat -json

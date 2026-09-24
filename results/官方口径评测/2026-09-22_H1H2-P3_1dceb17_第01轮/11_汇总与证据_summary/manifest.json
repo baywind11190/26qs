@@ -1,0 +1,23 @@
+{
+  "round": "2026-09-22_H1H2-P3_1dceb17_第01轮",
+  "target_commit": "1dceb170c706de2aab15af23e377f328b32f0aab",
+  "source_sha256": "92c401ddabda72a802514fdab9e4eb4dee03ccc305009a7540ab66d6df1441f8",
+  "plugin_sha256": "d19d772f6f5cff4fb2250effbdf8380e612c8ed6ee02a5b06f6f86414926de63",
+  "flow": "synth_intel cycloneiv; optimized inserts pmux_opt after fsm opt and before wreduce",
+  "final_verdict": "CONDITIONAL_PASS_PLUGIN_P3",
+  "public_mean_comb_reduction_pct": 11.15967365967366,
+  "dff_nonincrease_all": true,
+  "regression_formal": {
+    "entries": 102,
+    "all_pass": true
+  },
+  "scale_formal": {
+    "entries": 11,
+    "all_c1_c2_pass": true
+  },
+  "formal_limits": {
+    "rtl_mapped": "not closed for all public cases",
+    "mapped_pair": "tool_or_config_error all public cases"
+  },
+  "final_builtin_pass": "NOT_RUN"
+}

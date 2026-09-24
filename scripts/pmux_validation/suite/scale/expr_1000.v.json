@@ -1,0 +1,13 @@
+{
+  "mode": "expr",
+  "target": 1000,
+  "nodes_generator_caliber": 999,
+  "units": {
+    "mode": "expr",
+    "units": 111
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "0e61ada9e278b164ec86055b6ba4454b2552de9575f705bfee5a7371eb5a6d2b",
+  "elapsed_s": 0.97
+}

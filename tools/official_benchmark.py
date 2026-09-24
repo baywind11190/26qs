@@ -685,7 +685,8 @@ def main():
     run_dir = (
         ROOT
         / "results"
-        / "official_eval"
+        # 2026-09-20 目录整理：输出统一到 results/02_公开评测_public_eval（原 results/official_eval）
+        / "02_公开评测_public_eval"
         / run_id
     )
 

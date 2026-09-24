@@ -1,0 +1,17 @@
+{
+  "mode": "random",
+  "target": 1000,
+  "nodes_generator_caliber": 976,
+  "units": {
+    "mode": "random",
+    "seed": 42,
+    "a": 28,
+    "c": 37,
+    "n": 17,
+    "h2": 6
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "c9470286aea5eba14879c540603b8858f395c1b6fc17f7c2b56c2edbb4a9bd3d",
+  "elapsed_s": 2.53
+}

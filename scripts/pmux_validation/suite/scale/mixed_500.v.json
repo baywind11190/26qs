@@ -1,0 +1,13 @@
+{
+  "mode": "mixed",
+  "target": 500,
+  "nodes_generator_caliber": 500,
+  "units": {
+    "mode": "mixed",
+    "units": 75
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "046884dc4147280bbc9fab6c528a55d330b6d3edcb159fc48c35baedc367e40b",
+  "elapsed_s": 0.87
+}

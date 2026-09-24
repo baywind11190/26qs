@@ -1,0 +1,572 @@
+{
+  "suite_version": "h1h2-p3-v1",
+  "origin_algorithm_commit": "1dceb170c706de2aab15af23e377f328b32f0aab",
+  "note": "Fixed regression suite, not tests extracted from each future target. H2/scale are local generated inputs; not unseen official tests.",
+  "files": [
+    {
+      "file": "tree/pmux_case/competition_case/test1/test1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test1/test1.v",
+      "sha256": "2ac40f33e7395f1fe8437e3da232733e32e79607e37871b616bab8184b6fd4aa"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test2/test2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test2/test2.v",
+      "sha256": "82ef15cf6e75d502633efea71c20d93b0447001974d558a7739dbb1d7bfdf88f"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test3/test3.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test3/test3.v",
+      "sha256": "46ef97a9c39b8b38d00cc6a7e273890e3aea1700e77c141aa2213d33a8b02a61"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test4/test4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test4/test4.v",
+      "sha256": "87043df2ba5293da863ddd96525a548640fb826f7012d6d2af9920a1e5a0d384"
+    },
+    {
+      "file": "tree/regression/pattern_a/a1_width4_bit0.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a1_width4_bit0.v",
+      "sha256": "69e98ef32f661fd8ff389b5551985752ab8fd35e9495092086ba13b22e1d8bc4"
+    },
+    {
+      "file": "tree/regression/pattern_a/a2_width4_bit1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a2_width4_bit1.v",
+      "sha256": "770ca226f594011eb4d5e5bee0e2591be4ed66fe858fbc5f0fa58d4be1c34d42"
+    },
+    {
+      "file": "tree/regression/pattern_a/a3_width8_bit2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a3_width8_bit2.v",
+      "sha256": "273244fffd85466f00c7ebba09329dd501800d2f16b43e449943e96b7a77b8c8"
+    },
+    {
+      "file": "tree/regression/pattern_a/a4_half_swap.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a4_half_swap.v",
+      "sha256": "ac26fc31e38bb0a1c3188d6b5248885c815858fc3b748781db1568ed5af90993"
+    },
+    {
+      "file": "tree/regression/pattern_a/a5_one_special.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a5_one_special.v",
+      "sha256": "cf979eedfdcdbb6b32183383c47f9b1db246621a7c0ff4c1fda7e3f7e12ff905"
+    },
+    {
+      "file": "tree/regression/pattern_a/a6_shuffled_order.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a6_shuffled_order.v",
+      "sha256": "209584048bf9a06382148fcc6eed4e6f95f5cc157baeefe54c65b0e0f5a97f15"
+    },
+    {
+      "file": "tree/regression/pattern_a/a7_partial_decode.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a7_partial_decode.v",
+      "sha256": "8dbe7340538c6f0f52e65c6395d8f01b084e522f5c7fb0ff84127d4ad853a67d"
+    },
+    {
+      "file": "tree/regression/pattern_a/a8_false_positive.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a8_false_positive.v",
+      "sha256": "a31a74384e579ac4d4fb7d6008843e24534763b6b64c350c16ca76c61ea6095b"
+    },
+    {
+      "file": "tree/regression/pattern_a/a9_three_pmux.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_a/a9_three_pmux.v",
+      "sha256": "be2394cc22aaa59073f2639debaf7c926a3028f2659f69bfd0ac6ee3f35d4e5a"
+    },
+    {
+      "file": "tree/regression/pattern_b/b10_two_controls.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b10_two_controls.v",
+      "sha256": "8fe7d2a989aaa7596af40e4eebac515d238a911c4830bd5cade96d74a9491aaa"
+    },
+    {
+      "file": "tree/regression/pattern_b/b11_repeated_bits.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b11_repeated_bits.v",
+      "sha256": "b1713b823ae1416722522cdb046a4be88ae4f00b77c051e296f7007435fe4cb0"
+    },
+    {
+      "file": "tree/regression/pattern_b/b12_zero_selector.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b12_zero_selector.v",
+      "sha256": "b305e743d2f73e115d81817ad73d171dcac1b8518239dae4370d4dedaf4da2c3"
+    },
+    {
+      "file": "tree/regression/pattern_b/b13_combinational.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b13_combinational.v",
+      "sha256": "0caeafe550d8f0413fbeee8cf9f00b9718bab21cb4570515f4695fb9cc77f19f"
+    },
+    {
+      "file": "tree/regression/pattern_b/b14_independent_pmux.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b14_independent_pmux.v",
+      "sha256": "1e4c501a3820bb07c71f57a1aba476625b00e0a39670d7644d2cd486d9dac4dc"
+    },
+    {
+      "file": "tree/regression/pattern_b/b1_basic.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b1_basic.v",
+      "sha256": "5088af844a4b7b0647ee6d6bb28c14dd8fb1def67e62d917784c80b99ec46855"
+    },
+    {
+      "file": "tree/regression/pattern_b/b2_width12.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b2_width12.v",
+      "sha256": "079f815b3cd49299d786bf5aad4f86e919e93b43fd5e05bf1b8419711bc51d8c"
+    },
+    {
+      "file": "tree/regression/pattern_b/b3_partial_decode.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b3_partial_decode.v",
+      "sha256": "8693f892b458c87f0a4d19f8c3d09003377051e8f57509cca8a55d48e5178876"
+    },
+    {
+      "file": "tree/regression/pattern_b/b4_mixed_expression.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b4_mixed_expression.v",
+      "sha256": "b9a2fab2e638bb7ed29af369fb11603fe40a8d18496f13b62f0c1e83f9407138"
+    },
+    {
+      "file": "tree/regression/pattern_b/b5_no_control_data.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b5_no_control_data.v",
+      "sha256": "d375bb504f8663c932be7e5d326a145140ca7e0219db43406ae99719a7f117b5"
+    },
+    {
+      "file": "tree/regression/pattern_b/b6_expression_only.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b6_expression_only.v",
+      "sha256": "e968f9a7c1368a3d879415655b7ad2a20b271886529d4372a5bdf82762d97b0d"
+    },
+    {
+      "file": "tree/regression/pattern_b/b7_control1_boundary.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b7_control1_boundary.v",
+      "sha256": "e5079e76e2a73afcb380735af415a2e35c2a87a910ade89eedd0162659f54f3e"
+    },
+    {
+      "file": "tree/regression/pattern_b/b8_control8.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b8_control8.v",
+      "sha256": "54149149c5efd2690f407c99e7e10bc68a15cd9566f7332d4c57f143068eb16e"
+    },
+    {
+      "file": "tree/regression/pattern_b/b9_shuffled_order.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_b/b9_shuffled_order.v",
+      "sha256": "e442d118c64b08a228021afc9e641f7cbbbc7aec3d8784b5ec8ce0ac8a8ab5dd"
+    },
+    {
+      "file": "tree/regression/pattern_c/c1_partial_bits.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c1_partial_bits.v",
+      "sha256": "7c8c515d6a20d1423ba5279960846f1c121918d7d6116411e7a9823cea70275b"
+    },
+    {
+      "file": "tree/regression/pattern_c/c2_full_expression.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c2_full_expression.v",
+      "sha256": "cc053413a0258673974ce9e0592f64b8ed766ed4e1b49fb4d7aa7fbe5a78856e"
+    },
+    {
+      "file": "tree/regression/pattern_c/c3_nested_expression.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c3_nested_expression.v",
+      "sha256": "bc9d6ce533df2bca2862c095eeb22fc40ebf211c8bb90413e5bd1c6a62470d9e"
+    },
+    {
+      "file": "tree/regression/pattern_c/c4_reduction_ops.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c4_reduction_ops.v",
+      "sha256": "e3d12c56349c43fa15f7cb4aed97bd0c2112166c818bdfc12a190f29501525cc"
+    },
+    {
+      "file": "tree/regression/pattern_c/c5_partial_decode.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c5_partial_decode.v",
+      "sha256": "37d001502d5efee672ece15e1ee397c02a8b1a1741045fd95549860f045d1030"
+    },
+    {
+      "file": "tree/regression/pattern_c/c6_combinational.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c6_combinational.v",
+      "sha256": "f4a734f291e323fc77c6247433ab697ebd5909d1ee6253930e9fc53b537d8fb4"
+    },
+    {
+      "file": "tree/regression/pattern_c/c7_external_dependency.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c7_external_dependency.v",
+      "sha256": "6ba156e874ffcebc05fa4ee9409e6213c7330005ce7f76ff37e9e9c33db0d527"
+    },
+    {
+      "file": "tree/regression/pattern_c/c8_two_controls.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/regression/pattern_c/c8_two_controls.v",
+      "sha256": "7546ad821419a2474f95d611bc2ce32b266db97db7d82c6501d03b018167db4f"
+    },
+    {
+      "file": "tree/tests/pattern_d/d1_positive_single.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d1_positive_single.v",
+      "sha256": "9f99bb279f212358f2c7e02abec8b4aba80fe2898e65def0bbaea7b471217363"
+    },
+    {
+      "file": "tree/tests/pattern_d/d2_positive_pmux.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d2_positive_pmux.v",
+      "sha256": "d691c786b79dc651c28fb6e1b49dcf39999e7a12d1f833fdf457a7372fc4e73d"
+    },
+    {
+      "file": "tree/tests/pattern_d/d3_direct_output.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d3_direct_output.v",
+      "sha256": "0666b6e82210bacbbd3487741c8ca0bc8f96b98427f566afe3cc637b801289fb"
+    },
+    {
+      "file": "tree/tests/pattern_d/d4_pmux_extra_user.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d4_pmux_extra_user.v",
+      "sha256": "33009a92095906f00f46b292ebb2f24e349eae38feffb15210c8edfe2b5645f7"
+    },
+    {
+      "file": "tree/tests/pattern_d/d5_no_guard.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d5_no_guard.v",
+      "sha256": "cc996ad6033da0150f99f201426e175c411b3d16dfce5bc0b7cb0a5b34743080"
+    },
+    {
+      "file": "tree/tests/pattern_d/d6_guard_mismatch.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d6_guard_mismatch.v",
+      "sha256": "d1c32b0761b0df8d9455ed17b40063237cbd87d54b837c8f817fead507df179d"
+    },
+    {
+      "file": "tree/tests/pattern_d/d7_signed_eq.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d7_signed_eq.v",
+      "sha256": "6bb224e61d8eee8cb819a9e088ac9c87332c17711b02d6620eee21ebbf4d6d77"
+    },
+    {
+      "file": "tree/tests/pattern_d/d8_guard_zero.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/pattern_d/d8_guard_zero.v",
+      "sha256": "77e923860f8c2838e0646a30e93d7a3cfdebfffd1838cb2533b2212c4b489cdb"
+    },
+    {
+      "file": "tree/tests/h1/README.md",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/README.md",
+      "sha256": "5c22fc5ee95c7fd0e1d5cc12231030983e9c55d5cd4d6a0f227b7ebb0bb1f570"
+    },
+    {
+      "file": "tree/tests/h1/h1_n1_three_special.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n1_three_special.v",
+      "sha256": "8d8ad6ca157d3d906557d212dcf8ff068c29d3e728ecfd406c5a2b7de2f926f8"
+    },
+    {
+      "file": "tree/tests/h1/h1_n2_small_two_special.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n2_small_two_special.v",
+      "sha256": "21082fa172d4d2f0b052ceeb51c8453f9a98057d781df7a0fd6c8713bdda7eb8"
+    },
+    {
+      "file": "tree/tests/h1/h1_n3_width_mismatch.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n3_width_mismatch.v",
+      "sha256": "b3d0174519c4c358c85a29161d01aef46188455fecff4b2e3c7159609c2da6dc"
+    },
+    {
+      "file": "tree/tests/h1/h1_n4_different_control.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n4_different_control.v",
+      "sha256": "3719500cfc7554d24e8b73b2c2de743fcf2fcfa9d88f7eb38e8eba657589b9eb"
+    },
+    {
+      "file": "tree/tests/h1/h1_n5_partial_decode.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n5_partial_decode.v",
+      "sha256": "6f4fa94dabcb93f2b248537e235857c34673202c5c8de6b8eb5cc965d280e727"
+    },
+    {
+      "file": "tree/tests/h1/h1_n6_ctrlwidth1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_n6_ctrlwidth1.v",
+      "sha256": "294eebd4d4074d7c3d9b3475d84d9cb50547d325b236486f4b847dfe6bd6848e"
+    },
+    {
+      "file": "tree/tests/h1/h1_p1_threshold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p1_threshold.v",
+      "sha256": "6a4cf224209a028c3f6394701f138ca0bfdf1686f04e73ccda8141197ba875e8"
+    },
+    {
+      "file": "tree/tests/h1/h1_p2_swapbit2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p2_swapbit2.v",
+      "sha256": "f3b6c8834f3ffacf7aea73300ed672dfa131ed6be62e465b6f47f602191cfebf"
+    },
+    {
+      "file": "tree/tests/h1/h1_p3_shuffle.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p3_shuffle.v",
+      "sha256": "8eaec4fe7abd2709f177a63c19ad5539effd89731b7da486b260a354705daa80"
+    },
+    {
+      "file": "tree/tests/h1/h1_p4_large.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p4_large.v",
+      "sha256": "deacfa29397a9ff8b2dde4018b0a9b36876e57e36098bbda592e26279704a7e3"
+    },
+    {
+      "file": "tree/tests/h1/h1_p5_zero_special.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p5_zero_special.v",
+      "sha256": "a192d0d2040a5f6d6dd43be0c7557c2f9028ef35c6f1bad92d3d373a06bca61d"
+    },
+    {
+      "file": "tree/tests/h1/h1_p6_one_special.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/tests/h1/h1_p6_one_special.v",
+      "sha256": "304421b9064c35c49af713d1c1fa3422ece89b0ec055c7702c8f2fed3b6873ea"
+    },
+    {
+      "file": "h2/cases.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/cases.json",
+      "sha256": "b3e0adce42d14dfa8363add35d19534427821898d3fd0a3ef1ed78e64f8ec807"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw8_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw8_ref.v",
+      "sha256": "8e065b9167e8e271b1652240abc01ff5e1aebb987c202c76c982da6dfd18dfbd"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw2.v",
+      "sha256": "d418c77fd35ab94dd2b4f8b3ebdb149054e77c8cea45a74ca8e7ff6f3696efa6"
+    },
+    {
+      "file": "h2/rtl/h2p_c5_lw4_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c5_lw4_ref.v",
+      "sha256": "288058640b9e4d9f2d475b3fd287aef42768352bf32acfe135bb8387a4bee7c8"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw1.v",
+      "sha256": "2531d3b92bd97f520f7d67ca574a9992e37948af7c41e2f7fbd45eff794c4074"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw4.v",
+      "sha256": "1557da5076b33d63b62371c903f0437d9acefa01723a3a7496903b6de679cbfe"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw4_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw4_ref.v",
+      "sha256": "404a9cb5e98c7a0460bf3b9a1d797bcb6a27f5d639a6eb7d38a104fac1c6aaf5"
+    },
+    {
+      "file": "h2/rtl/h2p_c5_lw2_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c5_lw2_ref.v",
+      "sha256": "a85f459fb82f98720307851b8e7b14d2ea7ad60e08e1489d9c5ee649130a954c"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw1_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw1_ref.v",
+      "sha256": "76fcd5c486a783986ecbdc33c9157f2be1626bd20e9a6fa60a275c91e21cbd0c"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw4.v",
+      "sha256": "3003714610b23bde137219360f0cc08b4e78649b34d6fd65fde84eeacb6a2948"
+    },
+    {
+      "file": "h2/rtl/h2n_ctrl2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_ctrl2.v",
+      "sha256": "3dd55989431fc88ad9292033a4a690e4f243b9e7fb4d259ee365aa16e34841f4"
+    },
+    {
+      "file": "h2/rtl/h2n_non_target.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_non_target.v",
+      "sha256": "013e4db105d7f5c0de9e432df87970b894bcb0610f12f127a298e8bd4d4b6074"
+    },
+    {
+      "file": "h2/rtl/h2n_partial_decode.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_partial_decode.v",
+      "sha256": "989eb9190a192819889acb0a96679bff0f6258aef0789eac4eaeb59fb9aeb99a"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw2_shuffled.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw2_shuffled.v",
+      "sha256": "68d158d8dcbc6a56250a5aea075bbd6a1abb06c63e8ac68677104f8cbd97573f"
+    },
+    {
+      "file": "h2/rtl/h2p_c10_lw1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c10_lw1.v",
+      "sha256": "78d470048d02ffc52310ef23a4f092883e4003cb6a4f9f30055b92da34479d6b"
+    },
+    {
+      "file": "h2/rtl/h2p_c5_lw4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c5_lw4.v",
+      "sha256": "53b49007775981153c631efde22f42431f0ce425d5d31fa755a97bd335ccc68d"
+    },
+    {
+      "file": "h2/rtl/h2n_width_not_div4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_width_not_div4.v",
+      "sha256": "321782ff0b859f23e0e75d6d00aeef06f691bf3550535cb9f99a38e313afe3ef"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw1.v",
+      "sha256": "31502ac73a49af8c256c279bccdea7de9ba82ef5e4809dc9822e3dc2860d6e01"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw4_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw4_ref.v",
+      "sha256": "b442493144dffe9be8ff9f89d0fb38a98641521b02a3d92cbbed9dfdf31bce4a"
+    },
+    {
+      "file": "h2/rtl/h2n_ctrl11.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_ctrl11.v",
+      "sha256": "0bf716a8361581f5b05a990987c0573947493c76d1185856da802e944e447939"
+    },
+    {
+      "file": "h2/rtl/h2p_c5_lw2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c5_lw2.v",
+      "sha256": "cc13e8dd96f1a4a2d15c272b055260c1de48fbead102cf5718a48210612462e6"
+    },
+    {
+      "file": "h2/rtl/h2p_c3_lw2_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c3_lw2_ref.v",
+      "sha256": "a7de536fdee614657c396f7c66ee77310fbc936d85b043952a038b1adffd3b27"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw2.v",
+      "sha256": "c8e8ddbc4b77388b3460c5522917c163b0639303389e45e4e1e9058d942d43c9"
+    },
+    {
+      "file": "h2/rtl/h2n_no_rotation.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_no_rotation.v",
+      "sha256": "f52c80a295de259d15c3a959a148737682959da9b0bccc7794dca470e4681a01"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw2_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw2_ref.v",
+      "sha256": "2ae68fad692109b4973b51d79c6f79678be60cfac2b8b28062336f3509afef7c"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw8.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw8.v",
+      "sha256": "bd61c3306c53b2e9413d6e351e216bc3ac0bc2edf8a521d2b71b722f06b7170a"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw1_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw1_ref.v",
+      "sha256": "9f44c384f4fe306758669039dc9093bd8e24d8ddb2566a794e4695b2f8c33779"
+    },
+    {
+      "file": "h2/rtl/h2n_diff_control.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_diff_control.v",
+      "sha256": "9aaec60781debdb8d5d13b6ddf76d9e56991d5b9e12045d411726900f027806f"
+    },
+    {
+      "file": "h2/rtl/h2n_xz_data.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_xz_data.v",
+      "sha256": "7f4b3be50ad45edbec2737997f452c453463c3c50a308d1af8eb243c408bd228"
+    },
+    {
+      "file": "h2/rtl/h2n_wrong_rotation.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2n_wrong_rotation.v",
+      "sha256": "babfb186c1809e45e5ca82452826ba8cad4734e61148ab1c31ef716cd611d200"
+    },
+    {
+      "file": "h2/rtl/h2p_c4_lw2_shuffled_ref.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/07_负例与边界_negative/h2_cases_run01/rtl/h2p_c4_lw2_shuffled_ref.v",
+      "sha256": "9f6e6f6f80a49e70c5c6ee4f246bb26fe7895ad92278924f162f291a441b0d66"
+    },
+    {
+      "file": "scale/random_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/random_1000.v",
+      "sha256": "c9470286aea5eba14879c540603b8858f395c1b6fc17f7c2b56c2edbb4a9bd3d"
+    },
+    {
+      "file": "scale/mixed_750.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_750.v",
+      "sha256": "cc318b4029c4adb82905fa275d55a1e400cd7b9dbd7a077bd25d056875c2c5a5"
+    },
+    {
+      "file": "scale/mixed_250.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_250.v",
+      "sha256": "55091711c910e944cdbb2a9d20974fea4838e9d7fa634e564db20270d675412c"
+    },
+    {
+      "file": "scale/pattern_a_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/pattern_a_1000.v",
+      "sha256": "6cb0dd76042c7a4d384f2b019eae7d6012b528233c8cd4171fd23d2a093058a9"
+    },
+    {
+      "file": "scale/mixed_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_1000.v",
+      "sha256": "ada140e0c57c31b213b5da798cf2d30a0f73ba5f3c01cff55620269e69ad3edf"
+    },
+    {
+      "file": "scale/random_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/random_1000.v.json",
+      "sha256": "09fc29ffd11bc8f3232785f7915ca81fc2c191c92f0bb61d1551a08ef13fcd22"
+    },
+    {
+      "file": "scale/expr_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/expr_1000.v.json",
+      "sha256": "e1dd17c4412ad1158ec62ffd4c8ed2d2eba5cf0d52ac164dedf3f7432b50f94a"
+    },
+    {
+      "file": "scale/mixed_100.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_100.v.json",
+      "sha256": "31b7b00937356fd6a6e454185db721187baa2843da9b4f028f0e1f6f526d6ad0"
+    },
+    {
+      "file": "scale/negative_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/negative_1000.v.json",
+      "sha256": "03f37774823abec1da9b7332fb1103becefc99c9f1ad657f1f057b0f72beb489"
+    },
+    {
+      "file": "scale/mixed_500.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_500.v",
+      "sha256": "046884dc4147280bbc9fab6c528a55d330b6d3edcb159fc48c35baedc367e40b"
+    },
+    {
+      "file": "scale/mixed_250.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_250.v.json",
+      "sha256": "983af6a0139ef53dc9e1bf5a8684b2865a920320d96ee39804b031c136ca6b58"
+    },
+    {
+      "file": "scale/h2_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/h2_1000.v.json",
+      "sha256": "1c8dfed1fb757915b795bdd989d05103a2b0d3733cfa1f6e8a63f47ac49129e8"
+    },
+    {
+      "file": "scale/pattern_a_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/pattern_a_1000.v.json",
+      "sha256": "32aae061210919eb15609e0077c4200229bb31b6b9178e4671bc8ea14ce8bbe4"
+    },
+    {
+      "file": "scale/h2_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/h2_1000.v",
+      "sha256": "d9cdc60761f609f2e1eb9644ecebf3a733802d03eb2400432f3fd995487edeff"
+    },
+    {
+      "file": "scale/mixed_100.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_100.v",
+      "sha256": "cc776e091ad1585b56995ae663f723b71b7b261e7027b9939dccc80e5b25c835"
+    },
+    {
+      "file": "scale/negative_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/negative_1000.v",
+      "sha256": "840a0cf198c9d6f0a42344198d6497ca8e54f7880aa8c84e5f0ae3614d9a9100"
+    },
+    {
+      "file": "scale/mixed_500.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_500.v.json",
+      "sha256": "d62e47ac51ab54e495d4982715b6a22fcf3839bf3ea7f4aa502c35f9a54bdfef"
+    },
+    {
+      "file": "scale/mixed_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_1000.v.json",
+      "sha256": "90a3d3a9e2539d5680dc25f32d039ae4fabad40df2465f920cd928c883cdea7a"
+    },
+    {
+      "file": "scale/h1h2_1000.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/h1h2_1000.v.json",
+      "sha256": "d29005aea8e46f0ee1e4540390a0522e740045d55ddb67521a4f0f23d733ec98"
+    },
+    {
+      "file": "scale/mixed_750.v.json",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/mixed_750.v.json",
+      "sha256": "e542a44501d6d10aea81b29762084b9e3694fa304ffdda63fa37a537f77d84ad"
+    },
+    {
+      "file": "scale/expr_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/expr_1000.v",
+      "sha256": "0e61ada9e278b164ec86055b6ba4454b2552de9575f705bfee5a7371eb5a6d2b"
+    },
+    {
+      "file": "scale/h1h2_1000.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/08_规模与隐藏风格_scale_hidden/scale_run01/inputs/h1h2_1000.v",
+      "sha256": "49f3113c5563fa2fa8a57324b4f53623257e6df9482cec0be1db7397efc6489b"
+    },
+    {
+      "file": "selfcheck/positive_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gate.v",
+      "sha256": "c5fd539cdcd6d19ac304de28023169c5a1889fdf1f5246fa3bd2e9f83a1af97d"
+    },
+    {
+      "file": "selfcheck/negative_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gate.v",
+      "sha256": "b6393ea7992e66337b3d32c68b7fbe19c7e7fd5cb88fe0a0a8cc8837f42681ae"
+    },
+    {
+      "file": "selfcheck/negative_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gold.v",
+      "sha256": "9d1785fb7cba9ee427a34c3aa67e29cdb50fc03ab12cae9f086c4fa2d6c85ea9"
+    },
+    {
+      "file": "selfcheck/positive_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gold.v",
+      "sha256": "f34f15d142a3bfcef6ffead3027d264542216b89616308dcddb099583aa11b60"
+    }
+  ]
+}

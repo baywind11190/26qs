@@ -35,6 +35,10 @@ __pycache__/
 *~
 *.swp
 
+# 2026-09-20 目录整理：结果目录管理批次允许提交“新旧路径对照.csv”等关键文件；
+# 重型清单（迁移后文件清单.json / 迁移后SHA256.txt）与自动产物仍保持忽略。
+!results/90_整理记录_management/**/新旧路径对照.csv
+
 # EQY generated competition/negative work directories
 /test1/
 /test2/

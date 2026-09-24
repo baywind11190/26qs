@@ -1,0 +1,25 @@
+case,chain,rc,state,proved,total,failed,failed_detail
+test1,c1_local,0,PASS,47,47,0,
+test1,c2_stage,0,PASS,47,47,0,
+test1,c3a_rtl_opt,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN
+test1,c3b_rtl_base,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN
+test1,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test1,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test2,c1_local,0,PASS,6,6,0,
+test2,c2_stage,0,PASS,6,6,0,
+test2,c3a_rtl_opt,0,PASS,6,6,0,
+test2,c3b_rtl_base,0,PASS,6,6,0,
+test2,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test2,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test3,c1_local,0,PASS,6,6,0,
+test3,c2_stage,0,PASS,6,6,0,
+test3,c3a_rtl_opt,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN
+test3,c3b_rtl_base,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN
+test3,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test3,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c1_local,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c2_stage,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c3a_rtl_opt,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c3b_rtl_base,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,
+test4,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,

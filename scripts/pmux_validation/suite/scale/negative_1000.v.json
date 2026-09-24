@@ -1,0 +1,13 @@
+{
+  "mode": "negative",
+  "target": 1000,
+  "nodes_generator_caliber": 1000,
+  "units": {
+    "mode": "negative",
+    "units": 200
+  },
+  "generator": "gen_scale_p3.py (adapted from scripts/gen_scale_case.py)",
+  "source_sha256": "6d40a22ae597dda1bdd158f2a4795c56bb428602d7b3022e9ee9fdf26e511485",
+  "out_sha256": "840a0cf198c9d6f0a42344198d6497ca8e54f7880aa8c84e5f0ae3614d9a9100",
+  "elapsed_s": 1.55
+}

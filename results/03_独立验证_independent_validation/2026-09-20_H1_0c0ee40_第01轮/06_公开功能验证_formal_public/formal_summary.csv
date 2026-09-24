@@ -1,0 +1,17 @@
+name,rc,status,proved,total,unknown,not_equiv
+P-test1-RTL-baseline,2,NEEDS_REVIEW: partitions not equivalent,44,47,test1.inter0008;test1.inter0009,test1.por6
+P-test1-RTL-h1,2,NEEDS_REVIEW: partitions not equivalent,44,47,test1.inter0008;test1.inter0009,test1.por6
+P-test1-pairwise,0,PASS,47,47,,
+P-test2-RTL-baseline,0,PASS,6,6,,
+P-test2-RTL-h1,0,PASS,6,6,,
+P-test2-pairwise,0,PASS,6,6,,
+P-test3-RTL-baseline,2,NEEDS_REVIEW: equivalence unknown,3,4,test3.sr,
+P-test3-RTL-h1,2,NEEDS_REVIEW: equivalence unknown,3,4,test3.sr,
+P-test3-pairwise,0,PASS,6,6,,
+P-test4-RTL-baseline,0,PASS,5,5,,
+P-test4-RTL-h1,0,PASS,5,5,,
+P-test4-pairwise,0,PASS,5,5,,
+R1-test1-RTL-h1,0,PASS,47,47,,
+R1-test2-RTL-h1,0,PASS,6,6,,
+R1-test3-RTL-h1,0,PASS,4,4,,
+R1-test4-RTL-h1,0,PASS,5,5,,

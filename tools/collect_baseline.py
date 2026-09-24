@@ -8,7 +8,7 @@ import statistics
 from pathlib import Path
 
 ROOT = Path(".")
-OUT = ROOT / "results" / "baseline" / "baseline_summary.csv"
+OUT = ROOT / "results" / "01_基础基线_baseline" / "baseline_summary.csv"
 
 
 def sha256_file(path):
@@ -68,8 +68,8 @@ for i in range(1, 5):
     case = f"test{i}"
 
     rtl = ROOT / "pmux_case" / "competition_case" / case / f"{case}.v"
-    stat_json = ROOT / "results" / "baseline" / f"{case}_cycloneiv.json"
-    eqy_log = ROOT / "results" / "equivalence" / f"{case}.log"
+    stat_json = ROOT / "results" / "01_基础基线_baseline" / f"{case}_cycloneiv.json"
+    eqy_log = ROOT / "results" / "01_基础基线_baseline" / "02_基础等价检查_equivalence" / f"{case}.log"
 
     with open(stat_json, "r") as f:
         stat = json.load(f)
@@ -87,7 +87,7 @@ for i in range(1, 5):
 
     for r in range(1, 4):
         perf_file = (
-            ROOT / "results" / "baseline" / "perf" /
+            ROOT / "results" / "01_基础基线_baseline" / "perf" /
             f"{case}_run{r}.time"
         )
 

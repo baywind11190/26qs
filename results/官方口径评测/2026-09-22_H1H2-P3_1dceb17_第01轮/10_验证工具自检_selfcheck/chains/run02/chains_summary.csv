@@ -1,0 +1,29 @@
+case,chain,rc,state,proved,total,failed,failed_detail,error
+test1,c1_local,0,PASS,47,47,0,,
+test1,c2_stage,0,PASS,47,47,0,,
+test1,c3a_rtl_opt,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN,
+test1,c3b_rtl_base,2,FAIL_PARTITIONS,44,47,3,test1.por6=FAIL; test1.inter0009=UNKNOWN; test1.inter0008=UNKNOWN,
+test1,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test1,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test1,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,conflicting matches for gold bit \i0 [5]: \i0 [5] vs \i0 [1]
+test2,c1_local,0,PASS,6,6,0,,
+test2,c2_stage,0,PASS,6,6,0,,
+test2,c3a_rtl_opt,0,PASS,6,6,0,,
+test2,c3b_rtl_base,0,PASS,6,6,0,,
+test2,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test2,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test2,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,A problem occurred during equivalence check.
+test3,c1_local,0,PASS,6,6,0,,
+test3,c2_stage,0,PASS,6,6,0,,
+test3,c3a_rtl_opt,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN,
+test3,c3b_rtl_base,2,FAIL_PARTITIONS,3,4,1,test3.sr=UNKNOWN,
+test3,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test3,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test3,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,conflicting matches for gold bit \gpioout [6]: \gpioout [6] vs \gpioout [1]
+test4,c1_local,0,PASS,5,5,0,,
+test4,c2_stage,0,PASS,5,5,0,,
+test4,c3a_rtl_opt,1,TOOL_OR_CONFIG_ERROR,0,0,0,,No configured strategy supports partition test4.only_5b
+test4,c3b_rtl_base,1,TOOL_OR_CONFIG_ERROR,0,0,0,,No configured strategy supports partition test4.only_5b
+test4,c4a_rtl_opt_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test4,c4b_rtl_base_mapped,1,TOOL_OR_CONFIG_ERROR,0,0,0,,Unmatched module exists in gate that does not exist in gold. This should not happen. Please report this bug.
+test4,c5_mapped_pair,1,TOOL_OR_CONFIG_ERROR,0,0,0,,A problem occurred during equivalence check.

@@ -1,0 +1,5 @@
+case,cpu_base_median_s,cpu_opt_median_s,cpu_overhead_pct,rss_base_median_kb,rss_opt_median_kb,rss_overhead_pct,wall_base_median_s,wall_opt_median_s,gn_rss_base_median_kb,gn_rss_opt_median_kb
+test1,0.1802,0.1596,-11.4317,55688,55724,0.0646,0.1654,0.1477,34452,34852
+test2,0.0709,0.0707,-0.2821,47712,49496,3.7391,0.0662,0.0676,28932,30480
+test3,0.0796,0.0763,-4.1457,48672,50380,3.5092,0.0758,0.073,29400,30968
+test4,0.0907,0.0916,0.9923,48292,50952,5.5082,0.0866,0.0893,29864,31212
