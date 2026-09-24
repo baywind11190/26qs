@@ -1,0 +1,80 @@
+{
+  "run_status": "BUILTIN_NOT_READY",
+  "mode": "builtin",
+  "marking": "官方四例内置验收（未就绪阻断）",
+  "official_acceptance": "NOT_CLAIMED",
+  "builtin_execution": "NOT_READY",
+  "missing_items": [
+    "优化版 yosys 未包含内置 pmux_opt pass（help 检查失败）",
+    "优化版集成/插入调用证据缺失：passes/opt/pmux_opt.cc",
+    "passes/opt/CMakeLists.txt 未包含 pmux_opt 注册",
+    "techlibs/intel/synth_intel.cc 未包含 pmux_opt 调用（C24/C37 要求）"
+  ],
+  "follow_up": [
+    "1) 在 validate.py 增加内置执行路径：两份 Yosys 0.69 对四例直接调用 synth_intel（外部脚本内容相同），记录网表与 stat。",
+    "2) 内置形态功能证明：原始 RTL 与优化版最终映射网表按默认链集合口径运行 EQY；条件不满足时保留 MODEL_UNSUPPORTED。",
+    "3) 资源与性能统计复用现有 runner（cycloneiv_lcell_comb、DFF、逐例 5% 与 60s/2GB 对照）。",
+    "4) 内置 pass 位于 synth_intel.cc 内部，流程一致性检查与插件形态不同，需单独设计并验证。",
+    "5) 完成执行路径的模拟测试覆盖后，方可开放 run 默认执行；在此之前保持阻断。"
+  ],
+  "evidence": {
+    "checked_at": "2026-09-24T16:51:24.073094+08:00",
+    "baseline": {
+      "path": "/home/fpga/eda/yosys-baseline/build/yosys",
+      "sha256": "9e3010374552c4e0b5e3057f8ecdf974a47e554f0d68ff2175a9723af22a0e56",
+      "version_rc": 0,
+      "version": "Yosys 0.69 (git sha1 9f75ca1f9, Release, GNU /usr/bin/c++ 13.3.0)"
+    },
+    "optimized": {
+      "path": "/home/fpga/eda/yosys-optimized/build/yosys",
+      "sha256": "19e7fda0b7f738851a3c421d6edd92c3bcdbe0ac766a5bcd166b43248b35fbaf",
+      "version_rc": 0,
+      "version": "Yosys 0.69 (git sha1 9f75ca1f9, Release, GNU /usr/bin/c++ 13.3.0)",
+      "help_rc": 0,
+      "has_pmux_opt": false
+    },
+    "baseline_src": {
+      "repo": "/home/fpga/eda/yosys-baseline",
+      "head": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+      "tracked_clean": true
+    },
+    "optimized_src": {
+      "repo": "/home/fpga/eda/yosys-optimized",
+      "head": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+      "tracked_clean": true
+    },
+    "abc_baseline": {
+      "path": "/home/fpga/eda/yosys-baseline/build/yosys-abc",
+      "sha256": "f5f9b12af4047cbd49d0ad0a7fbbb4dda68664ed57103b7337ed3f5d4a21c382"
+    },
+    "abc_optimized": {
+      "path": "/home/fpga/eda/yosys-optimized/build/yosys-abc",
+      "sha256": "1a1b461fa766d36c9d377b21cd2c8501668499226dc58d31bfdc1b1b4cc47951"
+    },
+    "baseline_share_intel": {
+      "common/altpll_bb.v": "16a26a5eff0bd07ba8496086ea7347d3105182c9d04a8ba53093932d9b7162b8",
+      "common/brams_map_m9k.v": "1bc752130c74deb007bcbceab89e3ad037243c5b7d1d0503afdbb2d7e2d8dd9f",
+      "common/ff_map.v": "6de068e4123712bae46a0cc1f7b88c728bfb2f0e0be52440930eec5c714d9491",
+      "common/m9k_bb.v": "51eb1b2b6dd5c970722cd4d7d1a83f89fe023db5ad579535584abdbacd4e6ad3",
+      "cycloneiv/cells_map.v": "3cfe28ba08eb4f10e8307c284df75f3d6485c22b1a3bb9b32c8056c538a99ea7",
+      "cycloneiv/cells_sim.v": "e57a7edd4b8b0b482ce58475b10b33f71b9e996cc7dcc1a94f20c42fa27d0e20"
+    },
+    "optimized_share_intel": {
+      "common/altpll_bb.v": "16a26a5eff0bd07ba8496086ea7347d3105182c9d04a8ba53093932d9b7162b8",
+      "common/brams_map_m9k.v": "1bc752130c74deb007bcbceab89e3ad037243c5b7d1d0503afdbb2d7e2d8dd9f",
+      "common/ff_map.v": "6de068e4123712bae46a0cc1f7b88c728bfb2f0e0be52440930eec5c714d9491",
+      "common/m9k_bb.v": "51eb1b2b6dd5c970722cd4d7d1a83f89fe023db5ad579535584abdbacd4e6ad3",
+      "cycloneiv/cells_map.v": "3cfe28ba08eb4f10e8307c284df75f3d6485c22b1a3bb9b32c8056c538a99ea7",
+      "cycloneiv/cells_sim.v": "e57a7edd4b8b0b482ce58475b10b33f71b9e996cc7dcc1a94f20c42fa27d0e20"
+    }
+  },
+  "context": {
+    "flow_version": "official4-p1",
+    "suite_version": "official4-v1",
+    "target_commit": "5c44e87ec403a4e2d7f961e09a3cae6f09919074",
+    "source_sha256": "e3663d90f97397475188cf147c272b5e1194e923399760a73ad4a8cebe3d24be",
+    "project_head": "817edf7d7ce35ef8ccf7c280ddccc962840e6c94",
+    "suite_verified": true
+  },
+  "evidence_root": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第01轮"
+}

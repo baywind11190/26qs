@@ -1,0 +1,17 @@
+case,chain,method,state,rc,partitions_total,partitions_pass,probes_noDF_all_sat,df_probes_unsat,merged_state,merged_k,probe_noDF,verified,frozen_round,evidence
+test1,c1_local,partition,PASS,0,47,47,True,18,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test1/c1_local
+test1,c2_stage,partition,PASS,0,47,47,True,18,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test1/c2_stage
+test1,c4a_rtl_opt_mapped,partition,PASS,0,43,43,True,40,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test1/c4a_rtl_opt_mapped
+test1,c4b_rtl_base_mapped,partition,PASS,0,43,43,True,40,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test1/c4b_rtl_base_mapped
+test2,c1_local,partition,PASS,0,6,6,True,0,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test2/c1_local
+test2,c2_stage,partition,PASS,0,6,6,True,0,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test2/c2_stage
+test2,c4a_rtl_opt_mapped,partition,PASS,0,1,1,True,0,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test2/c4a_rtl_opt_mapped
+test2,c4b_rtl_base_mapped,partition,PASS,0,1,1,True,0,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test2/c4b_rtl_base_mapped
+test3,c1_local,partition,PASS,0,6,6,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test3/c1_local
+test3,c2_stage,partition,PASS,0,6,6,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test3/c2_stage
+test3,c4a_rtl_opt_mapped,merged_miter,PASS,0,4,0,True,3,PASS,11,PREMISES_SAT,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test3/c4a_rtl_opt_mapped
+test3,c4b_rtl_base_mapped,merged_miter,PASS,0,4,0,True,3,PASS,14,PREMISES_SAT,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test3/c4b_rtl_base_mapped
+test4,c1_local,partition,PASS,0,5,5,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test4/c1_local
+test4,c2_stage,partition,PASS,0,5,5,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test4/c2_stage
+test4,c4a_rtl_opt_mapped,partition,PASS,0,5,5,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test4/c4a_rtl_opt_mapped
+test4,c4b_rtl_base_mapped,partition,PASS,0,5,5,True,5,,,,True,,results/官方口径评测/2026-09-24_稳定版-四例_5c44e87_第04轮/10_验证工具自检_selfcheck/chains/run01/test4/c4b_rtl_base_mapped

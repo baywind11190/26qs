@@ -1,0 +1,12 @@
+name,result,seconds,last_length,note
+full_m16,PASS,0.9,11,"全模块，归纳长度 16，失败时导出最终窗口模型"
+full_m24,PASS,0.8,11,"全模块，长度 24"
+full_m48,PASS,0.8,11,"全模块，长度 48"
+full_bmc64,BMC_NO_CEX,27.2,,"全模块 BMC 深度 64（有界检查）"
+full_bmc256,TIMEOUT,181.7,,"全模块 BMC 深度 256（有界检查）"
+full_ti_def_m12,PASS,0.1,1,"诊断：仅定义态窗口起点（非独立充分，见文档）"
+gpo_m8,UNKNOWN,0.5,8,"gpioout-only 聚焦，长度 8"
+gpo_m16,PASS,1.9,16,"gpioout-only，长度 16"
+gpo_m48,PASS,1.9,16,"gpioout-only，长度 48"
+full_bmc128,BMC_NO_CEX,157.5,,"全模块 BMC 深度 128（限时 300s 内完成；无 CEX）"
+full_bmc256_retry,TIMEOUT,600.0,,"全模块 BMC 深度 256（600s 上限重试；末步 1,637,702 vars / 4,421,354 clauses 未收敛）"

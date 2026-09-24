@@ -1,8 +1,17 @@
 {
   "schema": 1,
-  "flow_version": "official4-p1",
+  "flow_version": "official4-p2",
   "suite_version": "official4-v1",
   "suite_manifest": "suite-official4/manifest.json",
+  "model_version": "dffeas-v3",
+  "strategy_version": "noDF-local-r1",
+  "selfcheck_version": "official4-selfcheck-r2",
+  "method_notes": {
+    "model": "runner/form_cells_cycloneiv.v = 器件语义模型 v3（clrn 异步清零 / ena 时钟使能 / power_up 初值；与已核对实验模型逐字节相同）；支持配置由 runner/precheck_supported_config.py 强制阻断，未支持不静默建模。",
+    "strategy": "本地策略修正 noDF-local-r1：EQY setup（-m）生成的 run.ys 经严格转换仅删除恰一处 ' -set-def-formal'（保留 -set-init-undef/-set-def-inputs/-set-assumes/断言）；格式不符即停止。附前提探针（noDF 必需 SAT；DF 记录）。",
+    "test3": "无切割整模块合并证明（runner/miter/test3_miter.sv），覆盖两侧全部输出与匹配点；其余用例保留分区路径。",
+    "function_recheck": "run <commit> --mode plugin --function-only --frozen-round <轮次>：只 build+formal_selfcheck+chains（冻结输入逐文件哈希核对），不重新综合、不测性能。"
+  },
   "repo": "/home/fpga/fpga/pmux-opt",
   "builtin": {
     "baseline": {

@@ -57,16 +57,80 @@ def summarize_eqy(log, workdir):
             'error': '\n'.join(errors)[:800] or None}
 
 
-def check_mapped_model(il_path, top):
-    """Only the locally modeled cell types and constant-zero aload are supported."""
-    text = Path(il_path).read_text()
+# 支持配置（official4-p2；未列出的参数/端口/取值一律阻断，不静默建模）：
+DFFEAS_PORTS = ("d", "q", "clk", "clrn", "prn", "ena", "asdata", "aload", "sclr", "sload")
+DFFEAS_CONST_PORTS = {"prn": "1'1", "asdata": "1'0", "aload": "1'0", "sclr": "1'0", "sload": "1'0"}
+DFFEAS_PARAMS = ("power_up", "is_wysiwyg")
+LCELL_PORTS = ("dataa", "datab", "datac", "datad", "cin", "combout", "cout")
+LCELL_PARAMS = ("lut_mask", "sum_lutc_input", "dont_touch", "lpm_type")
+
+
+def _cells_of(text, top):
     module = re.search(r'^module \\' + re.escape(top) + r'\n(.*?)^end$', text, re.M | re.S)
     if not module:
         raise ValueError(f'Mapped top absent: {top}')
     for cell in re.finditer(r'^  cell (\S+) [^\n]+\n(.*?)^  end$', module[1], re.M | re.S):
-        kind, body = cell[1].lstrip('\\'), cell[2]
-        # $-prefixed cells use Yosys's built-in formal semantics, not our custom model.
-        if not kind.startswith('$') and kind not in ('dffeas', 'cycloneiv_lcell_comb', 'VCC', 'GND'):
+        yield cell[1].lstrip('\\'), cell[2]
+
+
+def check_mapped_model(il_path, top):
+    """映射网表支持配置检查（official4-p2）。
+
+    允许：$ 前缀内建单元（Yosys 自带形式语义）；dffeas / cycloneiv_lcell_comb /
+    VCC / GND（自有模型）。
+    dffeas：power_up ∈ {low,high}；prn=1、asdata/aload/sclr/sload=0；
+    控制端口（clrn/ena）与数据端口必须存在——缺失即阻断；
+    未知参数、未知端口取值一律阻断。
+    cycloneiv_lcell_comb：必需端口与参数存在；sum_lutc_input ∈ {datac,cin}。
+    纯组合设计（无 dffeas）合法。
+    """
+    text = Path(il_path).read_text()
+    for kind, body in _cells_of(text, top):
+        if kind.startswith('$'):
+            continue
+        if kind == 'dffeas':
+            params = dict(re.findall(r'^    parameter \\(\S+) (.*)$', body, re.M))
+            conns = dict(re.findall(r'^    connect \\(\S+) (.*)$', body, re.M))
+            for p in params:
+                if p not in DFFEAS_PARAMS:
+                    raise ValueError(f'dffeas 未知参数: {p}（不支持配置）')
+            if 'power_up' not in params:
+                raise ValueError('dffeas 缺少 power_up 参数（不支持配置）')
+            pu = params['power_up'].strip().strip('"')
+            if pu not in ('low', 'high'):
+                raise ValueError(f'dffeas power_up 取值不受支持: {params["power_up"]!r}')
+            for port in DFFEAS_PORTS:
+                if port not in conns:
+                    raise ValueError(f'dffeas 缺少端口连接: {port}（缺失控制端口必须阻断）')
+            for port, want in DFFEAS_CONST_PORTS.items():
+                if conns[port] != want:
+                    raise ValueError(f'dffeas {port} 必须为常量 {want}，实际 {conns[port]!r}')
+            for port in ('d', 'clk', 'clrn', 'ena', 'q'):
+                if not conns[port].strip():
+                    raise ValueError(f'dffeas {port} 连接为空')
+        elif kind == 'cycloneiv_lcell_comb':
+            params = dict(re.findall(r'^    parameter \\(\S+) (.*)$', body, re.M))
+            conns = dict(re.findall(r'^    connect \\(\S+) (.*)$', body, re.M))
+            for p in params:
+                if p not in LCELL_PARAMS:
+                    raise ValueError(f'lcell 未知参数: {p}（不支持配置）')
+            if 'lut_mask' not in params:
+                raise ValueError('lcell 缺少 lut_mask 参数')
+            sli = params.get('sum_lutc_input', '"datac"').strip().strip('"')
+            if sli not in ('datac', 'cin'):
+                raise ValueError(f'lcell sum_lutc_input 取值不受支持: {params["sum_lutc_input"]!r}')
+            # 实测本套网表全部 lcell 均连接 dataa/datab/datac/datad/combout（cin/cout 完全未使用）。
+            for port in ('dataa', 'datab', 'datac', 'datad', 'combout'):
+                if port not in conns:
+                    raise ValueError(f'lcell 缺少必需端口连接: {port}')
+            for port in conns:
+                if port not in LCELL_PORTS:
+                    raise ValueError(f'lcell 未知端口: {port}（不支持配置）')
+            if sli == 'cin' and 'cin' not in conns:
+                raise ValueError('lcell sum_lutc_input="cin" 但 cin 未连接')
+            if 'cout' in conns and 'cin' not in conns:
+                raise ValueError('lcell cout 已连接但 cin 未连接（不支持配置）')
+        elif kind in ('VCC', 'GND'):
+            continue
+        else:
             raise ValueError(f'Unmodeled cell type: {kind}')
-        if kind == 'dffeas' and not re.search(r"^    connect \\aload 1'0$", body, re.M):
-            raise ValueError('Model requires every dffeas aload to be literal constant zero')

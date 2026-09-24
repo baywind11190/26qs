@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""官方四例验证入口（official4-p1）。Linux/WSL，标准库实现。
+"""官方四例验证入口（official4-p2）。Linux/WSL，标准库实现。
 
 默认目标：官方四例内置验收——先只读检查内置证据（原版/优化版 Yosys 0.69
 可追溯构建、优化版内置 pmux_opt、插入调用证据、ABC 与数据文件）；证据未就绪或
@@ -39,6 +39,17 @@ PLUGIN_PLAN = (
     ("chains", "run_eqy_chains.py", ()),
     ("performance", "measure.py", ()),
 )
+# 功能补充复核（--function-only）：只运行功能相关阶段；不重新综合、不测性能。
+FUNCTION_ONLY_PLAN = (
+    ("formal_selfcheck", "run_selfcheck.py", ()),
+    ("chains", "run_eqy_chains.py", ()),
+)
+FUNCTION_ONLY_SKIPPED = (
+    ("flowcheck", "功能复核：未重新综合（流程一致性引用既有轮次）"),
+    ("measurement_selfcheck", "功能复核：未测性能（测量自检引用既有轮次）"),
+    ("public", "功能复核：不重新综合四例（使用冻结映射网表）"),
+    ("performance", "功能复核：不重测性能（引用既有轮次）"),
+)
 PLUGIN_STAGE_DEPS = {"chains": ("public",)}
 SELFCHECK_STAGES = ("flowcheck", "formal_selfcheck", "measurement_selfcheck")
 PLUGIN_STAGES = ("build",) + tuple(name for name, _, _ in PLUGIN_PLAN)
@@ -59,6 +70,34 @@ def digest(path):
 
 def save(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def verify_package_manifest(package):
+    """脚本包清单核对：清单内文件必须一致；活动包文件必须全部登记。
+
+    任一项不符即停止（不静默刷新清单）。
+    """
+    package = Path(package)
+    manifest = json.loads((package / "PACKAGE_SHA256.json").read_text())
+    problems = []
+    for rel, want in manifest.items():
+        f = package / rel
+        if not f.is_file():
+            problems.append("清单文件缺失: " + rel)
+        elif digest(f) != want:
+            problems.append("内容与清单不符: " + rel)
+    active = [package / n for n in ("validate.py", "report.py", "test_validation.py",
+                                    "POLICY.md", "SKILL.md", "config.json")]
+    for sub in ("runner", "suite-official4"):
+        active += [p for p in (package / sub).rglob("*")
+                   if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".so"]
+    for p in active:
+        rel = str(p.relative_to(package))
+        if rel not in manifest:
+            problems.append("未登记文件: " + rel)
+    if problems:
+        raise ValueError("脚本包清单不一致（先同步 PACKAGE_SHA256.json 或审核变更后升版本）: "
+                         + "; ".join(problems[:8]))
 
 
 def git(repo, *args):
@@ -112,6 +151,8 @@ def preflight(commit):
         target = PACKAGE / "suite-official4" / item["file"]
         if digest(target) != item["sha256"]:
             raise ValueError("Frozen four-case input changed: " + item["file"])
+    # 脚本包清单与活动包文件核对（不一致必须停止，不静默刷新）。
+    verify_package_manifest(PACKAGE)
     cfg.update(target_commit=sha, source_sha256=hashlib.sha256(source).hexdigest(),
                project_head=git(repo, "rev-parse", "HEAD"),
                suite_manifest_sha256=digest(suite_manifest),
@@ -298,6 +339,8 @@ def selfcheck_fingerprints(cfg, runner_dir):
     """自检证据指纹：关键工具、四例输入、本轮代码/配置。任一变化即失效。"""
     return {
         "flow_version": cfg["flow_version"],
+        "model_version": cfg.get("model_version"),
+        "strategy_version": cfg.get("strategy_version"),
         "baseline_yosys_sha256": cfg["tools"]["yosys"]["sha256"],
         "abc_sha256": cfg["tools"]["abc"]["sha256"],
         "eqy_sha256": cfg["tools"]["eqy"]["sha256"],
@@ -323,11 +366,14 @@ def cache_entry_valid(cache, stage, fingerprints):
 
 
 def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
+    path = Path(path)
     entries = cache.setdefault("entries", {})
     entries[stage] = {"fingerprint": fingerprints, "ok": bool(ok),
                       "finished_at": datetime.now().astimezone().isoformat(),
                       "evidence_root": str(evidence_root)}
-    save(Path(path), cache)
+    # 首次运行时共享缓存目录可能尚不存在，写入前创建父目录。
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save(path, cache)
 
 
 # ---------------------------------------------------------------- 运行
@@ -345,7 +391,9 @@ def run_builtin(cfg, source, label):
     return 3
 
 
-def run_plugin(cfg, source, label, chains):
+def run_plugin(cfg, source, label, chains, function_only=False, frozen_round=None):
+    cfg["function_only"] = bool(function_only)
+    cfg["frozen_round"] = str(frozen_round) if frozen_round else None
     root = make_round(cfg, source, label, mode="plugin", collect_tools_env=True)
     print("ROUND=" + str(root), flush=True)
     stages = []
@@ -377,7 +425,8 @@ def run_plugin(cfg, source, label, chains):
         fingerprints = selfcheck_fingerprints(cfg, runner)
         cache = load_selfcheck_cache(cache_path)
         failed = set()
-        for name, script, args in PLUGIN_PLAN:
+        plan = FUNCTION_ONLY_PLAN if function_only else PLUGIN_PLAN
+        for name, script, args in plan:
             if name == "performance":
                 args = ("--pairs", str(cfg["performance_pairs"]))
             if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
@@ -394,6 +443,8 @@ def run_plugin(cfg, source, label, chains):
                 continue
             if name == "chains":
                 args = ("--attempt", "run01", "--chains", chains)
+                if function_only:
+                    args = (*args, "--frozen-round", cfg["frozen_round"])
             rc = execute(root, name, [sys.executable, str(runner / script), *args], stages)
             if rc:
                 failed.add(name)
@@ -401,6 +452,10 @@ def run_plugin(cfg, source, label, chains):
                 update_selfcheck_cache(cache_path, cache, fingerprints, name, rc == 0, root)
                 if rc:
                     raise RuntimeError(name + " gate failed; dependent evaluation stopped")
+        if function_only:
+            for name, reason in FUNCTION_ONLY_SKIPPED:
+                stages.append({"name": name, "state": "NOT_RUN", "reason": reason})
+            save(root / "01_来源与环境_meta/stages.json", stages)
     except Exception as exc:
         save(root / "01_来源与环境_meta/orchestrator_error.json", {"error": str(exc)})
         print("ERROR:", exc, flush=True)
@@ -417,7 +472,7 @@ def run_plugin(cfg, source, label, chains):
                     if path != index:
                         f.write(digest(path) + "  " + str(path.relative_to(root)) + "\n")
         print("RESULT=" + status + "\nREPORT=" + str(root / "00_本轮验证结论.md"), flush=True)
-    return 0 if status == "FOUR_CASE_PLUGIN_CHECKS_COMPLETE" else 2
+    return 0 if status in ("FOUR_CASE_PLUGIN_CHECKS_COMPLETE", "FUNCTION_RECHECK_COMPLETE") else 2
 
 
 def main():
@@ -429,14 +484,23 @@ def main():
                     help="builtin=内置四例验收（默认；未就绪时阻断并记录）；plugin=显式四例插件预检")
     ap.add_argument("--chains", choices=["main", "full"], default="main",
                     help="插件预检功能证明链集合（main=主路径+对照+定位；full=全部链）")
+    ap.add_argument("--function-only", action="store_true",
+                    help="功能补充复核：只运行 build + formal_selfcheck + chains（冻结输入；不综合/不测性能）")
+    ap.add_argument("--frozen-round", default=None,
+                    help="功能补充复核的冻结来源轮次目录（需含 05_公开四例_public 与 11_汇总与证据_summary/ALL_SHA256.txt）")
     args = ap.parse_args()
     if not re.fullmatch(r"[\w\-]+", args.label):
         ap.error("Label may contain only letters, digits, Chinese, underscore and hyphen")
+    if args.function_only and args.mode != "plugin":
+        ap.error("--function-only 仅适用于 --mode plugin")
+    if args.frozen_round and not args.function_only:
+        ap.error("--frozen-round 需要与 --function-only 一起使用")
     cfg, source = preflight(args.commit)
     if args.action == "plan":
         ok, missing, _ = check_builtin_evidence(cfg, run_identity=False)
         print(json.dumps({k: cfg[k] for k in ["target_commit", "source_sha256", "flow_version",
-              "suite_version", "suite_manifest_sha256", "performance_pairs", "tool_data_checked"]},
+              "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
+              "performance_pairs", "tool_data_checked"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({"mode_default": "builtin",
                           "builtin_evidence_files_present": ok,
@@ -448,7 +512,16 @@ def main():
         return 0
     if args.mode == "builtin":
         return run_builtin(cfg, source, args.label)
-    return run_plugin(cfg, source, args.label, args.chains)
+    frozen = None
+    if args.frozen_round:
+        p = Path(args.frozen_round)
+        if not p.is_absolute():
+            p = Path(cfg["repo"]) / p
+        if not p.is_dir():
+            raise SystemExit("冻结轮次目录不存在: " + str(p))
+        frozen = p.resolve()
+    return run_plugin(cfg, source, args.label, args.chains,
+                      function_only=args.function_only, frozen_round=frozen)
 
 
 if __name__ == "__main__":

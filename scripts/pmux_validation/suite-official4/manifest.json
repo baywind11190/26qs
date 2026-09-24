@@ -1,8 +1,9 @@
 {
   "suite_version": "official4-v1",
+  "selfcheck_version": "official4-selfcheck-r2",
   "scope": "官方公开四例（test1~test4）+ 形式化/测量自检素材；四例输入冻结，不随算法提交更换。",
   "frozen_from": "由已验收套件 h1h2-p3-v1 的四例与 selfcheck 条目复制；逐条 origin 来源见 source 字段（源自 2026-09-22_H1H2-P3_1dceb17_第01轮 冻结输入）。",
-  "note": "预检仅核对本清单文件；同包 suite/（h1h2-p3-v1）内的 H2、规模、回归资产保留原位、不在默认四例流程中使用。本清单不代表官方隐藏题。",
+  "note": "预检仅核对本清单文件；同包 suite/（h1h2-p3-v1）内的 H2、规模、回归资产保留原位、不在默认四例流程中使用。selfcheck 素材于 official4-p2 扩充（四例 tree 输入未变）。本清单不代表官方隐藏题。",
   "files": [
     {
       "file": "tree/pmux_case/competition_case/test1/test1.v",
@@ -43,6 +44,21 @@
       "file": "selfcheck/negative_gate.v",
       "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gate.v",
       "sha256": "b6393ea7992e66337b3d32c68b7fbe19c7e7fd5cb88fe0a0a8cc8837f42681ae"
+    },
+    {
+      "file": "selfcheck/checks.json",
+      "source": "authored for official4-p2（自检扩展：由 2026-09-24 初值建模修正 06/03_模型检查/model_checks.v（sha256 4049c94e26352e23aa93aeebec2a41607fb8b3b70b4f5a32491f36f548e34842）移植并扩展）",
+      "sha256": "46831533ae01cb74032f6b4a899876fb1e59e7908b5559615d4f8e40451ad211"
+    },
+    {
+      "file": "selfcheck/mapped_model_gold.v",
+      "source": "authored for official4-p2（同上来源：model_checks.v 移植 + LUT/未声明初值回归）",
+      "sha256": "da770b67ca67a22d4f5a0becb646c4528edbdd494870792d31ad5b95c5e3573d"
+    },
+    {
+      "file": "selfcheck/mapped_model_gate.v",
+      "source": "authored for official4-p2（同上来源：model_checks.v 移植 + LUT/未声明初值回归）",
+      "sha256": "4de01c1a7ff19aacecf14ad91c76abf39a9de592ca5dab54fb91792f6e78a129"
     }
   ]
 }

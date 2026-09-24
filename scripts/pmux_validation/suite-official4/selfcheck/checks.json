@@ -1,0 +1,75 @@
+{
+    "version": "official4-selfcheck-r2",
+    "note": "少量、有针对性的形式化自检；全部经新版 noDF 管道（EQY setup → 严格转换 → 本地执行 + 前提探针）运行。",
+    "checks": [
+        {
+            "name": "rtl_positive",
+            "kind": "rtl",
+            "gold": "positive_gold.v",
+            "gate": "positive_gate.v",
+            "top": "selfcheck_pos",
+            "expect": "PASS",
+            "note": "既有素材：等价组合逻辑，应真实通过"
+        },
+        {
+            "name": "rtl_negative",
+            "kind": "rtl",
+            "gold": "negative_gold.v",
+            "gate": "negative_gate.v",
+            "top": "selfcheck_neg",
+            "expect": "REJECT",
+            "note": "既有素材：AND vs OR，应被检出（反例）"
+        },
+        {
+            "name": "mac_init_ok",
+            "kind": "mapped",
+            "top": "mac_init_ok",
+            "expect": "PASS",
+            "note": "初值一致：RTL initial=0 vs dffeas power_up=low"
+        },
+        {
+            "name": "mac_init_conflict",
+            "kind": "mapped",
+            "top": "mac_init_conflict",
+            "expect": "REJECT",
+            "note": "初值冲突：RTL initial=1 vs dffeas power_up=low，应被检出"
+        },
+        {
+            "name": "mac_clr",
+            "kind": "mapped",
+            "top": "mac_clr",
+            "expect": "PASS",
+            "note": "清零路径（clrn 低有效 + 使能）：v2 模型在含复位设计上会被检出（05 最小复现），v3 修复后应通过"
+        },
+        {
+            "name": "mac_ena",
+            "kind": "mapped",
+            "top": "mac_ena",
+            "expect": "PASS",
+            "note": "时钟使能路径：v2 缺 ena 门控会被检出，v3 应通过"
+        },
+        {
+            "name": "mac_lut_ok",
+            "kind": "mapped",
+            "top": "mac_lut_ok",
+            "expect": "PASS",
+            "note": "LUT 模型正确性：AND 真值（lut_mask=0x0008）与 RTL 一致"
+        },
+        {
+            "name": "mac_lut_bad",
+            "kind": "mapped",
+            "top": "mac_lut_bad",
+            "expect": "REJECT",
+            "note": "映射层真实逻辑改错：AND→OR 型 LUT（lut_mask=0x000E），应被检出"
+        },
+        {
+            "name": "maskreg_premise",
+            "kind": "mapped",
+            "top": "maskreg",
+            "expect": "PREMISE_SAT",
+            "df_probe_expect": "UNSAT",
+            "df_probe_enforce": false,
+            "note": "未声明初值 FF（矛盾前提回归）：noDF 前提必须 SAT；DF 前提应为 UNSAT（历史签名，仅记录）"
+        }
+    ]
+}

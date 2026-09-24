@@ -18,6 +18,8 @@ CASES = ("test1", "test2", "test3", "test4")
 MAIN_CHAINS = ("c1_local", "c2_stage", "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
 FULL_CHAINS = ("c1_local", "c2_stage", "c3a_rtl_opt", "c3b_rtl_base",
                "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped", "c5_mapped_pair")
+FUNCTION_ONLY_EXEC = ("build", "formal_selfcheck", "chains")
+FUNCTION_ONLY_SKIPPED = ("flowcheck", "measurement_selfcheck", "public", "performance")
 EXPECTED_PLUGIN_STAGES = {"build", "flowcheck", "formal_selfcheck", "measurement_selfcheck",
                           "public", "chains", "performance"}
 BUILTIN_FOLLOW_UP = (
@@ -96,6 +98,44 @@ def _fmt_pct(value):
     return f"{value:.3f}%" if value is not None else "不可计算"
 
 
+def row_functional_ok(r):
+    """功能证据行的联合判定（不能只看单一字段/单一 SUCCESS 字样）。
+
+    要求：state=PASS 且 rc=0 且 verified=True；分区方法需 noDF 前提探针全 SAT；
+    合并证明方法需合并探针 SAT 且断言覆盖成立。
+    """
+    if r.get("state") != "PASS" or r.get("rc") != 0 or r.get("verified") is not True:
+        return False
+    if r.get("method") == "merged_miter":
+        merged = r.get("merged") or {}
+        return merged.get("probe") == "PREMISES_SAT" and merged.get("assert_cover_ok") is True
+    return r.get("probes_noDF_all_sat") is True
+
+
+def per_side_function_lines(chains):
+    """每例两侧功能状态（两侧分别独立运行；不使用“两链同结果”推断）。"""
+    def find(case, chain):
+        return next((r for r in chains if r.get("case") == case and r.get("chain") == chain), None)
+
+    lines = []
+    for case in CASES:
+        chunks = []
+        for label, chain in (("c4a", "c4a_rtl_opt_mapped"), ("c4b", "c4b_rtl_base_mapped")):
+            r = find(case, chain)
+            if not r:
+                chunks.append(f"{label} 未运行")
+            elif r.get("method") == "merged_miter":
+                m = r.get("merged") or {}
+                chunks.append("{} 合并证明 state={} k={}（探针 {}；全部输出覆盖 {}）".format(
+                    label, m.get("state"), m.get("k"), m.get("probe"), m.get("assert_cover_ok")))
+            else:
+                chunks.append("{} 分区 {}/{}（探针全 SAT={}）".format(
+                    label, r.get("partitions_pass"), r.get("partitions_total"),
+                    r.get("probes_noDF_all_sat")))
+        lines.append("{}：{}。".format(case, "；".join(chunks)))
+    return lines
+
+
 def build_report(root, output_root=None, chain_attempt="run01", stages_override=None, mode=None):
     root = Path(root)
     output_root = Path(output_root) if output_root else root
@@ -103,6 +143,9 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
     ctx = _read_json(root / "validation_context.json", {})
     if mode is None:
         mode = ctx.get("mode", "plugin")
+    if ctx.get("function_only"):
+        return build_function_recheck_report(root, output_root=output_root,
+                                             chain_attempt=chain_attempt, ctx=ctx)
     stages = stages_override if stages_override is not None else _read_json(
         root / "01_来源与环境_meta/stages.json", [])
     pub = _read_json(root / "05_公开四例_public/round01/summary.json", {}).get("cases", [])
@@ -138,8 +181,8 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
     expected_pairs = {(c, ch) for c in CASES for ch in MAIN_CHAINS}
     have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
     default_pass = expected_pairs <= have_pairs and all(
-        r.get("state") == "PASS" and r.get("rc") == 0
-        for r in chains if (r.get("case"), r.get("chain")) in expected_pairs)
+        row_functional_ok(r) for r in chains
+        if (r.get("case"), r.get("chain")) in expected_pairs)
     gate("功能证明（默认链集合）", default_pass)
     judgments = [judge_case_performance(p, pairs=pairs) for p in perf]
     gate("四例性能逐例判定", len(perf) == 4 and {p.get("case") for p in perf} == set(CASES)
@@ -193,7 +236,10 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
               "默认链集合说明：`c4a_rtl_opt_mapped`（原始 RTL ↔ 优化版最终映射网表）为主路径；"
               "`c4b_rtl_base_mapped` 为 baseline 对照；`c1_local`（P3 局部）与 `c2_stage`（同阶段）"
               "是范围受限证据与失败定位，不能单独支撑全链声明。",
-              f"完整公开证明链：{'PASS' if default_pass else 'NOT_CLOSED'}。"]
+              f"完整公开证明链：{'PASS' if default_pass else 'NOT_CLOSED'}。",
+              "",
+              "每例两侧功能状态（两侧分别独立运行；不使用“两链同结果”推断）："]
+    lines += ["- " + s for s in per_side_function_lines(chains)]
     if unresolved:
         lines += [f"- {r.get('case')} / {r.get('chain')}：{r.get('state')}，rc={r.get('rc')}" for r in unresolved]
     else:
@@ -277,4 +323,118 @@ def build_builtin_block_report(root, status, missing, evidence, cfg):
         f"- 清单：`{out / 'manifest.json'}`",
     ]
     (root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
+    return status
+
+
+def build_function_recheck_report(root, output_root=None, chain_attempt="run01", ctx=None):
+    """插件版功能补充复核（冻结网表；不重新综合、不重测性能）。"""
+    root = Path(root)
+    output_root = Path(output_root) if output_root else root
+    output_root.mkdir(parents=True, exist_ok=True)
+    ctx = ctx or _read_json(root / "validation_context.json", {})
+    stages = _read_json(root / "01_来源与环境_meta/stages.json", [])
+    chains = _read_json(
+        root / f"10_验证工具自检_selfcheck/chains/{chain_attempt}/chains_summary.json", [])
+    frozen = _read_json(
+        root / f"10_验证工具自检_selfcheck/chains/{chain_attempt}/frozen_input_verification.json", {})
+
+    gates, reasons = {}, []
+
+    def gate(name, passed):
+        gates[name] = bool(passed)
+        if not passed:
+            reasons.append(name)
+
+    stage_by = {s.get("name"): s for s in stages}
+    names = {s.get("name") for s in stages}
+    exec_ok = all(
+        (stage_by.get(n) or {}).get("rc") == 0
+        and (stage_by.get(n) or {}).get("state") in ("COMPLETED", "REUSED")
+        for n in FUNCTION_ONLY_EXEC)
+    skipped_ok = all(
+        (stage_by.get(n) or {}).get("state") == "NOT_RUN" for n in FUNCTION_ONLY_SKIPPED)
+    gate("执行阶段（功能复核）",
+         names == set(FUNCTION_ONLY_EXEC) | set(FUNCTION_ONLY_SKIPPED) and exec_ok and skipped_ok)
+    iso = ctx.get("isolation") or {}
+    gate("插件构建与隔离", (stage_by.get("build") or {}).get("rc") == 0
+         and (stage_by.get("build") or {}).get("state") in ("COMPLETED", "REUSED")
+         and iso.get("baseline_no_pmux") is True and iso.get("plugin_has_pmux") is True)
+    gate("冻结输入来源核验", frozen.get("ok") is True and bool(frozen.get("files")))
+    precheck = root / f"10_验证工具自检_selfcheck/chains/{chain_attempt}/precheck_report.txt"
+    precheck_text = precheck.read_text(errors="replace") if precheck.exists() else ""
+    gate("支持配置预检", precheck_text.startswith("[通过]"))
+    expected_pairs = {(c, ch) for c in CASES for ch in MAIN_CHAINS}
+    have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
+    func_ok = expected_pairs <= have_pairs and all(
+        row_functional_ok(r) for r in chains
+        if (r.get("case"), r.get("chain")) in expected_pairs)
+    gate("功能证明（默认链集合；两侧）", func_ok)
+
+    status = "FUNCTION_RECHECK_COMPLETE" if all(gates.values()) else "NEEDS_REVIEW"
+    out = output_root / "11_汇总与证据_summary"
+    out.mkdir(exist_ok=True)
+    manifest = {
+        "run_status": status, "mode": "plugin", "function_only": True,
+        "marking": "插件版功能补充复核", "official_acceptance": "NOT_CLAIMED",
+        "final_builtin_acceptance": "NOT_RUN",
+        "frozen_round": ctx.get("frozen_round"),
+        "gates": gates, "reasons": reasons,
+        "chains_mode": ctx.get("chains_mode"),
+        "chains_run": sorted("{}/{}".format(c, ch) for c, ch in sorted(have_pairs)),
+        "performance": "NOT_MEASURED_THIS_ROUND（引用既有轮次）",
+        "context": ctx, "stages": stages, "evidence_root": str(root),
+        "chain_attempt": chain_attempt,
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+    lines = [
+        "# 插件版功能补充复核（官方四例 · 冻结网表）", "",
+        f"执行状态：**{status}**。",
+        "形态：**插件版功能补充复核**——使用修订后的功能路径（模型 `dffeas-v3` + 本地策略修正 "
+        "`noDF-local-r1` + 支持配置预检；test3 为无切割整模块合并证明），在冻结的既有轮次产物上"
+        "复验四例功能。**未重新综合、未重测性能**；**最终内置四例验收：NOT_RUN**——本复核不构成官方验收，"
+        "也不能替代内置四例验收。", "",
+        "证据根目录：`{}`；功能证明链采用 `{}`。".format(root, chain_attempt), "",
+        "- 算法提交：`{}`".format(ctx.get("target_commit")),
+        "- 项目 HEAD：`{}`".format(ctx.get("project_head")),
+        "- 源码 SHA-256：`{}`".format(ctx.get("source_sha256")),
+        "- 插件 SHA-256：`{}`".format(ctx.get("plugin_sha256", "NOT_BUILT")),
+        "- 流程 / 模型 / 策略：{} / {} / {}".format(ctx.get("flow_version"),
+                                                   ctx.get("model_version"),
+                                                   ctx.get("strategy_version")),
+        "- 冻结来源轮次：`{}`（输入逐文件哈希对照该轮 ALL_SHA256.txt）".format(ctx.get("frozen_round")),
+        "- 链集合：{}（main=主路径+对照+定位；full=全部链）".format(ctx.get("chains_mode", "main")), "",
+        "## 检查结果", "", "| 项目 | 结果 |", "|---|---|",
+    ]
+    lines += ["| {} | {} |".format(name, "满足" if ok else "未满足或缺证据")
+              for name, ok in gates.items()]
+    lines += ["", "## 每例两侧功能状态", "",
+              "两侧分别独立运行；不使用“两链同结果”推断（test3 为无切割合并证明，"
+              "其余用例为分区路径）。"]
+    lines += ["- " + s for s in per_side_function_lines(chains)]
+    lines += ["", "## 模型、策略与判据", "",
+              "- 模型：器件语义模型 v3（clrn 异步清零 / ena 时钟使能 / power_up 初值；"
+              "支持配置预检阻断未支持条件，未支持不静默建模）。",
+              "- 策略：本地策略修正 noDF-local-r1——EQY setup（-m）只生成分区与脚本 → 严格转换"
+              "（仅删除恰一处 ` -set-def-formal`，其余逐字节不变；格式不符即停止）→ 本地执行；"
+              "附前提探针（noDF 必需 SAT；DF 记录历史签名）。",
+              "- 判据（联合，不依赖单一 SUCCESS 字样）：成功标记 + 基例数 >= 归纳长度 + 断言导入覆盖 + "
+              "全文无 ERROR；链级另加全部 noDF 前提探针 SAT。",
+              "- 探针局限：`sat -seq 1` 仅证明初态前提可满足，不声称任意时刻可达性。",
+              "- 合并证明语义：比较器对 gold 未定义位采用 x 容差；不声称对任意独立二态初值逐点相等。", "",
+              "## 资源与性能（引用，未重测）", "",
+              "- 本轮**未重新综合、未测 CPU/内存**；资源与性能请引用对应既有轮次（见 `frozen_round` 下 "
+              "`05_公开四例_public/round01/summary.json`、`09_时间内存开销_performance/` 与该轮结论报告）。"
+              "数字未在本轮产生，不得作为本轮新测引用。", "",
+              "## 未完成与边界", "",
+              "- 内置四例验收：NOT_RUN（本复核不替代）；流程一致性/测量自检/性能：本轮 NOT_RUN（见阶段表）。",
+              "- 四例范围之外（H1/H2/规模/多驱动/回归）不在本模式范围。", "",
+              "## 证据", "",
+              "- `10_验证工具自检_selfcheck/chains/{}/frozen_input_verification.json`：冻结输入逐文件哈希核对。".format(chain_attempt),
+              "- `10_验证工具自检_selfcheck/chains/{}/precheck_report.txt`：支持配置预检。".format(chain_attempt),
+              "- `10_验证工具自检_selfcheck/chains/{}/**`：逐分区转换记录、证明与探针日志、合并证明。".format(chain_attempt),
+              "- `01_来源与环境_meta/stages.json`：阶段状态（含 NOT_RUN 及原因）。",
+              "- `10_验证工具自检_selfcheck/attempt01/**`：形式化自检（初值/清零/使能/LUT/矛盾前提回归）。",
+    ]
+    (output_root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
     return status
