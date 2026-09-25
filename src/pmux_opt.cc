@@ -13,6 +13,7 @@
  *
  * 3 条件约束比较器优化
  *   3.1 前置条件感知的比较器位宽缩减
+ *   3.2 同前缀比较器因式分解
  *
  * 4 分组轮换因式分解
  *   4.1 分组选择与四路循环轮换因式分解
@@ -844,6 +845,7 @@ if (pattern_d_candidates > 0)
         log_id(module),
         pattern_d_candidates);
 }
+
 
             /*
              * ==================================================
@@ -2605,6 +2607,356 @@ if (!profitable_pattern)
                 log(
                     "========================================\n");
             }
+
+
+/*
+ * ==================================================
+ * Pattern E / 3.2:
+ *
+ * 同前缀比较器因式分解
+ *
+ * v1 只处理：
+ *
+ *   - 两个 unsigned $eq
+ *   - 两边等宽
+ *   - 比较同一个 signal
+ *   - 另一边均为纯 0/1 常量
+ *   - 两个常量恰好只有 1 bit 不同
+ *   - comparator width >= 7
+ *
+ * 原：
+ *
+ *   eq0 = (signal == CONST0)
+ *   eq1 = (signal == CONST1)
+ *
+ * 若 CONST0 / CONST1 只有 bit[k] 不同：
+ *
+ *   common = (signal_without_k == common_constant)
+ *   eq0    = common & match(signal[k], CONST0[k])
+ *   eq1    = common & match(signal[k], CONST1[k])
+ *
+ * 该变换为全局逻辑等价，不依赖 downstream guard。
+ * ==================================================
+ */
+
+int pattern_e_candidates = 0;
+
+auto pattern_e_extract_eq =
+    [&](RTLIL::Cell *cell,
+        RTLIL::SigSpec &signal,
+        RTLIL::Const &constant)
+    -> bool
+{
+    if (cell->type != ID($eq))
+        return false;
+
+    int a_width =
+        cell->getParam(ID::A_WIDTH).as_int();
+
+    int b_width =
+        cell->getParam(ID::B_WIDTH).as_int();
+
+    bool a_signed =
+        cell->getParam(ID::A_SIGNED).as_bool();
+
+    bool b_signed =
+        cell->getParam(ID::B_SIGNED).as_bool();
+
+    if (a_signed ||
+        b_signed ||
+        a_width != b_width ||
+        a_width < 7)
+        return false;
+
+    RTLIL::SigSpec a =
+        sigmap(cell->getPort(ID::A));
+
+    RTLIL::SigSpec b =
+        sigmap(cell->getPort(ID::B));
+
+    if (!a.is_fully_const() &&
+        b.is_fully_const())
+    {
+        signal = a;
+        constant = b.as_const();
+    }
+    else if (
+        a.is_fully_const() &&
+        !b.is_fully_const())
+    {
+        signal = b;
+        constant = a.as_const();
+    }
+    else
+    {
+        return false;
+    }
+
+    if (signal.size() != a_width ||
+        constant.size() != a_width)
+        return false;
+
+    if (cell->getParam(ID::Y_WIDTH).as_int() != 1)
+        return false;
+
+    /*
+     * X/Z 常量不参与 v1。
+     */
+    for (int bit = 0;
+         bit < constant.size();
+         bit++)
+    {
+        if (constant[bit] != RTLIL::State::S0 &&
+            constant[bit] != RTLIL::State::S1)
+            return false;
+    }
+
+    return true;
+};
+
+
+std::vector<RTLIL::Cell *> pattern_e_eqs;
+
+for (auto cell : module->cells())
+{
+    if (cell->type == ID($eq))
+        pattern_e_eqs.push_back(cell);
+}
+
+pool<RTLIL::Cell *> pattern_e_used;
+
+
+for (size_t i = 0;
+     i < pattern_e_eqs.size();
+     i++)
+{
+    RTLIL::Cell *eq0 =
+        pattern_e_eqs[i];
+
+    if (pattern_e_used.count(eq0))
+        continue;
+
+    RTLIL::SigSpec signal0;
+    RTLIL::Const constant0;
+
+    if (!pattern_e_extract_eq(
+            eq0,
+            signal0,
+            constant0))
+        continue;
+
+
+    for (size_t j = i + 1;
+         j < pattern_e_eqs.size();
+         j++)
+    {
+        RTLIL::Cell *eq1 =
+            pattern_e_eqs[j];
+
+        if (pattern_e_used.count(eq1))
+            continue;
+
+        RTLIL::SigSpec signal1;
+        RTLIL::Const constant1;
+
+        if (!pattern_e_extract_eq(
+                eq1,
+                signal1,
+                constant1))
+            continue;
+
+        /*
+         * 必须比较同一个 canonical signal。
+         */
+        if (signal0 != signal1)
+            continue;
+
+        if (constant0.size() !=
+            constant1.size())
+            continue;
+
+
+        int different_bit = -1;
+        bool multiple_differences = false;
+
+        for (int bit = 0;
+             bit < constant0.size();
+             bit++)
+        {
+            if (constant0[bit] ==
+                constant1[bit])
+                continue;
+
+            if (different_bit >= 0)
+            {
+                multiple_differences = true;
+                break;
+            }
+
+            different_bit = bit;
+        }
+
+        if (multiple_differences ||
+            different_bit < 0)
+            continue;
+
+
+        RTLIL::SigSpec common_signal;
+        RTLIL::Const common_constant;
+
+        for (int bit = 0;
+             bit < signal0.size();
+             bit++)
+        {
+            if (bit == different_bit)
+                continue;
+
+            common_signal.append(
+                signal0.extract(bit, 1));
+
+            common_constant.append(
+                RTLIL::Const(
+                    constant0[bit],
+                    1));
+        }
+
+        if (common_signal.size() !=
+                signal0.size() - 1 ||
+            common_constant.size() !=
+                signal0.size() - 1)
+        {
+            log_error(
+                "Pattern E internal width mismatch.\n");
+        }
+
+
+        RTLIL::SigSpec old_y0 =
+            eq0->getPort(ID::Y);
+
+        RTLIL::SigSpec old_y1 =
+            eq1->getPort(ID::Y);
+
+        if (old_y0.size() != 1 ||
+            old_y1.size() != 1)
+            continue;
+
+        if (sigmap(old_y0) ==
+            sigmap(old_y1))
+            continue;
+
+
+        RTLIL::SigSpec differing_signal =
+            signal0.extract(
+                different_bit,
+                1);
+
+
+        RTLIL::Wire *common_eq_wire =
+            module->addWire(NEW_ID);
+
+        RTLIL::Wire *not_bit_wire =
+            module->addWire(NEW_ID);
+
+
+        module->addEq(
+            NEW_ID,
+            common_signal,
+            common_constant,
+            RTLIL::SigSpec(
+                common_eq_wire));
+
+
+        module->addNot(
+            NEW_ID,
+            differing_signal,
+            RTLIL::SigSpec(
+                not_bit_wire));
+
+
+        RTLIL::SigSpec match0 =
+            constant0[different_bit] ==
+                    RTLIL::State::S1
+                ? differing_signal
+                : RTLIL::SigSpec(
+                      not_bit_wire);
+
+        RTLIL::SigSpec match1 =
+            constant1[different_bit] ==
+                    RTLIL::State::S1
+                ? differing_signal
+                : RTLIL::SigSpec(
+                      not_bit_wire);
+
+
+        /*
+         * 先记录名称用于日志，
+         * 再删除旧 comparator。
+         */
+        RTLIL::IdString old_name0 =
+            eq0->name;
+
+        RTLIL::IdString old_name1 =
+            eq1->name;
+
+        pattern_e_used.insert(eq0);
+        pattern_e_used.insert(eq1);
+
+        module->remove(eq0);
+        module->remove(eq1);
+
+
+        /*
+         * 新逻辑直接驱动原 comparator 的 Y，
+         * 因此所有 downstream PMUX / control logic
+         * 无需修改。
+         */
+        module->addAnd(
+            NEW_ID,
+            RTLIL::SigSpec(
+                common_eq_wire),
+            match0,
+            old_y0);
+
+        module->addAnd(
+            NEW_ID,
+            RTLIL::SigSpec(
+                common_eq_wire),
+            match1,
+            old_y1);
+
+
+        pattern_e_candidates++;
+
+        log("\n");
+        log("COMMON-PREFIX EQ REWRITE\n");
+        log("  eq0         : %s\n",
+            log_id(old_name0));
+        log("  eq1         : %s\n",
+            log_id(old_name1));
+        log("  old width   : %d\n",
+            signal0.size());
+        log("  shared width: %d\n",
+            common_signal.size());
+        log("  differing bit: %d\n",
+            different_bit);
+
+        /*
+         * 一个 comparator 只参加一次配对。
+         */
+        break;
+    }
+}
+
+
+if (pattern_e_candidates > 0)
+{
+    log("\n");
+    log(
+        "Pattern E candidates in module %s: %d\n",
+        log_id(module),
+        pattern_e_candidates);
+}
+
 
         }
 
