@@ -141,6 +141,16 @@ struct PmuxOptPass : public Pass
         int total_h3_rebuilt = 0;
         for (auto module : design->selected_modules())
         {
+            bool has_pmux = false;
+
+            for (auto cell : module->cells())
+                if (cell->type == ID($pmux)) {
+                    has_pmux = true;
+                    break;
+                }
+
+            if (has_pmux)
+            {
             SigMap sigmap(module);
 
             /*
@@ -2595,6 +2605,8 @@ if (!profitable_pattern)
                 log(
                     "========================================\n");
             }
+
+        }
 
         /*
          * ==================================================
