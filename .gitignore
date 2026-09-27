@@ -45,3 +45,8 @@ __pycache__/
 /test3/
 /test4/
 /negative/
+
+# Local evaluation evidence and management backups (keep files on disk).
+# Already tracked reports remain tracked; selected new reports can be added explicitly.
+/results/官方口径评测/
+/results/90_整理记录_management/
