@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
+import builtin_common as B
 
 PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 CLK_TCK = os.sysconf("SC_CLK_TCK")
@@ -228,43 +229,70 @@ def gen_measure_ys(rtl: Path, top: str, *, optimized: bool, stat_json: Path) -> 
 
 
 def measure_case(
-    rtl: Path, top: str, out_dir: Path, *, pairs=5, plugin=True, timeout_s=1800
+    rtl: Path, top: str, out_dir: Path, *, pairs=5, plugin=True, builtin=False,
+    timeout_s=1800
 ):
-    """交错测量一个用例的两侧。"""
+    """交错测量一个用例的两侧。
+
+    plugin=True：插件拆分流程（baseline 无插件 / optimized 加载 pmux_opt.so）。
+    builtin=True：内置流程（两侧内置二进制运行逐字节相同的外部脚本；
+    优化版由 synth_intel 内部调用 pmux_opt）。每次运行使用独立工作目录，
+    脚本内输出使用相对名（mapped.il / stat.json），两侧脚本逐字节相同。
+    """
     out_dir.mkdir(parents=True, exist_ok=False)
     ys_dir = out_dir / "ys"
     ys_dir.mkdir(exist_ok=True)
     runs = []
+    builtin_bins = {}
+    if builtin:
+        builtin_bins = B.select_binaries(C.CONTEXT.get("builtin") or {})
 
-    def one(side, optimized, seq):
-        stat_json = out_dir / f"{side}_{seq:02d}.stat.json"
-        ys_text = gen_measure_ys(rtl, top, optimized=optimized, stat_json=stat_json)
-        ys_path = ys_dir / f"{side}_{seq:02d}.ys"
-        ys_path.write_text(ys_text)
-        cmd = [str(C.TOOL_YOSYS), "-s", str(ys_path)]
-        if optimized:
-            cmd = [str(C.TOOL_YOSYS), "-m", str(C.PLUGIN_SO), "-s", str(ys_path)]
+    def one(side, optimized, seq, order):
+        if builtin:
+            run_dir = out_dir / "{}_{:02d}".format(side, seq)
+            run_dir.mkdir(exist_ok=False)
+            ys_text = C.gen_builtin_synth_ys(rtl, top)
+            (run_dir / "flow.ys").write_text(ys_text)
+            stat_json = run_dir / "stat.json"
+            log_path = run_dir / "run.log"
+            cmd = [str(builtin_bins[side]), "-s", "flow.ys"]
+            cwd = run_dir
+        else:
+            stat_json = out_dir / f"{side}_{seq:02d}.stat.json"
+            ys_text = gen_measure_ys(rtl, top, optimized=optimized, stat_json=stat_json)
+            ys_path = ys_dir / f"{side}_{seq:02d}.ys"
+            ys_path.write_text(ys_text)
+            cmd = [str(C.TOOL_YOSYS), "-s", str(ys_path)]
+            if optimized:
+                cmd = [str(C.TOOL_YOSYS), "-m", str(C.PLUGIN_SO), "-s", str(ys_path)]
+            log_path = out_dir / f"{side}_{seq:02d}.log"
+            cwd = C.REPO
         res = run_measured(
             cmd,
-            cwd=C.REPO,
-            log_path=out_dir / f"{side}_{seq:02d}.log",
+            cwd=cwd,
+            log_path=log_path,
             timeout_s=timeout_s,
         )
         res["side"] = side
         res["seq"] = seq
+        res["order"] = order
         res["stat_exists"] = stat_json.exists()
+        if builtin:
+            res["run_dir"] = str(run_dir)
         runs.append(res)
         return res
 
     for i in range(pairs):
         if i % 2 == 0:
-            order = ("baseline", "optimized")
+            order_sides = ("baseline", "optimized")
+            order_tag = "B→O"
         else:
-            order = ("optimized", "baseline")
-        for side in order:
-            r = one(side, side == "optimized", i + 1)
+            order_sides = ("optimized", "baseline")
+            order_tag = "O→B"
+        for side in order_sides:
+            r = one(side, side == "optimized", i + 1, order_tag)
             print(
-                f"  [{rtl.stem}] pair{i+1} {side}: rc={r['rc']} "
+                f"  [{rtl.stem}] pair{i+1} {order_tag} {side}: rc={r['rc']} "
                 f"cpu={r['cpu_total_s']}s wall={r['wall_s']}s "
                 f"rss_tree={r['tree_rss_peak_kb']}kB "
                 f"gn_rss={r['gn_time_maxrss_kb']}kB"
@@ -397,11 +425,13 @@ def main():
     if args.selftest:
         return selftest(C.ROUND_DIR / "09_时间内存开销_performance" / "selftest")
 
+    builtin = (C.CONTEXT.get("mode") == "builtin")
     summaries = []
     for case in args.cases:
         rtl = C.TREE / "pmux_case" / "competition_case" / case / f"{case}.v"
         print(f"=== {case} ===")
-        summ = measure_case(rtl, case, base / case, pairs=args.pairs)
+        summ = measure_case(rtl, case, base / case, pairs=args.pairs,
+                            plugin=not builtin, builtin=builtin)
         summaries.append(summ)
 
     # 汇总 CSV

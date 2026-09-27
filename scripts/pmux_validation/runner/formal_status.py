@@ -80,7 +80,7 @@ def check_mapped_model(il_path, top):
     VCC / GND（自有模型）。
     dffeas：power_up ∈ {low,high}；prn=1、asdata/aload/sclr/sload=0；
     控制端口（clrn/ena）与数据端口必须存在——缺失即阻断；
-    未知参数、未知端口取值一律阻断。
+    未知参数、未知端口（每个实际连接端口必须属于受支持集合）、未知端口取值一律阻断。
     cycloneiv_lcell_comb：必需端口与参数存在；sum_lutc_input ∈ {datac,cin}。
     纯组合设计（无 dffeas）合法。
     """
@@ -102,6 +102,9 @@ def check_mapped_model(il_path, top):
             for port in DFFEAS_PORTS:
                 if port not in conns:
                     raise ValueError(f'dffeas 缺少端口连接: {port}（缺失控制端口必须阻断）')
+            for port in conns:
+                if port not in DFFEAS_PORTS:
+                    raise ValueError(f'dffeas 未知端口: {port}（不支持配置）')
             for port, want in DFFEAS_CONST_PORTS.items():
                 if conns[port] != want:
                     raise ValueError(f'dffeas {port} 必须为常量 {want}，实际 {conns[port]!r}')

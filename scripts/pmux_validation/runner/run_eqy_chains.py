@@ -306,12 +306,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--attempt", default="run01")
     ap.add_argument("--chains", choices=["main", "full"], default="main")
+    ap.add_argument("--input-mode", choices=["plugin", "builtin"], default="plugin",
+                    help="plugin=插件拆分流程网表（pre_p3/post_p3/coarse_done/mapped）；"
+                         "builtin=内置流程网表（仅 mapped；链集合=c4a/c4b 主证明）")
     ap.add_argument("--frozen-round", default=None,
                     help="功能复核：只读复用既有轮次 05_公开四例_public 产物（逐文件哈希核对）")
     args = ap.parse_args()
     if not __import__("re").fullmatch(r"run[0-9]+", args.attempt):
         ap.error("attempt must be runNN")
-    selected = list(MAIN_CHAINS if args.chains == "main" else FULL_CHAINS)
+    if args.input_mode == "builtin":
+        if args.chains == "full":
+            ap.error("内置模式无 P3 中间网表，不支持 --chains full")
+        if args.frozen_round:
+            ap.error("内置模式不支持 --frozen-round")
+        selected = [c for c in MAIN_CHAINS
+                    if c in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")]
+    else:
+        selected = list(MAIN_CHAINS if args.chains == "main" else FULL_CHAINS)
     out = C.ROUND_DIR / "10_验证工具自检_selfcheck" / "chains" / args.attempt
     C.refuse_overwrite(out)
     out.mkdir(parents=True)
@@ -345,11 +356,18 @@ def main():
     for top in CASES:
         rtl = stage(C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top),
                     "chains/{}.v".format(top))
+        kinds = (("mapped",) if args.input_mode == "builtin"
+                 else ("pre_p3", "post_p3", "coarse_done", "mapped"))
         sides = {}
         for side in ("baseline", "optimized"):
-            for kind in ("pre_p3", "post_p3", "coarse_done", "mapped"):
-                src = pub / top / side / "{}_{}.il".format(side, kind)
-                rel = "05_公开四例_public/round01/{}/{}/{}_{}.il".format(top, side, side, kind)
+            for kind in kinds:
+                if args.input_mode == "builtin":
+                    # 内置外部脚本产物名为 mapped.il（两侧脚本逐字节相同）。
+                    src = pub / top / side / "mapped.il"
+                    rel = "05_公开四例_public/round01/{}/{}/mapped.il".format(top, side)
+                else:
+                    src = pub / top / side / "{}_{}.il".format(side, kind)
+                    rel = "05_公开四例_public/round01/{}/{}/{}_{}.il".format(top, side, side, kind)
                 sides[(side, kind)] = stage(src, "chains/{}_{}_{}.il".format(top, side, kind),
                                             frozen_rel=(rel if frozen else None))
         case_paths[top] = {"rtl": rtl, "sides": sides}
@@ -421,6 +439,7 @@ def main():
                     row = {"case": top, "chain": cname, "rc": 2, "state": "TOOL_OR_CONFIG_ERROR",
                            "method": "partition", "error": "eqy -m rc={}".format(rc),
                            "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
+                           "input_mode": args.input_mode,
                            "partitions_total": 0, "partitions_pass": 0, "partition_states": {},
                            "probes_noDF_all_sat": False, "df_probes_unsat": 0, "merged": None,
                            "verified": False, "frozen_round": (str(frozen) if frozen else None),
@@ -443,6 +462,7 @@ def main():
                        "rc": 0 if final_state == "PASS" else 2,
                        "state": final_state, "method": method,
                        "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
+                       "input_mode": args.input_mode,
                        "partitions_total": agg["partitions_total"],
                        "partitions_pass": agg["partitions_pass"],
                        "partition_states": agg["partition_states"],
@@ -488,6 +508,7 @@ def main():
     (out / "chains_summary.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
     (out / "chains_set.json").write_text(json.dumps(
         {"chain_set": args.chains, "chains": sorted(selected),
+         "input_mode": args.input_mode,
          "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION},
         ensure_ascii=False, indent=2) + "\n")
     (out / "hash_manifest.json").write_text(json.dumps(hash_map, ensure_ascii=False, indent=2) + "\n")

@@ -1,4 +1,4 @@
-"""官方四例（official4-p1）判定与中文报告；缺失证据永不算通过。
+"""官方四例（official4-p4）判定与中文报告；缺失证据永不算通过。
 
 判定规则（详见 POLICY.md，来源为官方答疑 Sheet1 C21~C26、C34、C37、C41）：
 - 逻辑单元（cycloneiv_lcell_comb）逐例缩减率算术平均；DFF 单独检查、不应增加；
@@ -22,12 +22,19 @@ FUNCTION_ONLY_EXEC = ("build", "formal_selfcheck", "chains")
 FUNCTION_ONLY_SKIPPED = ("flowcheck", "measurement_selfcheck", "public", "performance")
 EXPECTED_PLUGIN_STAGES = {"build", "flowcheck", "formal_selfcheck", "measurement_selfcheck",
                           "public", "chains", "performance"}
+# 内置四例验收：执行阶段、主证明链与完成状态词。
+BUILTIN_EXPECTED_STAGES = {"build", "flowcheck", "formal_selfcheck", "measurement_selfcheck",
+                           "public", "chains", "performance"}
+BUILTIN_MAIN_CHAINS = ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
+BUILTIN_COMPLETE_STATUS = "BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE"
 BUILTIN_FOLLOW_UP = (
-    "1) 在 validate.py 增加内置执行路径：两份 Yosys 0.69 对四例直接调用 synth_intel（外部脚本内容相同），记录网表与 stat。",
-    "2) 内置形态功能证明：原始 RTL 与优化版最终映射网表按默认链集合口径运行 EQY；条件不满足时保留 MODEL_UNSUPPORTED。",
-    "3) 资源与性能统计复用现有 runner（cycloneiv_lcell_comb、DFF、逐例 5% 与 60s/2GB 对照）。",
-    "4) 内置 pass 位于 synth_intel.cc 内部，流程一致性检查与插件形态不同，需单独设计并验证。",
-    "5) 完成执行路径的模拟测试覆盖后，方可开放 run 默认执行；在此之前保持阻断。",
+    "1) 修复失败原因后重新运行：`validate.py run <提交>`（默认内置，自动准备工具，不退回插件）。",
+    "2) 工具准备：baseline 按登记核对复用；optimized 按缓存键（算法源码哈希、基础提交、"
+    "集成模板、关键构建参数、编译器、ABC 身份）在 cache_dir/registry 查找，未命中时从本地"
+    "基础提交自动构建（隔离源码树 + 幂等集成 + 冒烟验证）并登记为 READY；构建失败保留 "
+    "FAILED 诊断、不发布完成标记、不被复用。",
+    "3) 内置外部脚本、插入位点与判定方法见 POLICY.md“内置四例验收”节；"
+    "插件预检（--mode plugin）不能替代内置验收。",
 )
 
 
@@ -263,7 +270,7 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
             f"{'满足' if j['cpu_ok'] else '未满足'} | {rss} | {_fmt_pct(j['mem_overhead_pct'])} | "
             f"{'满足' if j['mem_ok'] else '未满足'} | {limit_disp} | {j['valid']} |")
     lines += ["",
-              "每侧五次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
+              f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
               "（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。",
               "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。",
               "内存为 5ms 间隔进程组 RSS 求和采样；可能漏掉短峰值、重复计入共享页、包含包装进程；"
@@ -308,8 +315,8 @@ def build_builtin_block_report(root, status, missing, evidence, cfg):
         lines += ["## 缺项清单", ""] + [f"- {m}" for m in missing] + [""]
     else:
         lines += ["## 说明", "",
-                  "内置证据预检通过；但本版本未包含内置四例执行器（见后续清单），因此仍为阻断状态。", ""]
-    lines += ["## 后续实现清单", ""] + [f"- {item}" for item in BUILTIN_FOLLOW_UP] + [""]
+                  "内置证据预检未通过；本次未启动验收进程，不退回插件。", ""]
+    lines += ["## 后续动作", ""] + [f"- {item}" for item in BUILTIN_FOLLOW_UP] + [""]
     lines += [
         "## 内置四例验收要求（契约）", "",
         "- 原版与优化版均为 Yosys 0.69 的可追溯构建；记录基础源码提交、构建信息、二进制指纹、"
@@ -323,6 +330,234 @@ def build_builtin_block_report(root, status, missing, evidence, cfg):
         f"- 清单：`{out / 'manifest.json'}`",
     ]
     (root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
+    return status
+
+
+def build_builtin_build_failed_report(root, error, cfg, build_dir=None, logs=None):
+    """内置工具准备失败记录（构建失败/环境不满足）；不启动验收进程、不退回插件。"""
+    root = Path(root)
+    out = root / "11_汇总与证据_summary"
+    out.mkdir(parents=True, exist_ok=True)
+    context = {k: cfg.get(k) for k in ("flow_version", "suite_version", "target_commit",
+                                       "source_sha256", "project_head", "suite_verified")}
+    manifest = {
+        "run_status": "BUILTIN_BUILD_FAILED", "mode": "builtin",
+        "marking": "官方四例内置验收（工具准备失败）",
+        "official_acceptance": "NOT_CLAIMED", "builtin_execution": "BUILD_FAILED",
+        "error": error, "build_dir": build_dir, "logs": logs or {},
+        "context": context, "evidence_root": str(root),
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    lines = [
+        "# 官方四例内置验收 —— 工具准备失败", "",
+        "状态：**BUILTIN_BUILD_FAILED**。",
+        "本次在自动准备内置工具（复用查找或构建）时失败；未启动任何验收阶段、"
+        "未加载插件、不退回插件方案、不自动重试。", "",
+        f"- 算法提交：`{cfg.get('target_commit')}`",
+        f"- 源码 SHA-256：`{cfg.get('source_sha256')}`",
+        f"- 流程 / 套件：{cfg.get('flow_version')} / {cfg.get('suite_version')}", "",
+        "## 失败原因", "",
+        f"- {error}", "",
+    ]
+    if build_dir:
+        lines.append(f"- 构建目录（保留诊断）：`{build_dir}`")
+    if logs:
+        lines.append(f"- 日志：`{logs}`")
+    lines += ["", "## 后续动作", "",
+              "- 按日志检查失败原因（编译错误 / 依赖缺失 / 锚点上下文不符 / 构建锁残留等）；"
+              "修复后重新运行 `validate.py run <提交>`。",
+              "- 既有历史构建与缓存不受影响（不删除、不覆盖）；缓存中 FAILED 条目不会被复用。", "",
+              "## 证据", "",
+              f"- 工具准备记录：`{root / '01_来源与环境_meta/builtin_prepare.json'}`",
+              f"- 阶段记录：`{root / '01_来源与环境_meta/stages.json'}`",
+              f"- 清单：`{out / 'manifest.json'}`",
+              ]
+    (root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
+    return "BUILTIN_BUILD_FAILED"
+
+
+def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_override=None):
+    """官方四例内置验收（本地）判定与中文报告；缺失证据永不算通过。
+
+    与插件预检的区别：交付形态为两份内置 Yosys（外部脚本直接调用 synth_intel；
+    优化版由 synth_intel.cc 在 fsm;opt 之后、wreduce 之前自动调用 pmux_opt）；
+    功能证明主链为 c4a/c4b（原始 RTL ↔ 两侧最终映射网表；test3 为无切割合并
+    证明）；c1/c2 依赖 P3 中间网表，内置模式不适用（NOT_APPLICABLE，不虚构）。
+    完成状态 BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE 仅在全部门通过时给出；
+    本地验收不代表主办方认可。
+    """
+    root = Path(root)
+    output_root = Path(output_root) if output_root else root
+    output_root.mkdir(parents=True, exist_ok=True)
+    ctx = _read_json(root / "validation_context.json", {})
+    stages = stages_override if stages_override is not None else _read_json(
+        root / "01_来源与环境_meta/stages.json", [])
+    evidence = _read_json(root / "01_来源与环境_meta/builtin_evidence.json", {})
+    fc = _read_json(root / "04_流程一致性_flowcheck/builtin_run01/builtin_flowcheck.json", {})
+    pub = _read_json(root / "05_公开四例_public/round01/summary.json", {}).get("cases", [])
+    chains = _read_json(
+        root / f"10_验证工具自检_selfcheck/chains/{chain_attempt}/chains_summary.json", [])
+    perf = _read_json(root / "09_时间内存开销_performance/round01/performance_summary.json", [])
+    pairs = ctx.get("performance_pairs", 5)
+    prep = ctx.get("builtin_prepare") or {}
+    scheme = ctx.get("performance_scheme") or ""
+
+    gates, reasons = {}, []
+
+    def gate(name, passed):
+        gates[name] = bool(passed)
+        if not passed:
+            reasons.append(name)
+
+    stage_by = {s.get("name"): s for s in stages}
+
+    def stage_ok(name):
+        s = stage_by.get(name)
+        return bool(s) and s.get("rc") == 0 and s.get("state") in ("COMPLETED", "REUSED")
+
+    gate("执行阶段完整（内置）", {s.get("name") for s in stages} == BUILTIN_EXPECTED_STAGES
+         and all(stage_ok(n) for n in BUILTIN_EXPECTED_STAGES))
+    fc_ok = (evidence.get("ok") is True and fc.get("all_ok") is True
+             and len(fc.get("cases") or []) == 4)
+    gate("内置构建与调用证据", fc_ok)
+    gate("四例综合与检查", len(pub) == 4 and {p.get("case") for p in pub} == set(CASES)
+         and all(p.get("baseline_rc") == 0 and p.get("optimized_rc") == 0
+                 and p.get("baseline_check_assert") and p.get("optimized_check_assert")
+                 for p in pub))
+    gate("DFF逐例不增加", len(pub) == 4 and all(p.get("dff_nonincrease") is True for p in pub))
+    expected_pairs = {(c, ch) for c in CASES for ch in BUILTIN_MAIN_CHAINS}
+    have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
+    func_ok = expected_pairs <= have_pairs and all(
+        row_functional_ok(r) for r in chains
+        if (r.get("case"), r.get("chain")) in expected_pairs)
+    gate("功能证明（内置主链 c4a/c4b）", func_ok)
+    judgments = [judge_case_performance(p, pairs=pairs) for p in perf]
+    gate("四例性能逐例判定", len(perf) == 4 and {p.get("case") for p in perf} == set(CASES)
+         and all(j["pass"] for j in judgments))
+    gate("四例输入指纹已核验", ctx.get("suite_verified") is True)
+
+    complete = all(gates.values())
+    status = BUILTIN_COMPLETE_STATUS if complete else "NEEDS_REVIEW"
+    unresolved = [r for r in chains if r.get("state") != "PASS"]
+    out = output_root / "11_汇总与证据_summary"
+    out.mkdir(exist_ok=True)
+    ev_all = evidence.get("evidence") or {}
+    opt_ev = ev_all.get("optimized") or {}
+    base_ev = ev_all.get("baseline") or {}
+    alg_ev = ev_all.get("optimized_algorithm_source") or {}
+    manifest = {
+        "run_status": status, "mode": "builtin",
+        "marking": "官方四例内置验收（本地）",
+        "official_acceptance": "NOT_CLAIMED",
+        "builtin_execution": "COMPLETE" if complete else "NEEDS_REVIEW",
+        "builtin_local_acceptance": "COMPLETE" if complete else "NOT_CLOSED",
+        "gates": gates, "reasons": reasons,
+        "chains_mode": "builtin main (c4a/c4b)",
+        "chains_run": sorted(f"{c}/{ch}" for c, ch in sorted(have_pairs)),
+        "unresolved_chains": unresolved,
+        "performance": judgments,
+        "builtin_prepare": prep,
+        "performance_scheme": scheme,
+        "builtin_evidence": evidence,
+        "context": ctx, "stages": stages, "evidence_root": str(root),
+        "chain_attempt": chain_attempt,
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+    lines = [
+        "# 官方四例内置验收（本地）", "",
+        f"执行状态：**{status}**。",
+        f"形态：**内置四例验收（本地，自动内置准备 + 每例 {pairs} 对性能）**——"
+        "原版/优化版两份 Yosys 0.69 隔离构建（复用或按目标源码构建，见“工具准备”）；"
+        "外部综合脚本两侧逐字节相同、直接调用 `synth_intel`；优化版由 "
+        "`synth_intel.cc` 在 `fsm;opt` 之后、`wreduce` 之前自动调用 `pmux_opt`。"
+        "本结论为本地验收，不代表主办方认可；正式评测以官方环境为准。", "",
+        f"证据根目录：`{root}`；功能证明链采用 `{chain_attempt}`。", "",
+        f"- 算法提交：`{ctx.get('target_commit')}`",
+        f"- 项目 HEAD：`{ctx.get('project_head')}`",
+        f"- 源码 SHA-256：`{ctx.get('source_sha256')}`",
+        f"- 优化版构建绑定算法源码：`{alg_ev.get('sha256', 'NOT_RECORDED')}`",
+        f"- 原版 Yosys：`{base_ev.get('path', '-')}`（sha256 `{(base_ev.get('sha256') or '')[:16]}…`）",
+        f"- 优化版 Yosys：`{opt_ev.get('path', '-')}`（sha256 `{(opt_ev.get('sha256') or '')[:16]}…`）",
+        f"- 流程 / 套件：{ctx.get('flow_version')} / {ctx.get('suite_version')}", "",
+        "## 工具准备", "",
+    ]
+    bp = prep.get("baseline") or {}
+    op = prep.get("optimized") or {}
+    lines += [
+        f"- 原版（baseline）：{bp.get('action', '未记录')}" +
+        (f"——`{bp.get('path')}`" if bp.get("path") else "") +
+        (f"（{bp.get('reason')}）" if bp.get("reason") else ""),
+        f"- 优化版（optimized）：{op.get('action', '未记录')}" +
+        (f"——`{op.get('path')}`" if op.get("path") else "") +
+        (f"（{op.get('reason')}）" if op.get("reason") else ""),
+    ]
+    if op.get("build_dir"):
+        lines.append(f"- 本次构建目录（保留）：`{op.get('build_dir')}`；构建日志："
+                     f"`{(op.get('logs') or {}).get('dir', '-')}`")
+    lines += [
+        f"- 缓存命名空间：`{prep.get('cache_dir', '-')}`；登记条目：`{prep.get('registry_entry', '-')}`",
+        f"- 性能方案：`{scheme or '未标记'}`（每例 {pairs} 对、两侧交错；pair 奇 baseline→optimized、"
+        "偶 optimized→baseline）",
+        "", "## 检查结果", "", "| 项目 | 结果 |", "|---|---|",
+    ]
+    lines += [f"| {name} | {'满足' if ok else '未满足或缺证据'} |" for name, ok in gates.items()]
+    lines += ["", "## 四例资源与缩减率", "",
+              "| 用例 | Comb 前→后 | DFF 前→后 | Comb 缩减率 |", "|---|---|---|---|"]
+    rates = []
+    for p in pub:
+        b, o = p.get("baseline_comb"), p.get("optimized_comb")
+        rate = (b - o) / b * 100 if b else None
+        rates.append(rate)
+        lines.append(f"| {p.get('case')} | {b}→{o} | {p.get('baseline_dff')}→{p.get('optimized_dff')} | {_fmt_pct(rate)} |")
+    average = sum(rates) / 4 if len(rates) == 4 and None not in rates else None
+    lines += ["", f"四例 Comb 缩减率算术平均：{average if average is not None else '不可计算（缺测不缩分母）'}%。",
+              "逻辑单元口径为 `cycloneiv_lcell_comb`；DFF 独立检查、不应增加；Total 仅辅助。", "",
+              "## 功能证明状态", "",
+              "内置主链：`c4a_rtl_opt_mapped`（原始 RTL ↔ 优化版最终映射网表）与 "
+              "`c4b_rtl_base_mapped`（原始 RTL ↔ 原版最终映射网表）；两侧分别独立运行；"
+              "test3 为无切割整模块合并证明。插件轮的 `c1_local`/`c2_stage` 依赖 P3 中间网表，"
+              "内置流程（synth_intel 内部调用）不产生该中间产物，故本模式不适用（NOT_APPLICABLE，不虚构）。",
+              f"内置完整公开证明链：{'PASS' if func_ok else 'NOT_CLOSED'}。", "",
+              "每例两侧功能状态（两侧分别独立运行；不使用“两链同结果”推断）："]
+    lines += ["- " + s for s in per_side_function_lines(chains)]
+    if unresolved:
+        lines += [f"- {r.get('case')} / {r.get('chain')}：{r.get('state')}，rc={r.get('rc')}" for r in unresolved]
+    else:
+        lines += ["- 内置主链全部通过。"]
+    lines += ["- COUNTEREXAMPLE_REQUIRES_REVIEW 表示工具报告分区不等价，需复核配置、假设和反例，"
+              "不自动断言算法错误；MODEL_UNSUPPORTED 表示映射模型适用条件不满足，保留条件、不强行证明。", "",
+              "## 四例性能（逐例判定）", "",
+              "| 用例 | CPU 中位数前→后(s) | CPU 开销 | CPU 5% | RSS 前→后(KiB) | 内存开销 | 内存 5% | 60s/2GB | 样本有效 |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    for j in judgments:
+        cpu = f"{j['base_cpu_s']}→{j['opt_cpu_s']}"
+        rss = f"{j['base_rss_kb']}→{j['opt_rss_kb']}"
+        limit_disp = "通过" if j["limit_ok"] else "超限"
+        if j["limit_bits"].get("cpu_exempt_upstream_over_limit") or \
+           j["limit_bits"].get("rss_exempt_upstream_over_limit"):
+            limit_disp += "（原版超限例外）"
+        lines.append(
+            f"| {j['case']} | {cpu} | {_fmt_pct(j['cpu_overhead_pct'])} | "
+            f"{'满足' if j['cpu_ok'] else '未满足'} | {rss} | {_fmt_pct(j['mem_overhead_pct'])} | "
+            f"{'满足' if j['mem_ok'] else '未满足'} | {limit_disp} | {j['valid']} |")
+    lines += ["",
+              f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
+              "（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。",
+              "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。",
+              "内存为 5ms 间隔进程组 RSS 求和采样；可能漏掉短峰值、重复计入共享页、包含包装进程；"
+              "不是精确官方内存计量。",
+              "60s/2GB 以原版为对照；原版超限时允许优化版也超限；不自行发明扣分计算。",
+              "无效样本（含工具失败、超时、缺失）不判定通过；原始样本全部保留、不自动剔除。", "",
+              "## 证据", "",
+              "- `01_来源与环境_meta/builtin_evidence.json`：两侧二进制/源码/ABC/数据文件与指纹绑定。",
+              "- `04_流程一致性_flowcheck/builtin_run01/`：优化版自动调用 pmux_opt 的位置与次数证据。",
+              "- `05_公开四例_public/round01/`：两侧相同外部脚本、日志、mapped 网表与 stat。",
+              f"- `10_验证工具自检_selfcheck/chains/{chain_attempt}/`：功能证明（含支持配置预检与逐分区证据）。",
+              f"- 本报告清单：`{out / 'manifest.json'}`。",
+              f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（生成于运行收尾）。", "",
+              "阶段完成不等于功能或性能通过；缺失证据与需复核项保持原样记录；没有擅自补充官方分数。"]
+    (output_root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
     return status
 
 

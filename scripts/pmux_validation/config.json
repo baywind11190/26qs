@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "flow_version": "official4-p2",
+  "flow_version": "official4-p4",
   "suite_version": "official4-v1",
   "suite_manifest": "suite-official4/manifest.json",
   "model_version": "dffeas-v3",
@@ -10,29 +10,42 @@
     "model": "runner/form_cells_cycloneiv.v = 器件语义模型 v3（clrn 异步清零 / ena 时钟使能 / power_up 初值；与已核对实验模型逐字节相同）；支持配置由 runner/precheck_supported_config.py 强制阻断，未支持不静默建模。",
     "strategy": "本地策略修正 noDF-local-r1：EQY setup（-m）生成的 run.ys 经严格转换仅删除恰一处 ' -set-def-formal'（保留 -set-init-undef/-set-def-inputs/-set-assumes/断言）；格式不符即停止。附前提探针（noDF 必需 SAT；DF 记录）。",
     "test3": "无切割整模块合并证明（runner/miter/test3_miter.sv），覆盖两侧全部输出与匹配点；其余用例保留分区路径。",
-    "function_recheck": "run <commit> --mode plugin --function-only --frozen-round <轮次>：只 build+formal_selfcheck+chains（冻结输入逐文件哈希核对），不重新综合、不测性能。"
+    "function_recheck": "run <commit> --mode plugin --function-only --frozen-round <轮次>：只 build+formal_selfcheck+chains（冻结输入逐文件哈希核对），不重新综合、不测性能。",
+    "builtin_prepare": "official4-p4 自动内置准备：run 时先查找可复用构建——baseline 按 baseline_reuse 登记核对（基础提交/构建参数/编译器/二进制/ABC）；optimized 按缓存键（算法源码哈希、Yosys 基础提交、集成模板、关键构建参数、编译器；另核对 ABC 源码身份与产物哈希）在 cache_dir/registry 查找，命中且产物核验通过即复用；未命中则从本地基础提交建立隔离源码树、逐字节提取 src/pmux_opt.cc、按固定模板幂等集成（锚点校验）、CMake Release 构建并冒烟验证后登记为 READY 缓存。构建失败保留 FAILED 诊断、不发布完成标记、不退回插件。plan 只读（不写文件、不编译）。",
+    "performance": "每例 15 对（两侧交错，pair 奇 baseline→optimized、偶 optimized→baseline），两侧各 15 样本取中位数；相对开销=(优化中位-原版中位)/原版中位；逐例与 5% 比较；统计方案标识 pmux-perf-15p-v1。CPU 含 ABC（wait4 进程树）、内存为进程组 RSS 5ms 采样。"
   },
   "repo": "/home/fpga/fpga/pmux-opt",
   "builtin": {
-    "baseline": {
-      "path": "/home/fpga/eda/yosys-baseline/build/yosys",
-      "src_repo": "/home/fpga/eda/yosys-baseline"
-    },
-    "optimized": {
-      "path": "/home/fpga/eda/yosys-optimized/build/yosys",
-      "src_repo": "/home/fpga/eda/yosys-optimized"
-    },
-    "abc": {
-      "baseline": "/home/fpga/eda/yosys-baseline/build/yosys-abc",
-      "optimized": "/home/fpga/eda/yosys-optimized/build/yosys-abc"
-    },
     "expected_version": "0.69",
+    "cache_dir": "/home/fpga/eda/pmux-builtin-validation",
+    "source_repo": "/home/fpga/eda/yosys",
+    "source_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+    "build_profile": {
+      "cmake_build_type": "Release",
+      "shared_libs": true,
+      "generator": "Unix Makefiles",
+      "parallel_jobs": 8
+    },
+    "integration_id": "pmux-opt-inline-p3-v1",
+    "baseline_reuse": {
+      "src_dir": "/home/fpga/eda/pmux-builtin-validation/20260925_112445_5c44e87/baseline-src",
+      "src_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+      "binary": "/home/fpga/eda/pmux-builtin-validation/20260925_112445_5c44e87/baseline-src/build/yosys",
+      "binary_sha256": "ff88b6b7937f2643d8e1555ccffdc0571139a708f0141a8ca870484011c9c3fe",
+      "abc": "/home/fpga/eda/pmux-builtin-validation/20260925_112445_5c44e87/baseline-src/build/yosys-abc",
+      "abc_sha256": "3c8a447895a5248dc85b7afe2b437742d66fdd470e451436e603cb64ab9eb20f",
+      "build_profile": {
+        "cmake_build_type": "Release",
+        "shared_libs": true
+      },
+      "compiler_sha256": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769"
+    },
     "integration_evidence": [
       "passes/opt/pmux_opt.cc",
       "passes/opt/CMakeLists.txt",
       "techlibs/intel/synth_intel.cc"
     ],
-    "note": "内置四例验收：记录基础源码提交、构建信息、二进制指纹、ABC、实际数据文件和插入调用证据；不要求两侧二进制哈希相同。"
+    "note": "自动准备（official4-p4）：baseline 复用登记 + optimized 缓存 registry（cache_dir/registry）。运行时解析出的两侧路径与指纹写入本轮 validation_context.json，不改动本文件；现有 20260925_112445_5c44e87 构建以导入方式登记进 registry（不移动、不覆盖）。"
   },
   "tools": {
     "yosys": {
@@ -1350,7 +1363,7 @@
   ],
   "yosys_source": "/home/fpga/eda/yosys-baseline",
   "yosys_src_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
-  "performance_pairs": 5,
+  "performance_pairs": 15,
   "tool_data_fourcase_filter": {
     "note": "每轮四例预检只核对 cycloneiv 综合实际依赖的数据文件；config 中完整 tool_data（320 条）保留供审计，其余厂商库不参与四例流程（尚未纳入 include/ 等构建期头文件，属保守精简说明）。",
     "include_subpaths": [
@@ -1373,5 +1386,7 @@
       "smtmap.v",
       "techmap.v"
     ]
-  }
+  },
+  "performance_scheme": "pmux-perf-15p-v1",
+  "performance_order_note": "每例 15 对、两侧交错：pair i（1 起）为奇时 baseline→optimized，为偶时 optimized→baseline；两侧各 15 个样本取中位数（不取组中位数的中位数），相对开销=(优化中位-原版中位)/原版中位，逐例与 5% 比较。"
 }

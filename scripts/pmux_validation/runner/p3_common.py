@@ -201,6 +201,45 @@ def run_yosys(
             return 124
 
 
+def run_binary(
+    binary,
+    ys_script: str,
+    log_path: Path,
+    *,
+    cwd: Path,
+    timeout: int = 900,
+) -> int:
+    """运行指定的 yosys 二进制（内置原版/优化版调度用）。
+
+    与 run_yosys 相同的日志与超时处理；不加插件参数（-m），不加载 .so。
+    返回进程退出码；超时返回 124（由调用方判定）。
+    """
+    cmd = [str(binary), "-s", "-"]
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as logf:
+        p = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            cwd=str(cwd),
+            start_new_session=True,
+        )
+        try:
+            p.communicate(ys_script.encode(), timeout=timeout)
+            return p.returncode
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, 9)
+            p.wait()
+            return 124
+
+
+# 内置四例共享纯函数（定义在 builtin_common.py；此处重导出保持调用方不变）。
+from builtin_common import (  # noqa: E402
+    gen_builtin_synth_ys, extract_executing_sequence, extract_executing_entries,
+    executing_name, check_pmux_position, select_binaries)
+
+
 def parse_stat_json(path: Path) -> dict:
     """解析 `stat -json` 输出（取 design 级统计）。"""
     data = json.loads(path.read_text())
