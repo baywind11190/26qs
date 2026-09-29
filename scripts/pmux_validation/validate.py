@@ -106,7 +106,7 @@ def verify_package_manifest(package):
             problems.append("清单文件缺失: " + rel)
         elif digest(f) != want:
             problems.append("内容与清单不符: " + rel)
-    active = [package / n for n in ("validate.py", "report.py", "test_validation.py",
+    active = [package / n for n in ("validate.py", "report.py", "test_validation.py", "test_p5.py",
                                     "POLICY.md", "SKILL.md", "config.json")]
     for sub in ("runner", "suite-official4"):
         active += [p for p in (package / sub).rglob("*")

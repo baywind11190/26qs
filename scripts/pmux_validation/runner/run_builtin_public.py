@@ -15,7 +15,7 @@ pmux_opt（原版不含该调用）；两侧独立目录、独立进程运行同
 输出路径差异由各自工作目录处理（相对输出名）。
 
 输出：05_公开四例_public/round01/<case>/<side>/（flow.ys、run.log、
-mapped.il、stat.json、triggers.json、cell_types.json）
+post_abc.il、mapped.il、stat.json、triggers.json、cell_types.json）
 汇总：summary.json（cases 行；含 Comb/DFF 缩减与 DFF 不增检查）
 """
 import csv
@@ -37,7 +37,7 @@ def run_case(top: str, out_root: Path) -> dict:
     builtin = C.CONTEXT.get("builtin") or {}
     binaries = B.select_binaries(builtin)
 
-    script = C.gen_builtin_synth_ys(rtl, top)
+    script = B.gen_builtin_formal_ys(rtl, top)
     script_sha = hashlib.sha256(script.encode()).hexdigest()
     result = {"case": top, "input": C.rel(rtl), "input_sha256": C.sha256_file(rtl),
               "script_sha256": script_sha}
@@ -53,8 +53,16 @@ def run_case(top: str, out_root: Path) -> dict:
         if rc != 0:
             raise RuntimeError("{} {} synthesis rc={}; see run.log".format(top, side, rc))
         stat = C.parse_stat_json(side_dir / "stat.json")
+        from formal_status import check_post_abc_model
+        stage_info = check_post_abc_model(side_dir / "post_abc.il", top)
+        full_stat_path = C.ROUND_DIR / "04_流程一致性_flowcheck" / "builtin_run01" / top / side / "stat.json"
+        full_stat = C.parse_stat_json(full_stat_path)
+        if stat["cell_types"] != full_stat["cell_types"]:
+            raise RuntimeError(f"{top} {side}: split/full synthesis resource mismatch")
         ca_ok = C.check_assert_ok(side_dir / "run.log")
         log_text = (side_dir / "run.log").read_text(errors="replace")
+        if not B.abc9_mapping_ok(log_text):
+            raise RuntimeError(f"{top} {side}: expected ABC9 mapping, no ABC substitution")
         triggers = (C.extract_triggers(side_dir / "run.log") if side == "optimized"
                     else {"plugin_ran": False})
         if side == "optimized" and "Executing PMUX_OPT" not in log_text:
@@ -63,6 +71,11 @@ def run_case(top: str, out_root: Path) -> dict:
             raise RuntimeError("{} baseline 出现 PMUX_OPT 执行痕迹".format(top))
 
         result.update({
+            "{}_split_full_resources_match".format(side): True,
+            "{}_post_abc_lut".format(side): stage_info["lut_cells"],
+            "{}_post_abc_sha256".format(side): C.sha256_file(side_dir / "post_abc.il"),
+            "{}_formal_netlist_stage".format(side): "post_abc",
+            "{}_abc9_ok".format(side): True,
             "{}_rc".format(side): rc,
             "{}_wall_s".format(side): round(wall, 3),
             "{}_total".format(side): stat["total_cells"],
@@ -82,6 +95,10 @@ def run_case(top: str, out_root: Path) -> dict:
     result["total_reduction_pct"] = red(result["baseline_total"], result["optimized_total"])
     result["comb_reduction_pct"] = red(result["baseline_comb"], result["optimized_comb"])
     result["dff_nonincrease"] = result["optimized_dff"] <= result["baseline_dff"]
+    base_types = json.loads((case_dir / "baseline/cell_types.json").read_text())
+    opt_types = json.loads((case_dir / "optimized/cell_types.json").read_text())
+    result["other_resources"] = B.compare_other_resources(base_types, opt_types)
+    result["other_resources_nonincrease"] = result["other_resources"]["ok"]
     trig = json.loads((case_dir / "optimized" / "triggers.json").read_text())
     result["h2_candidate"] = trig.get("h2_candidate_cells", 0)
     result["h2_rebuilt"] = trig.get("h2_rebuilt", 0)

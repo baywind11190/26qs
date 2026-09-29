@@ -49,6 +49,7 @@ def run_side(side, binary, script, sdir, timeout=900):
         "plugin_loading_suspected": ("Loading plugin" in log_text
                                      or "plugin -i" in log_text),
         "pmux_exec_count": names.count("PMUX_OPT"),
+        "abc9_ok": B.abc9_mapping_ok(log_text),
     }
     if side == "optimized":
         info["pmux_position"] = check_pmux_position(entries)
@@ -89,6 +90,9 @@ def main():
             sdir.mkdir(parents=True)
             info = run_side(side, binary, script, sdir)
             case["sides"][side] = info
+            if not info["abc9_ok"]:
+                all_ok = False
+                case["fail"] = case.get("fail", []) + [side + " ABC9 mapping required"]
             if info["rc"] != 0:
                 all_ok = False
                 case["fail"] = case.get("fail", []) + ["{} rc={}".format(side, info["rc"])]

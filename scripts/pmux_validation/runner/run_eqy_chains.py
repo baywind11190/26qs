@@ -308,7 +308,7 @@ def main():
     ap.add_argument("--chains", choices=["main", "full"], default="main")
     ap.add_argument("--input-mode", choices=["plugin", "builtin"], default="plugin",
                     help="plugin=插件拆分流程网表（pre_p3/post_p3/coarse_done/mapped）；"
-                         "builtin=内置流程网表（仅 mapped；链集合=c4a/c4b 主证明）")
+                         "builtin=内置流程网表（post_abc；链集合=c4a/c4b 主证明）")
     ap.add_argument("--frozen-round", default=None,
                     help="功能复核：只读复用既有轮次 05_公开四例_public 产物（逐文件哈希核对）")
     args = ap.parse_args()
@@ -362,9 +362,11 @@ def main():
         for side in ("baseline", "optimized"):
             for kind in kinds:
                 if args.input_mode == "builtin":
-                    # 内置外部脚本产物名为 mapped.il（两侧脚本逐字节相同）。
-                    src = pub / top / side / "mapped.il"
-                    rel = "05_公开四例_public/round01/{}/{}/mapped.il".format(top, side)
+                    # 内置功能输入为 post_abc.il；桥接文件保留 mapped 后缀供旧预检和合并器识别（两侧脚本逐字节相同）。
+                    src = pub / top / side / "post_abc.il"
+                    from formal_status import check_post_abc_model
+                    check_post_abc_model(src, top)
+                    rel = "05_公开四例_public/round01/{}/{}/post_abc.il".format(top, side)
                 else:
                     src = pub / top / side / "{}_{}.il".format(side, kind)
                     rel = "05_公开四例_public/round01/{}/{}/{}_{}.il".format(top, side, side, kind)
@@ -440,6 +442,7 @@ def main():
                            "method": "partition", "error": "eqy -m rc={}".format(rc),
                            "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
                            "input_mode": args.input_mode,
+                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
                            "partitions_total": 0, "partitions_pass": 0, "partition_states": {},
                            "probes_noDF_all_sat": False, "df_probes_unsat": 0, "merged": None,
                            "verified": False, "frozen_round": (str(frozen) if frozen else None),
@@ -463,6 +466,7 @@ def main():
                        "state": final_state, "method": method,
                        "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
                        "input_mode": args.input_mode,
+                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
                        "partitions_total": agg["partitions_total"],
                        "partitions_pass": agg["partitions_pass"],
                        "partition_states": agg["partition_states"],
@@ -509,6 +513,7 @@ def main():
     (out / "chains_set.json").write_text(json.dumps(
         {"chain_set": args.chains, "chains": sorted(selected),
          "input_mode": args.input_mode,
+                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
          "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION},
         ensure_ascii=False, indent=2) + "\n")
     (out / "hash_manifest.json").write_text(json.dumps(hash_map, ensure_ascii=False, indent=2) + "\n")

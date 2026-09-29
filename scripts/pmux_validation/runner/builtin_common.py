@@ -90,3 +90,28 @@ def select_binaries(builtin_cfg) -> dict:
             raise FileNotFoundError("{} 内置二进制缺失: {}".format(side, p))
         out[side] = p
     return out
+
+
+def gen_builtin_formal_ys(rtl, top):
+    """Untimed export: after map_luts (ABC9), before technology cell mapping."""
+    return (f"read_verilog -sv {rtl}\n"
+            f"synth_intel -family {SYNTH_FAMILY} -top {top} -run begin:map_cells\n"
+            "write_rtlil post_abc.il\n"
+            "tee -o post_abc_stat.json stat -json\n"
+            f"synth_intel -family {SYNTH_FAMILY} -top {top} -run map_cells:\n"
+            "check -assert\nwrite_rtlil mapped.il\ntee -o stat.json stat -json\n")
+
+
+def abc9_mapping_ok(log_text):
+    names = [executing_name(d).split()[0] for d in extract_executing_sequence(log_text) if re.match(r'ABC9? pass\b', d)]
+    return names.count('ABC9') == 1 and 'ABC' not in names
+
+
+def compare_other_resources(base, opt):
+    # Combinational logic and constants are not DFF/IO/memory/DSP resources.
+    auxiliary = {'cycloneiv_lcell_comb', '$lut', '$not', '$_NOT_', 'VCC', 'GND'}
+    kinds = sorted((set(base) | set(opt)) - auxiliary)
+    counts = {k: {'baseline': base.get(k,0), 'optimized': opt.get(k,0)} for k in kinds}
+    increases = [k for k in kinds if opt.get(k,0) > base.get(k,0)]
+    return {'ok': not increases, 'counts': counts, 'increases': increases,
+            'policy': 'per_cell_type_nonincrease; unclassified types retained conservatively'}

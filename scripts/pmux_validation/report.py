@@ -48,6 +48,9 @@ def overhead_pct(base, opt):
 def judge_case_performance(summ, pairs=5):
     """逐例性能判定。无效样本不判通过；5% 边界按不超过处理；不做跨例平均。"""
     runs = summ.get("runs") or []
+    main_memory = summ.get("memory_metric") == "yosys_main_rss_peak_kb"
+    mem_key = "yosys_main_rss_peak_kb" if main_memory else "tree_rss_peak_kb"
+    mem_summary = "yosys_main_rss_peak" if main_memory else "tree_rss_peak"
     reasons = []
 
     def count(side):
@@ -58,14 +61,14 @@ def judge_case_performance(summ, pairs=5):
         and count("baseline") == pairs and count("optimized") == pairs
         and all(
             r.get("rc") == 0 and not r.get("timed_out") and r.get("stat_exists") is True
-            and (r.get("cpu_total_s") or 0) > 0 and (r.get("tree_rss_peak_kb") or 0) > 0
+            and (r.get("cpu_total_s") or 0) > 0 and (r.get(mem_key) or 0) > 0
             for r in runs
         )
     )
     base_cpu = summ.get("baseline_cpu_total_median")
     opt_cpu = summ.get("optimized_cpu_total_median")
-    base_rss = summ.get("baseline_tree_rss_peak_median")
-    opt_rss = summ.get("optimized_tree_rss_peak_median")
+    base_rss = summ.get("baseline_" + mem_summary + "_median")
+    opt_rss = summ.get("optimized_" + mem_summary + "_median")
     cpu_over = overhead_pct(base_cpu, opt_cpu) if valid else None
     mem_over = overhead_pct(base_rss, opt_rss) if valid else None
     cpu_ok = valid and cpu_over is not None and cpu_over <= OVERHEAD_LIMIT_PCT + OVERHEAD_EPS_PCT
@@ -273,7 +276,9 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
               f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
               "（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。",
               "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。",
-              "内存为 5ms 间隔进程组 RSS 求和采样；可能漏掉短峰值、重复计入共享页、包含包装进程；"
+              ("内存为 Yosys 主进程 Linux VmHWM（5ms 轮询），不含 ABC 与包装器；"
+               if all(p.get("memory_metric") == "yosys_main_rss_peak_kb" for p in perf) else
+               "历史内存为进程组 RSS 求和采样；可能漏峰和重复计共享页；"),
               "不是精确官方内存计量。",
               "60s/2GB 以原版为对照；原版超限时允许优化版也超限；不自行发明扣分计算。",
               "无效样本（含工具失败、超时、缺失）不判定通过；原始样本全部保留、不自动剔除。", "",
@@ -425,11 +430,20 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
                  and p.get("baseline_check_assert") and p.get("optimized_check_assert")
                  for p in pub))
     gate("DFF逐例不增加", len(pub) == 4 and all(p.get("dff_nonincrease") is True for p in pub))
+    if ctx.get("flow_version") == "official4-p5":
+        gate("其他硬件单元逐类不增加", len(pub) == 4 and all(p.get("other_resources_nonincrease") is True for p in pub))
+        gate("ABC9与功能输入阶段", len(pub) == 4 and all(
+            p.get(side + "_abc9_ok") is True and p.get(side + "_formal_netlist_stage") == "post_abc" and p.get(side + "_split_full_resources_match") is True
+            for p in pub for side in ("baseline", "optimized")))
+        gate("主进程内存口径", len(perf) == 4 and all(p.get("memory_metric") == "yosys_main_rss_peak_kb" for p in perf))
     expected_pairs = {(c, ch) for c in CASES for ch in BUILTIN_MAIN_CHAINS}
     have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
     func_ok = expected_pairs <= have_pairs and all(
         row_functional_ok(r) for r in chains
         if (r.get("case"), r.get("chain")) in expected_pairs)
+    if ctx.get("flow_version") == "official4-p5":
+        func_ok = func_ok and all(r.get("formal_netlist_stage") == "post_abc"
+                                  for r in chains if (r.get("case"), r.get("chain")) in expected_pairs)
     gate("功能证明（内置主链 c4a/c4b）", func_ok)
     judgments = [judge_case_performance(p, pairs=pairs) for p in perf]
     gate("四例性能逐例判定", len(perf) == 4 and {p.get("case") for p in perf} == set(CASES)
@@ -514,8 +528,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     lines += ["", f"四例 Comb 缩减率算术平均：{average if average is not None else '不可计算（缺测不缩分母）'}%。",
               "逻辑单元口径为 `cycloneiv_lcell_comb`；DFF 独立检查、不应增加；Total 仅辅助。", "",
               "## 功能证明状态", "",
-              "内置主链：`c4a_rtl_opt_mapped`（原始 RTL ↔ 优化版最终映射网表）与 "
-              "`c4b_rtl_base_mapped`（原始 RTL ↔ 原版最终映射网表）；两侧分别独立运行；"
+              "内置主链：`c4a_rtl_opt_mapped`（原始 RTL ↔ 优化版功能网表（阶段见下））与 "
+              "`c4b_rtl_base_mapped`（原始 RTL ↔ 原版功能网表（阶段见下））；两侧分别独立运行；"
               "test3 为无切割整模块合并证明。插件轮的 `c1_local`/`c2_stage` 依赖 P3 中间网表，"
               "内置流程（synth_intel 内部调用）不产生该中间产物，故本模式不适用（NOT_APPLICABLE，不虚构）。",
               f"内置完整公开证明链：{'PASS' if func_ok else 'NOT_CLOSED'}。", "",
@@ -545,14 +559,18 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
               f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
               "（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。",
               "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。",
-              "内存为 5ms 间隔进程组 RSS 求和采样；可能漏掉短峰值、重复计入共享页、包含包装进程；"
+              ("p5 内存仅计 Yosys 主进程 Linux VmHWM，5ms 轮询；不含 ABC 和计时包装器；短进程可能缺测。"
+               if ctx.get("flow_version") == "official4-p5" else
+               "历史内存为 5ms 间隔进程组 RSS 求和采样；可能漏峰、重复计共享页或含包装器。"),
               "不是精确官方内存计量。",
               "60s/2GB 以原版为对照；原版超限时允许优化版也超限；不自行发明扣分计算。",
               "无效样本（含工具失败、超时、缺失）不判定通过；原始样本全部保留、不自动剔除。", "",
               "## 证据", "",
               "- `01_来源与环境_meta/builtin_evidence.json`：两侧二进制/源码/ABC/数据文件与指纹绑定。",
               "- `04_流程一致性_flowcheck/builtin_run01/`：优化版自动调用 pmux_opt 的位置与次数证据。",
-              "- `05_公开四例_public/round01/`：两侧相同外部脚本、日志、mapped 网表与 stat。",
+              "- `05_公开四例_public/round01/`：功能 post_abc.il（p5）；资源 mapped.il 与 stat；性能仍完整综合。",
+              "功能输入阶段：" + ("ABC9 后 $lut + 受支持 dffeas" if ctx.get("flow_version") == "official4-p5" else "历史最终映射网表"),
+              "其他硬件资源对照：" + json.dumps({p.get("case"): p.get("other_resources") for p in pub}, ensure_ascii=False),
               f"- `10_验证工具自检_selfcheck/chains/{chain_attempt}/`：功能证明（含支持配置预检与逐分区证据）。",
               f"- 本报告清单：`{out / 'manifest.json'}`。",
               f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（生成于运行收尾）。", "",

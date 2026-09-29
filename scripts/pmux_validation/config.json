@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "flow_version": "official4-p4",
+  "flow_version": "official4-p5",
   "suite_version": "official4-v1",
   "suite_manifest": "suite-official4/manifest.json",
   "model_version": "dffeas-v3",
@@ -12,7 +12,8 @@
     "test3": "无切割整模块合并证明（runner/miter/test3_miter.sv），覆盖两侧全部输出与匹配点；其余用例保留分区路径。",
     "function_recheck": "run <commit> --mode plugin --function-only --frozen-round <轮次>：只 build+formal_selfcheck+chains（冻结输入逐文件哈希核对），不重新综合、不测性能。",
     "builtin_prepare": "official4-p4 自动内置准备：run 时先查找可复用构建——baseline 按 baseline_reuse 登记核对（基础提交/构建参数/编译器/二进制/ABC）；optimized 按缓存键（算法源码哈希、Yosys 基础提交、集成模板、关键构建参数、编译器；另核对 ABC 源码身份与产物哈希）在 cache_dir/registry 查找，命中且产物核验通过即复用；未命中则从本地基础提交建立隔离源码树、逐字节提取 src/pmux_opt.cc、按固定模板幂等集成（锚点校验）、CMake Release 构建并冒烟验证后登记为 READY 缓存。构建失败保留 FAILED 诊断、不发布完成标记、不退回插件。plan 只读（不写文件、不编译）。",
-    "performance": "每例 15 对（两侧交错，pair 奇 baseline→optimized、偶 optimized→baseline），两侧各 15 样本取中位数；相对开销=(优化中位-原版中位)/原版中位；逐例与 5% 比较；统计方案标识 pmux-perf-15p-v1。CPU 含 ABC（wait4 进程树）、内存为进程组 RSS 5ms 采样。"
+    "performance": "CPU 含 ABC，逐例十五对中位数、相对开销 5% 不变；内存仅目标 Yosys 主进程 Linux VmHWM（5ms 轮询），不含子进程和包装器；pmux-perf-15p-mainrss-v2。",
+    "formal_stage": "内置 p5 使用 ABC9 后 map_cells 前 post_abc.il；保留受支持 dffeas 模型。mapped.il 仅作资源主统计，性能仍完整综合。"
   },
   "repo": "/home/fpga/fpga/pmux-opt",
   "builtin": {
@@ -1387,6 +1388,8 @@
       "techmap.v"
     ]
   },
-  "performance_scheme": "pmux-perf-15p-v1",
-  "performance_order_note": "每例 15 对、两侧交错：pair i（1 起）为奇时 baseline→optimized，为偶时 optimized→baseline；两侧各 15 个样本取中位数（不取组中位数的中位数），相对开销=(优化中位-原版中位)/原版中位，逐例与 5% 比较。"
+  "performance_scheme": "pmux-perf-15p-mainrss-v2",
+  "performance_order_note": "每例 15 对、两侧交错：pair i（1 起）为奇时 baseline→optimized，为偶时 optimized→baseline；两侧各 15 个样本取中位数（不取组中位数的中位数），相对开销=(优化中位-原版中位)/原版中位，逐例与 5% 比较。",
+  "memory_metric": "yosys_main_rss_peak_kb",
+  "formal_netlist_stage": "post_abc"
 }

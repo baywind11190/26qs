@@ -137,3 +137,13 @@ def check_mapped_model(il_path, top):
             continue
         else:
             raise ValueError(f'Unmodeled cell type: {kind}')
+
+
+def check_post_abc_model(il_path, top):
+    """ABC9 LUT-stage input; remaining dffeas must satisfy the existing model."""
+    check_mapped_model(il_path, top)
+    kinds = [k for k, _ in _cells_of(Path(il_path).read_text(), top)]
+    if 'cycloneiv_lcell_comb' in kinds:
+        raise ValueError('Expected post-ABC9 $lut stage, received final cycloneiv cells')
+    return {'stage': 'post_abc', 'lut_cells': kinds.count('$lut'),
+            'dffeas_cells': kinds.count('dffeas')}

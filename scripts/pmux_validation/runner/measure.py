@@ -52,9 +52,14 @@ def _read_proc_stat(pid: int):
 class TreeRssMonitor(threading.Thread):
     """按进程组枚举后代并采样 RSS 总和峰值。"""
 
-    def __init__(self, root_pid: int, interval_s: float = 0.005):
+    def __init__(self, root_pid: int, interval_s: float = 0.005, target_exe=None):
         super().__init__(daemon=True)
         self.root_pid = root_pid
+        self.target_exe = target_exe
+        self.main_pid = None
+        self.main_starttime = None
+        self.main_peak_kb = 0
+        self.main_samples = 0
         self.interval_s = interval_s
         self.active = True
         self.peak_kb = 0
@@ -80,6 +85,19 @@ class TreeRssMonitor(threading.Thread):
             ppid, pgrp, _st = st
             if pgrp != root_pgrp:
                 continue
+            if self.target_exe and ppid == self.root_pid:
+                try:
+                    matches = str(Path(f"/proc/{pid}/exe").resolve()) == self.target_exe
+                    if matches and (self.main_pid is None or
+                                    (pid == self.main_pid and _st == self.main_starttime)):
+                        self.main_pid, self.main_starttime = pid, _st
+                        status = Path(f"/proc/{pid}/status").read_text()
+                        hwm = next((int(l.split()[1]) for l in status.splitlines()
+                                    if l.startswith("VmHWM:")), 0)
+                        self.main_peak_kb = max(self.main_peak_kb, hwm)
+                        self.main_samples += 1
+                except (OSError, ValueError):
+                    pass
             rss = _read_statm_rss_kb(pid)
             if rss is not None:
                 total_kb += rss
@@ -132,7 +150,9 @@ def run_measured(cmd, *, cwd, log_path, timeout_s=1800, sample_interval=0.005):
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        mon = TreeRssMonitor(p.pid, sample_interval)
+        import shutil
+        executable = shutil.which(str(cmd[0])) or str(cmd[0])
+        mon = TreeRssMonitor(p.pid, sample_interval, str(Path(executable).resolve()))
         mon.start()
 
         # 超时守护
@@ -195,6 +215,10 @@ def run_measured(cmd, *, cwd, log_path, timeout_s=1800, sample_interval=0.005):
         "cpu_system_s": round(ru.ru_stime, 4),
         "cpu_total_s": round(ru.ru_utime + ru.ru_stime, 4),
         "tree_rss_peak_kb": mon.peak_kb,
+        "yosys_main_rss_peak_kb": mon.main_peak_kb or None,
+        "yosys_main_pid": mon.main_pid,
+        "yosys_main_rss_samples": mon.main_samples,
+        "memory_metric": "yosys_main_rss_peak_kb",
         "rss_samples": mon.n_samples,
         "max_sample_gap_s": round(mon.max_gap_s, 4),
         "sample_interval_s": sample_interval,
@@ -294,7 +318,7 @@ def measure_case(
             print(
                 f"  [{rtl.stem}] pair{i+1} {order_tag} {side}: rc={r['rc']} "
                 f"cpu={r['cpu_total_s']}s wall={r['wall_s']}s "
-                f"rss_tree={r['tree_rss_peak_kb']}kB "
+                f"rss_main={r['yosys_main_rss_peak_kb']}kB "
                 f"gn_rss={r['gn_time_maxrss_kb']}kB"
             )
 
@@ -303,13 +327,14 @@ def measure_case(
         vals = [r[key] for r in runs if r["side"] == side and r["rc"] == 0 and not r["timed_out"] and r[key] is not None]
         return vals
 
-    summary = {"case": top, "pairs": pairs, "runs": runs}
+    summary = {"case": top, "pairs": pairs, "runs": runs, "memory_metric": "yosys_main_rss_peak_kb", "performance_scheme": "pmux-perf-15p-mainrss-v2"}
     for side in ("baseline", "optimized"):
         for key, name in (
             ("cpu_total_s", "cpu_total"),
             ("cpu_user_s", "cpu_user"),
             ("cpu_system_s", "cpu_system"),
             ("tree_rss_peak_kb", "tree_rss_peak"),
+            ("yosys_main_rss_peak_kb", "yosys_main_rss_peak"),
             ("gn_time_maxrss_kb", "gn_maxrss"),
             ("gn_time_user_s", "gn_cpu_user"),
             ("gn_time_system_s", "gn_cpu_system"),
@@ -373,6 +398,13 @@ def selftest(out_dir: Path):
     )
     results["nonzero_exit"] = {"rc": r["rc"]}
 
+    # p5: target process must exclude its allocating child.
+    child_code = "import time; a=bytearray(96*1024*1024); time.sleep(0.4)"
+    parent_code = "import subprocess,sys,time; subprocess.run([sys.executable,'-c'," + repr(child_code) + "]); time.sleep(0.05)"
+    mr = run_measured([sys.executable, "-c", parent_code], cwd="/tmp",
+                      log_path=out_dir / "main_only.log", timeout_s=60)
+    results["main_only"] = mr
+
     # 6) 超时
     r = run_measured(
         ["sleep", "10"], cwd="/tmp", log_path=out_dir / "timeout.log",
@@ -387,6 +419,10 @@ def selftest(out_dir: Path):
     checks.append(("cpu_work captured (>=0.5s)", cw["cpu_total_s"] >= 0.5))
     mc = results["mem_child"]
     checks.append(("mem_child captured", mc["tree_rss_peak_kb"] >= 250 * 1024))
+    mo = results["main_only"]
+    checks.append(("main RSS excludes child", mo["rc"] == 0 and
+                   0 < (mo.get("yosys_main_rss_peak_kb") or 0) < 64*1024 and
+                   mo["tree_rss_peak_kb"] > 96*1024))
     gc = results["grandchild_cpu"]
     checks.append(("grandchild cpu counted", gc["cpu_total_s"] >= 0.5))
     checks.append(("short_lived ok", results["short_lived"]["rc"] == 0))
@@ -451,8 +487,8 @@ def main():
         for s in summaries:
             b = s.get("baseline_cpu_total_median")
             o = s.get("optimized_cpu_total_median")
-            rb = s.get("baseline_tree_rss_peak_median")
-            ro = s.get("optimized_tree_rss_peak_median")
+            rb = s.get("baseline_yosys_main_rss_peak_median")
+            ro = s.get("optimized_yosys_main_rss_peak_median")
             w.writerow(
                 [
                     s["case"], b, o,
