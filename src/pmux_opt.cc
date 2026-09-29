@@ -2218,67 +2218,7 @@ if (!profitable_pattern)
 
                     /*
                      * --------------------------------------------------
-                     * helper 1
-                     *
-                     * 两根 selector 做 OR
-                     *
-                     * high_sel[p] =
-                     * S[2p] | S[2p+1]
-                     *
-                     * 表示：
-                     *
-                     * control[高位] == p
-                     * --------------------------------------------------
-                     */
-                    auto make_selector_or =
-                        [&](RTLIL::SigSpec s0,
-                            RTLIL::SigSpec s1)
-                        -> RTLIL::SigSpec
-                    {
-                        RTLIL::SigSpec inputs;
-
-                        inputs.append(s0);
-                        inputs.append(s1);
-
-                        RTLIL::Wire *wire =
-                            module->addWire(
-                                NEW_ID,
-                                1);
-
-                        RTLIL::Cell *cell =
-                            module->addCell(
-                                NEW_ID,
-                                ID($reduce_or));
-
-                        cell->setParam(
-                            ID::A_SIGNED,
-                            0);
-
-                        cell->setParam(
-                            ID::A_WIDTH,
-                            2);
-
-                        cell->setParam(
-                            ID::Y_WIDTH,
-                            1);
-
-                        cell->setPort(
-                            ID::A,
-                            inputs);
-
-                        cell->setPort(
-                            ID::Y,
-                            RTLIL::SigSpec(
-                                wire));
-
-                        return RTLIL::SigSpec(
-                            wire);
-                    };
-
-
-                    /*
-                     * --------------------------------------------------
-                     * helper 2
+                     * helper
                      *
                      * 创建普通 2:1 $mux
                      * --------------------------------------------------
@@ -2326,78 +2266,48 @@ if (!profitable_pattern)
 
 
                     /*
-                     * --------------------------------------------------
-                     * helper 3
+                     * ==================================================
+                     * Binary indexed pair selection.
                      *
-                     * 创建共享 selector 的 PMUX。
-                     * --------------------------------------------------
+                     * pair_index = control with swap_bit removed.
+                     * Each ordinary pair contributes one shared data
+                     * value.  A special pair first resolves its two
+                     * exceptional values with swap_bit, then enters the
+                     * same binary tree.  The final cross-lane swap below
+                     * remains unchanged.
+                     * ==================================================
                      */
-                    auto make_pmux =
-                        [&](RTLIL::SigSpec data_b,
-                            RTLIL::SigSpec selectors)
-                        -> RTLIL::SigSpec
+                    RTLIL::SigSpec swap_bit =
+                        info_a.control.extract(
+                            candidate.swap_bit,
+                            1);
+
+                    RTLIL::SigSpec pair_index;
+
+                    for (int bit = 0;
+                         bit < info_a.ctrl_width;
+                         bit++)
                     {
-                        RTLIL::Wire *wire =
-                            module->addWire(
-                                NEW_ID,
-                                width);
+                        if (bit == candidate.swap_bit)
+                            continue;
 
-                        RTLIL::Cell *cell =
-                            module->addCell(
-                                NEW_ID,
-                                ID($pmux));
+                        pair_index.append(
+                            info_a.control.extract(bit, 1));
+                    }
 
-                        cell->setParam(
-                            ID::WIDTH,
-                            width);
+                    log_assert(
+                        pair_index.size() ==
+                        info_a.ctrl_width - 1);
 
-                        cell->setParam(
-                            ID::S_WIDTH,
-                            selectors.size());
+                    log_assert(
+                        pair_count ==
+                        (1 << pair_index.size()));
 
-                        RTLIL::SigSpec undef_data =
-                            RTLIL::Const(
-                                State::Sx,
-                                width);
+                    std::vector<RTLIL::SigSpec> pair_x_values(
+                        pair_count);
 
-                        cell->setPort(
-                            ID::A,
-                            undef_data);
-
-                        cell->setPort(
-                            ID::B,
-                            data_b);
-
-                        cell->setPort(
-                            ID::S,
-                            selectors);
-
-                        cell->setPort(
-                            ID::Y,
-                            RTLIL::SigSpec(
-                                wire));
-
-                        return RTLIL::SigSpec(
-                            wire);
-                    };
-
-
-                    /*
-                     * ==================================================
-                     * A/B 原来各自是 16 路。
-                     *
-                     * 现在先把：
-                     *
-                     * state 0/1
-                     * state 2/3
-                     * ...
-                     *
-                     * 合并成 8 组。
-                     * ==================================================
-                     */
-                    RTLIL::SigSpec high_selectors;
-                    RTLIL::SigSpec pair_x_data;
-                    RTLIL::SigSpec pair_y_data;
+                    std::vector<RTLIL::SigSpec> pair_y_values(
+                        pair_count);
 
                     for (int base_value = 0;
                          base_value < choices;
@@ -2411,21 +2321,55 @@ if (!profitable_pattern)
                             base_value |
                             (1 << candidate.swap_bit);
 
-                        int base_branch =
+                        /*
+                         * Remove swap_bit from the binary control value.
+                         * The result is the exact index used by pair_index.
+                         */
+                        int pair_slot = 0;
+                        int pair_slot_bit = 0;
+
+                        for (int bit = 0;
+                             bit < info_a.ctrl_width;
+                             bit++)
+                        {
+                            if (bit == candidate.swap_bit)
+                                continue;
+
+                            if ((base_value >> bit) & 1)
+                                pair_slot |=
+                                    (1 << pair_slot_bit);
+
+                            pair_slot_bit++;
+                        }
+
+                        log_assert(
+                            pair_slot_bit ==
+                            pair_index.size());
+
+                        log_assert(
+                            pair_slot >= 0 &&
+                            pair_slot < pair_count);
+
+                        int a_base_branch =
                             info_a.branch_for_value[
                                 base_value];
 
-                        int mate_branch =
+                        int b_base_branch =
+                            info_b.branch_for_value[
+                                base_value];
+
+                        int a_mate_branch =
                             info_a.branch_for_value[
                                 mate_value];
 
-                        RTLIL::SigSpec base_s =
-                            info_a.port_s.extract(
-                                base_branch, 1);
+                        int b_mate_branch =
+                            info_b.branch_for_value[
+                                mate_value];
 
-                        RTLIL::SigSpec mate_s =
-                            info_a.port_s.extract(
-                                mate_branch, 1);
+                        log_assert(a_base_branch >= 0);
+                        log_assert(b_base_branch >= 0);
+                        log_assert(a_mate_branch >= 0);
+                        log_assert(b_mate_branch >= 0);
 
                         bool special = false;
 
@@ -2436,87 +2380,106 @@ if (!profitable_pattern)
 
                         if (special)
                         {
-                            int a_base_branch =
-                                info_a.branch_for_value[
-                                    base_value];
-
-                            int b_base_branch =
-                                info_b.branch_for_value[
-                                    base_value];
-
-                            int a_mate_branch =
-                                info_a.branch_for_value[
-                                    mate_value];
-
-                            int b_mate_branch =
-                                info_b.branch_for_value[
-                                    mate_value];
-
-                            high_selectors.append(base_s);
-
-                            pair_x_data.append(
+                            RTLIL::SigSpec x_base =
                                 info_a.port_b.extract(
                                     a_base_branch * width,
-                                    width));
+                                    width);
 
-                            pair_y_data.append(
-                                info_b.port_b.extract(
-                                    b_base_branch * width,
-                                    width));
-
-                            high_selectors.append(mate_s);
-
-                            pair_x_data.append(
+                            RTLIL::SigSpec x_mate =
                                 info_b.port_b.extract(
                                     b_mate_branch * width,
-                                    width));
+                                    width);
 
-                            pair_y_data.append(
+                            RTLIL::SigSpec y_base =
+                                info_b.port_b.extract(
+                                    b_base_branch * width,
+                                    width);
+
+                            RTLIL::SigSpec y_mate =
                                 info_a.port_b.extract(
                                     a_mate_branch * width,
-                                    width));
+                                    width);
+
+                            pair_x_values[pair_slot] =
+                                make_mux(
+                                    x_base,
+                                    x_mate,
+                                    swap_bit);
+
+                            pair_y_values[pair_slot] =
+                                make_mux(
+                                    y_base,
+                                    y_mate,
+                                    swap_bit);
                         }
                         else
                         {
-                            high_selectors.append(
-                                make_selector_or(
-                                    base_s,
-                                    mate_s));
-
-                            int a_mate_branch =
-                                info_a.branch_for_value[
-                                    mate_value];
-
-                            int b_mate_branch =
-                                info_b.branch_for_value[
-                                    mate_value];
-
-                            pair_x_data.append(
+                            pair_x_values[pair_slot] =
                                 info_b.port_b.extract(
                                     b_mate_branch * width,
-                                    width));
+                                    width);
 
-                            pair_y_data.append(
+                            pair_y_values[pair_slot] =
                                 info_a.port_b.extract(
                                     a_mate_branch * width,
-                                    width));
+                                    width);
                         }
                     }
 
+                    for (int slot = 0;
+                         slot < pair_count;
+                         slot++)
+                    {
+                        log_assert(
+                            pair_x_values[slot].size() == width);
+
+                        log_assert(
+                            pair_y_values[slot].size() == width);
+                    }
+
+                    auto make_binary_indexed_mux =
+                        [&](std::vector<RTLIL::SigSpec> values)
+                        -> RTLIL::SigSpec
+                    {
+                        log_assert(
+                            int(values.size()) == pair_count);
+
+                        for (int level = 0;
+                             level < pair_index.size();
+                             level++)
+                        {
+                            std::vector<RTLIL::SigSpec> next;
+
+                            log_assert(
+                                (values.size() & 1) == 0);
+
+                            for (int index = 0;
+                                 index < int(values.size());
+                                 index += 2)
+                            {
+                                next.push_back(
+                                    make_mux(
+                                        values[index],
+                                        values[index + 1],
+                                        pair_index.extract(
+                                            level, 1)));
+                            }
+
+                            values.swap(next);
+                        }
+
+                        log_assert(values.size() == 1);
+                        return values[0];
+                    };
+
                     RTLIL::SigSpec pair_x =
-                        make_pmux(
-                            pair_x_data,
-                            high_selectors);
+                        make_binary_indexed_mux(
+                            pair_x_values);
 
                     RTLIL::SigSpec pair_y =
-                        make_pmux(
-                            pair_y_data,
-                            high_selectors);
+                        make_binary_indexed_mux(
+                            pair_y_values);
 
-                    RTLIL::SigSpec swap_bit =
-                        info_a.control.extract(
-                            candidate.swap_bit,
-                            1);
 
                     RTLIL::SigSpec final_a =
                         make_mux(
