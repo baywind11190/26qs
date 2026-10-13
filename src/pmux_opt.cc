@@ -21,6 +21,9 @@
  * 5 优先级多路选择优化
  *   5.1 优先级多路选择链互斥选择因式分解
  *
+ * 6 寄存器更新条件优化
+ *   6.1 比较条件共享与寄存器使能反馈联合重构
+ *
  * 历史研发代号对应关系：
  *   Pattern A -> 1.1
  *   H1        -> 1.2
@@ -39,6 +42,7 @@
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
 #include "kernel/consteval.h"
+#include "kernel/ffinit.h"
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -95,6 +99,283 @@ struct PairSwapCandidate
     std::vector<int> special_base_values;
 };
 
+
+// 6.1: bounded, structural three-condition enable/data feedback factoring.
+// Original enables: G&(A|B), G&(A|C), G&!C. No signal names or
+// particular command constants are used. Only the final one expands enable.
+struct EnableFeedback
+{
+    RTLIL::Module *module;
+    SigMap &sigmap;
+    const dict<SigBit, RTLIL::Cell *> &drivers;
+    const pool<SigBit> &multiple;
+    FfInitVals init;
+    std::unique_ptr<ConstEval> evaluator;
+    struct Predicate { SigSpec control; std::vector<int> values; };
+    struct Record { RTLIL::Cell *cell; Predicate pred; std::vector<SigBit> guard; bool complement; };
+
+    EnableFeedback(RTLIL::Module *m, SigMap &s,
+                   const dict<SigBit, RTLIL::Cell *> &d, const pool<SigBit> &p)
+        : module(m), sigmap(s), drivers(d), multiple(p) { init.set(&sigmap, module); }
+
+    RTLIL::Cell *driver(SigBit bit) const
+    {
+        bit = sigmap(bit);
+        auto it = drivers.find(bit);
+        if (!bit.wire || multiple.count(bit) || it == drivers.end()) return nullptr;
+        auto c = it->second;
+        if (c->get_bool_attribute(ID::keep) || !c->hasPort(ID::Y) ||
+            sigmap(c->getPort(ID::Y)) != SigSpec(bit)) return nullptr;
+        return c;
+    }
+
+    bool factors(SigBit bit, std::vector<SigBit> &out, int depth = 0)
+    {
+        if (depth > 6 || out.size() > 8) return false;
+        bit = sigmap(bit);
+        if (!bit.wire) return bit == State::S1;
+        if (multiple.count(bit)) return false;
+        auto c = driver(bit);
+        if (c && c->type == ID($reduce_and)) {
+            for (auto b : sigmap(c->getPort(ID::A)))
+                if (!factors(b, out, depth+1)) return false;
+        } else if (c && (c->type == ID($and) || c->type == ID($logic_and)) &&
+                   GetSize(c->getPort(ID::A)) == 1 && GetSize(c->getPort(ID::B)) == 1) {
+            if (!factors(c->getPort(ID::A)[0], out, depth+1) ||
+                !factors(c->getPort(ID::B)[0], out, depth+1)) return false;
+        } else out.push_back(bit);
+        return out.size() <= 8;
+    }
+
+    bool predicate(SigBit bit, Predicate &p, int depth = 0)
+    {
+        if (depth > 6) return false;
+        auto c = driver(bit);
+        if (!c) return false;
+        if (c->type == ID($eq)) {
+            if (c->getParam(ID::A_SIGNED).as_bool() || c->getParam(ID::B_SIGNED).as_bool()) return false;
+            auto a = sigmap(c->getPort(ID::A)), b = sigmap(c->getPort(ID::B));
+            if (a.is_fully_const()) std::swap(a, b);
+            if (GetSize(a) < 8 || GetSize(a) > 16 || GetSize(a) != GetSize(b) ||
+                !b.is_fully_const() || !b.as_const().is_fully_def()) return false;
+            pool<SigBit> seen;
+            for (auto x : a) {
+                if (!x.wire || multiple.count(x) || seen.count(x)) return false;
+                seen.insert(x);
+            }
+            if (!p.control.empty() && p.control != a) return false;
+            p.control = a;
+            p.values.push_back(b.as_const().as_int());
+        } else if (c->type == ID($reduce_or) || c->type == ID($reduce_bool)) {
+            if (GetSize(c->getPort(ID::A)) > 3) return false;
+            for (auto b : c->getPort(ID::A)) if (!predicate(b, p, depth+1)) return false;
+        } else if ((c->type == ID($or) || c->type == ID($logic_or)) &&
+                   GetSize(c->getPort(ID::A)) == 1 && GetSize(c->getPort(ID::B)) == 1) {
+            if (!predicate(c->getPort(ID::A)[0], p, depth+1) ||
+                !predicate(c->getPort(ID::B)[0], p, depth+1)) return false;
+        } else return false;
+        if (p.values.size() > 3) return false;
+        std::sort(p.values.begin(), p.values.end());
+        p.values.erase(std::unique(p.values.begin(), p.values.end()), p.values.end());
+        return true;
+    }
+
+    bool record(RTLIL::Cell *c, Record &r)
+    {
+        if (c->type != ID($dffe) || !module->selected(c) || c->get_bool_attribute(ID::keep) ||
+            !c->getParam(ID::EN_POLARITY).as_bool()) return false;
+        int width = c->getParam(ID::WIDTH).as_int();
+        if (width < 1 || width > 64 || GetSize(c->getPort(ID::D)) != width ||
+            GetSize(c->getPort(ID::Q)) != width || GetSize(c->getPort(ID::CLK)) != 1 ||
+            GetSize(c->getPort(ID::EN)) != 1) return false;
+        for (auto b : sigmap(c->getPort(ID::Q)))
+            if (!b.wire || multiple.count(b) || init(b) != State::Sx) return false;
+        std::vector<SigBit> fs;
+        if (!factors(c->getPort(ID::EN)[0], fs)) return false;
+        bool found = false;
+        for (auto bit : fs) {
+            auto d = driver(bit);
+            bool neg = d && (d->type == ID($not) || d->type == ID($logic_not)) && GetSize(d->getPort(ID::A)) == 1;
+            Predicate p;
+            if (predicate(neg ? d->getPort(ID::A)[0] : bit, p) &&
+                p.values.size() == (neg ? 1u : 2u)) {
+                if (found) return false;
+                found = true; r.pred = p; r.complement = neg;
+            } else r.guard.push_back(bit);
+        }
+        std::sort(r.guard.begin(), r.guard.end());
+        r.guard.erase(std::unique(r.guard.begin(), r.guard.end()), r.guard.end());
+        r.cell = c;
+        return found && !r.guard.empty() && r.guard.size() <= 4 && (!r.complement || width == 1);
+    }
+
+    bool clean_cone(SigSpec data, SigSpec control)
+    {
+        pool<SigBit> visited, boundary;
+        for (auto b : control) boundary.insert(b);
+        std::vector<SigBit> todo;
+        for (auto b : sigmap(data)) todo.push_back(b);
+        while (!todo.empty()) {
+            auto b = todo.back(); todo.pop_back();
+            if (multiple.count(b)) return false;
+            if (!b.wire || boundary.count(b) || visited.count(b)) continue;
+            visited.insert(b);
+            if (visited.size() > 256) return false;
+            auto it = drivers.find(b);
+            if (it == drivers.end()) continue;
+            auto c = it->second;
+            // Sequential outputs are unknown boundaries, never evaluated here.
+            if (c->type == ID($dffe) || c->type == ID($dff)) continue;
+            for (auto &port : c->connections()) if (c->input(port.first))
+                for (auto input : sigmap(port.second)) todo.push_back(input);
+        }
+        return true;
+    }
+
+    SigSpec evaluate(SigSpec data, SigSpec control, int value)
+    {
+        // Preserve unresolved inputs as symbolic wires. In particular, X===X
+        // must not turn an equality between two external inputs into constant 1.
+        if (!evaluator) evaluator.reset(new ConstEval(module));
+        evaluator->clear();
+        evaluator->set(control, RTLIL::Const(value, GetSize(control)));
+        if (!evaluator->eval(data)) return RTLIL::Const(State::Sx, GetSize(data));
+        return data;
+    }
+
+    bool compatible(const Record &a, const Record &b)
+    {
+        return a.pred.control == b.pred.control && a.guard == b.guard &&
+            sigmap(a.cell->getPort(ID::CLK)) == sigmap(b.cell->getPort(ID::CLK)) &&
+            a.cell->getParam(ID::CLK_POLARITY) == b.cell->getParam(ID::CLK_POLARITY);
+    }
+
+    SigSpec invert(SigSpec a) { auto y = module->addWire(NEW_ID); module->addNot(NEW_ID, a, y); return y; }
+    SigSpec reduce(SigSpec a) {
+        if (a.empty()) return State::S1;
+        if (GetSize(a) == 1) return a;
+        auto y = module->addWire(NEW_ID); module->addReduceAnd(NEW_ID, a, y); return y;
+    }
+    SigSpec binary(SigSpec a, SigSpec b, int kind) {
+        auto y = module->addWire(NEW_ID);
+        if (kind == 0) module->addAnd(NEW_ID, a, b, y);
+        if (kind == 1) module->addOr(NEW_ID, a, b, y);
+        if (kind == 2) module->addEq(NEW_ID, a, b, y);
+        if (kind == 3) module->addNe(NEW_ID, a, b, y);
+        return y;
+    }
+
+    bool rebuild(Record &x, Record &y, Record &z)
+    {
+        if (x.cell == y.cell || x.cell == z.cell || y.cell == z.cell ||
+            x.complement || y.complement || !z.complement ||
+            !compatible(x,y) || !compatible(x,z)) return false;
+        int C = z.pred.values[0];
+        if (std::find(y.pred.values.begin(), y.pred.values.end(), C) == y.pred.values.end() ||
+            std::find(x.pred.values.begin(), x.pred.values.end(), C) != x.pred.values.end()) return false;
+        int A = y.pred.values[0] == C ? y.pred.values[1] : y.pred.values[0];
+        if (std::find(x.pred.values.begin(), x.pred.values.end(), A) == x.pred.values.end()) return false;
+        int B = x.pred.values[0] == A ? x.pred.values[1] : x.pred.values[0];
+        int delta = B ^ C;
+        if (!delta || (delta & (delta-1))) return false;
+        int pivot = 0;
+        while (!(delta & (1 << pivot))) pivot++;
+        if ((A & delta) || (C & delta) || !(B & delta)) return false;
+        std::vector<int> group, fixed;
+        int base = -1;
+        for (int i = 0; i < GetSize(x.pred.control); i++) {
+            if (i == pivot) continue;
+            if ((A ^ C) & (1 << i)) {
+                group.push_back(i);
+                if (!(A & (1 << i)) && base < 0) base = i;
+            } else fixed.push_back(i);
+        }
+        if (base < 0 || group.size() < 2 || group.size() > 4) return false;
+        auto ctrl = x.pred.control;
+        auto t = ctrl[pivot], b = ctrl[base];
+        std::vector<int> needed;
+        for (int i : fixed) {
+            bool implied = false;
+            for (auto g : x.guard) {
+                if ((A & (1 << i)) && g == ctrl[i]) implied = true;
+                auto d = driver(g);
+                if (!(A & (1 << i)) && d && (d->type == ID($not) || d->type == ID($logic_not)) &&
+                    sigmap(d->getPort(ID::A)) == SigSpec(ctrl[i])) implied = true;
+            }
+            if (!implied) needed.push_back(i);
+        }
+        if (needed.size() > 4) return false;
+
+        // Complete mux boundary: outside the three decoded commands D=t.
+        auto pmux = driver(z.cell->getPort(ID::D)[0]);
+        if (!pmux || pmux->type != ID($pmux) || pmux->getParam(ID::WIDTH).as_int() != 1 ||
+            sigmap(pmux->getPort(ID::A)) != SigSpec(t)) return false;
+        pool<int> seen;
+        for (auto s : pmux->getPort(ID::S)) {
+            Predicate p;
+            if (!predicate(s,p) || p.control != ctrl) return false;
+            for (int v : p.values) {
+                if ((v != A && v != B && v != C) || seen.count(v)) return false;
+                seen.insert(v);
+            }
+        }
+        if (!seen.count(A) || !seen.count(B)) return false;
+        auto zd = z.cell->getPort(ID::D);
+        if (!clean_cone(zd, ctrl) || !clean_cone(x.cell->getPort(ID::D), ctrl) ||
+            !clean_cone(y.cell->getPort(ID::D), ctrl)) return false;
+        if (evaluate(zd, ctrl, A) != SigSpec(State::S1) ||
+            evaluate(zd, ctrl, B) != SigSpec(State::S1)) return false;
+
+        auto xa = evaluate(x.cell->getPort(ID::D), ctrl, A);
+        auto xb = evaluate(x.cell->getPort(ID::D), ctrl, B);
+        auto ya = evaluate(y.cell->getPort(ID::D), ctrl, A);
+        auto yc = evaluate(y.cell->getPort(ID::D), ctrl, C);
+        auto xd = x.cell->getPort(ID::D), yd = y.cell->getPort(ID::D);
+        int nx = 0, ny = 0;
+        for (int i = 0; i < GetSize(xd); i++)
+            if (xa[i] == State::S0 && xb[i] == State::S1) { xd[i] = t; nx++; }
+        for (int i = 0; i < GetSize(yd); i++)
+            if (ya[i] == State::S0 && yc[i] == State::S1) { yd[i] = b; ny++; }
+        // Conservative profitability boundary: both banks must simplify.
+        if (!nx || !ny) return false;
+
+        // All validation above is read-only. Leave original shared cones intact.
+        SigSpec o, e, guard;
+        for (int i : needed) o.append((A & (1 << i)) ? SigSpec(ctrl[i]) : invert(ctrl[i]));
+        for (int i : group) if (i != base)
+            e.append(binary(b, ctrl[i], (A & (1 << i)) ? 3 : 2));
+        for (auto g : x.guard) guard.append(g);
+        auto h = binary(reduce(o), reduce(e), 0);
+        auto g = reduce(guard);
+        auto el = reduce(SigSpec({g[0], h[0], binary(t,b,2)[0]}));
+        auto eh = reduce(SigSpec({g[0], h[0], invert(t)[0]}));
+        auto dz = binary(t, binary(h, binary(invert(b), z.cell->getPort(ID::Q), 1), 0), 1);
+        x.cell->setPort(ID::EN, el); x.cell->setPort(ID::D, xd);
+        y.cell->setPort(ID::EN, eh); y.cell->setPort(ID::D, yd);
+        z.cell->setPort(ID::EN, g); z.cell->setPort(ID::D, dz);
+        log("6.1 ENABLE-FEEDBACK REBUILT %s, %s, %s (control=%d, group=%d).\n",
+            log_id(x.cell), log_id(y.cell), log_id(z.cell), GetSize(ctrl), int(group.size()));
+        return true;
+    }
+
+    int run()
+    {
+        std::vector<Record> records;
+        for (auto c : module->selected_cells()) {
+            Record r;
+            if (record(c,r)) records.push_back(r);
+            if (records.size() > 32) return 0;
+        }
+        int attempts = 0;
+        for (auto &z : records) if (z.complement)
+            for (auto &y : records) if (!y.complement && compatible(y,z))
+                for (auto &x : records) if (!x.complement && compatible(x,z)) {
+                    if (++attempts > 256) return 0;
+                    if (rebuild(x,y,z)) return 1;
+                }
+        return 0;
+    }
+};
 
 struct PmuxOptPass : public Pass
 {
@@ -210,6 +491,8 @@ struct PmuxOptPass : public Pass
                     }
                 }
             }
+            log("Total enable-feedback rebuilt: %d\n",
+                EnableFeedback(module, sigmap, driver_map, multi_driver_bits).run());
             /*
  * ==================================================
  * Pattern D 使用：
