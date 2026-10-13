@@ -80,7 +80,8 @@ def main():
     all_ok = True
     for i in range(1, 5):
         top = "test{}".format(i)
-        rtl = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+        rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+        rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
         cdir = out / top
         script = C.gen_builtin_synth_ys(rtl, top)
         script_sha = __import__("hashlib").sha256(script.encode()).hexdigest()

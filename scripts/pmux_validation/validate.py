@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""官方四例验证入口（official4-p4）。Linux/WSL，标准库实现。
+"""PMUX 官方四例验证入口；Windows 默认加载 official4-p6-windows 配置。
 
-默认目标：官方四例内置验收——先自动准备内置工具（baseline 复用登记核对；
-optimized 按缓存键查可复用构建，未命中则在缓存命名空间内从本地 Yosys 基础
-提交建立隔离源码树并构建、冒烟验证后登记），再执行真实内置调度：四例两侧
-运行逐字节相同的外部脚本（直接调用 synth_intel），收集资源、功能证明
-（RTL↔最终映射网表）与性能（每例 15 对交错）；准备或身份检查失败时生成
-明确的阻断/失败记录，不加载插件、不启动验收进程，也不自动退回插件方案。
+内置验收先按平台和工具身份复用或构建 Yosys，再运行四例综合、ABC9 后网表
+功能证明、映射资源统计与逐例 CPU/内存测量。Windows p6 统计独立取反位并计入
+逻辑单元，CPU 使用 Job Object 累计子进程，内存读取 Yosys 主进程峰值工作集。
+准备或身份检查失败时保留阻断记录，不加载插件或静默切换流程。
 
-显式插件预检：`run <commit> --mode plugin`。本地编译插件后运行四例（资源、功能、
-性能），全程标记“四例插件预检”；插件结果不构成内置验收。
+在 Windows 使用 `validate_windows.cmd plan <commit>` 只读检查，使用
+`validate_windows.cmd run <commit>` 执行。Linux 的 `config.json` 保留历史 p5
+兼容入口；Windows 的 `config.windows.json` 与 p6 结果分开保存。
 
 范围与判定规则见同目录 POLICY.md；本入口固定官方公开四例（test1~test4），
 不默认运行回归、H2、规模或多驱动测试（相关模块与资产保留原位）。
@@ -28,9 +27,16 @@ import sys
 import uuid
 
 PACKAGE = Path(__file__).resolve().parent
-ROUND_LABEL_DEFAULT = "稳定版-四例"
+ROUND_LABEL_DEFAULT = "Windows单次内部计时_v6" if os.name == "nt" else "稳定版-四例"
 ROUND_PARENT_REL = "results/官方口径评测"
 SELFCHECK_CACHE_REL = "results/官方口径评测/_共享自检缓存_selfcheck/selfcheck_cache.json"
+CONFIG_PATH = PACKAGE / ("config.windows.json" if os.name == "nt" else "config.json")
+sys.path.insert(0, str(PACKAGE / "runner"))
+from process_utils import process_group_kwargs, terminate_process_tree
+from cpu_statistics import SCHEME as MEAN_CPU_SCHEME, POLICY as CPU_POLICY
+from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
+import runtime_patch
+from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME
 
 # 插件预检的阶段计划（默认调度只含四例所需内容；不含回归/H2/规模/多驱动）。
 PLUGIN_PLAN = (
@@ -88,6 +94,42 @@ def digest(path):
     return h.hexdigest()
 
 
+TEXT_FILE_SUFFIXES = {
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".json", ".md", ".py", ".sh",
+    ".sv", ".tcl", ".txt", ".v", ".ys", ".yml", ".yaml", ".cmd", ".cmake", '.ps1', '.wprp',
+}
+
+
+def digest_package_file(path):
+    """Hash package text with CRLF normalized so Windows autocrlf is portable."""
+    path = Path(path)
+    data = path.read_bytes()
+    if path.suffix.lower() in TEXT_FILE_SUFFIXES:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+def normalize_text_file(path):
+    path = Path(path)
+    if path.suffix.lower() not in TEXT_FILE_SUFFIXES:
+        return False
+    data = path.read_bytes()
+    normalized = data.replace(b"\r\n", b"\n")
+    if normalized == data:
+        return False
+    path.write_bytes(normalized)
+    return True
+
+
+def normalize_text_tree(root):
+    root = Path(root)
+    changed = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        if normalize_text_file(path):
+            changed.append(path)
+    return changed
+
+
 def save(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
@@ -98,21 +140,23 @@ def verify_package_manifest(package):
     任一项不符即停止（不静默刷新清单）。
     """
     package = Path(package)
-    manifest = json.loads((package / "PACKAGE_SHA256.json").read_text())
+    manifest = json.loads((package / "PACKAGE_SHA256.json").read_text(encoding="utf-8"))
     problems = []
     for rel, want in manifest.items():
         f = package / rel
         if not f.is_file():
             problems.append("清单文件缺失: " + rel)
-        elif digest(f) != want:
+        elif digest_package_file(f) != want:
             problems.append("内容与清单不符: " + rel)
     active = [package / n for n in ("validate.py", "report.py", "test_validation.py", "test_p5.py",
-                                    "POLICY.md", "SKILL.md", "config.json")]
+                                    'test_windows_hardening.py', 'test_cpu_v4.py', 'package_windows.py', 'package_qa.py',
+                                    "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
+                                    "validate_windows.cmd")]
     for sub in ("runner", "suite-official4"):
         active += [p for p in (package / sub).rglob("*")
                    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".so"]
     for p in active:
-        rel = str(p.relative_to(package))
+        rel = p.relative_to(package).as_posix()
         if rel not in manifest:
             problems.append("未登记文件: " + rel)
     if problems:
@@ -135,15 +179,65 @@ def selected_tool_data(cfg):
     out = []
     for item in cfg["tool_data"]:
         p = Path(item["path"])
-        if any(sub in item["path"] for sub in rules["include_subpaths"]):
+        normalized = item["path"].replace(chr(92), "/")
+        if any(sub.replace(chr(92), "/") in normalized
+               for sub in rules["include_subpaths"]):
             out.append(item)
-        elif p.parent.name == "share" and p.name in direct:
+        elif p.parent.name.lower() in ("share", "yosys") and p.name in direct:
             out.append(item)
     return out
 
 
+def yosys_share_root(binary):
+    """Find the Yosys data directory for either a CMake build or install tree."""
+    binary = Path(binary)
+    candidates = (
+        binary.parent / "share" / "yosys",
+        binary.parent / "share",
+        binary.parent.parent / "share" / "yosys",
+        binary.parent.parent / "share",
+    )
+    for root in candidates:
+        if (root / "intel" / "cycloneiv" / "cells_map.v").is_file():
+            return root
+    raise FileNotFoundError("找不到 Yosys share 数据目录（缺 intel/cycloneiv/cells_map.v）：%s"
+                            % binary)
+
+
+def validate_performance_policy(cfg):
+    scheme=cfg.get('performance_scheme')
+    if scheme not in (None,'pmux-perf-15p-mainrss-v2','pmux-perf-5p-mainrss-v1',
+                       'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME):
+        raise ValueError('Unknown performance scheme; cannot infer measurement policy')
+    if scheme == SINGLE_CPU_SCHEME:
+        from measure_v6 import POLICY
+        if cfg.get('cpu_policy') != POLICY or cfg.get('performance_pairs') != 1: raise ValueError('v6 fixed policy mismatch')
+    if scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME):
+        if cfg.get('cpu_policy')!=CPU_POLICY:raise ValueError('v4 fixed CPU policy mismatch')
+        reference=cfg.get('cpu_reference_tools') or {}
+        if set(reference)!={'wpr','xperf'} or any(not Path(p).is_file() for p in reference.values()):
+            raise ValueError('v4 independent reference dependency missing: configure existing WPR and xperf paths')
+
+
 def preflight(commit):
-    cfg = json.loads((PACKAGE / "config.json").read_text())
+    config_path = CONFIG_PATH
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    validate_performance_policy(cfg)
+    if os.name == 'nt':
+        configure_windows_runtime(cfg)
+        runtime = {}
+        for name, spec in cfg.get('runtime_tools', {}).items():
+            path = Path(spec['path'])
+            if not path.is_file() or digest(path) != spec['sha256']:
+                raise ValueError('Fixed runtime tool missing or identity mismatch: ' + str(path))
+            if name == 'python' and Path(sys.executable).resolve() != path.resolve():
+                raise ValueError('Use validate_windows.cmd with the fixed Python: ' + str(path))
+            resolved = shutil.which('python3' if name == 'python' else name)
+            if not resolved or Path(resolved).resolve() != path.resolve():
+                raise ValueError('Runtime lookup mismatch for ' + name + ': ' + str(resolved))
+            version = subprocess.check_output([str(path), '--version'], encoding='utf-8', errors='replace').splitlines()[0]
+            runtime[name] = dict(spec, resolved=resolved, version=version)
+        cfg['runtime_identity'] = runtime
     repo = Path(cfg["repo"])
     if not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
         raise ValueError("Supply a Git commit hash (7-40 hex characters), not a branch or file SHA-256")
@@ -164,19 +258,31 @@ def preflight(commit):
         raise ValueError("Yosys source commit changed")
     if git(cfg["yosys_source"], "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("Yosys tracked source is dirty; review provenance before running")
+    for path_key, hash_key, label in (
+        ("toolchain_dependency_manifest", "toolchain_dependency_manifest_sha256", "MSYS2 依赖清单"),
+        ("toolchain_identity_manifest", "toolchain_identity_manifest_sha256", "Windows 工具链身份清单"),
+    ):
+        path = cfg["builtin"].get(path_key)
+        expected = cfg["builtin"].get(hash_key)
+        if path and (not Path(path).is_file() or digest(path) != expected):
+            raise ValueError(label + "缺失或哈希与配置不符：" + str(path))
+    for item in cfg["builtin"].get("toolchain_build_logs", []):
+        if not Path(item["path"]).is_file() or digest(item["path"]) != item["sha256"]:
+            raise ValueError("工具构建日志缺失或哈希与工具链身份清单不符：" + item["path"])
     # 四例冻结输入指纹（新的 official4-v1 清单；不再检查 H2/规模等未使用资产）。
     suite_manifest = PACKAGE / cfg["suite_manifest"]
-    suite = json.loads(suite_manifest.read_text())
+    suite = json.loads(suite_manifest.read_text(encoding="utf-8"))
     for item in suite["files"]:
         target = PACKAGE / "suite-official4" / item["file"]
-        if digest(target) != item["sha256"]:
+        if digest_package_file(target) != item["sha256"]:
             raise ValueError("Frozen four-case input changed: " + item["file"])
     # 脚本包清单与活动包文件核对（不一致必须停止，不静默刷新）。
     verify_package_manifest(PACKAGE)
     cfg.update(target_commit=sha, source_sha256=hashlib.sha256(source).hexdigest(),
                project_head=git(repo, "rev-parse", "HEAD"),
-               suite_manifest_sha256=digest(suite_manifest),
-               config_sha256=digest(PACKAGE / "config.json"),
+               suite_manifest_sha256=digest_package_file(suite_manifest),
+               config_path=str(config_path.resolve()),
+               config_sha256=digest_package_file(config_path),
                suite_verified=True,
                tool_data_checked=len(selected_tool_data(cfg)),
                tool_data_total=len(cfg["tool_data"]))
@@ -254,6 +360,16 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
         evidence[f"{side}_src"] = ev
         if spec.get("src_commit") and head != spec["src_commit"]:
             missing.append(f"{side} 源码提交与登记不符：{head} != {spec['src_commit']}")
+        if runtime_patch.enabled(cfg):
+            try:
+                if spec.get('runtime_patch') != runtime_patch.verify(src): raise ValueError('runtime patch identity mismatch')
+                if spec.get('full_diff_sha256') != ev['diff_sha256']: raise ValueError('full source diff mismatch')
+                allowed={'kernel/driver.cc'} | ({'passes/opt/CMakeLists.txt','techlibs/intel/synth_intel.cc'} if side=='optimized' else set())
+                files=set(git(src,'diff','--name-only').splitlines())
+                if files != allowed: raise ValueError('unexpected source changes: '+str(files))
+                diff_text=git(src,'diff','--','.',':(exclude)kernel/driver.cc')
+                ev['diff_sha256']=hashlib.sha256(diff_text.encode()).hexdigest()
+            except (ValueError,OSError,subprocess.SubprocessError) as exc: missing.append(str(exc))
         if side == "baseline":
             if diff_text:
                 missing.append("baseline 源码仓库存在未提交改动（影响来源证据）")
@@ -294,15 +410,44 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
             evidence[f"abc_{side}"] = {"path": str(p), "sha256": digest(p)}
     # 实际数据文件（构建 share/intel 下的 cycloneiv 与 common）。
     for side in ("baseline", "optimized"):
-        share = Path(b.get(side, {}).get("path", "")).parent / "share" / "intel"
-        if not share.is_dir():
-            missing.append(f"{side} 构建缺少 share/intel 数据文件目录")
+        try:
+            share = yosys_share_root(b.get(side, {}).get("path", "")) / "intel"
+        except FileNotFoundError as exc:
+            missing.append(f"{side} 构建缺少 Yosys Intel 数据文件：{exc}")
             continue
         files = sorted(p for p in share.rglob("*")
                        if p.is_file() and p.suffix == ".v" and ("cycloneiv" in p.parts or "common" in p.parts))
         evidence[f"{side}_share_intel"] = {
             str(p.relative_to(share)): digest(p) for p in files}
     return (len(missing) == 0), missing, evidence
+
+
+def configure_windows_runtime(cfg):
+    """Expose the pinned MSYS2 runtime and Yosys/ABC directories to child tools."""
+    if os.name != "nt":
+        return
+    sys.path.insert(0, str(PACKAGE / "runner"))
+    from prepare_builtin import _build_env
+
+    extra = []
+    for name in ("yosys", "yosys_config", "abc", "eqy", "compiler", "cmake", "ninja"):
+        path = (cfg.get("tools", {}).get(name) or {}).get("path")
+        if path:
+            extra.append(str(Path(path).parent))
+    builtin = cfg.get("builtin") or {}
+    for side in ("baseline", "optimized"):
+        path = (builtin.get(side) or {}).get("path")
+        if path:
+            extra.append(str(Path(path).parent))
+        abc_path = (builtin.get("abc") or {}).get(side)
+        if abc_path:
+            extra.append(str(Path(abc_path).parent))
+    env = _build_env(cfg, extra)
+    for name in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE', 'BASH_ENV', 'ENV'):
+        os.environ.pop(name, None)
+    for name in ("PATH", "MSYSTEM", "PYTHONUTF8", "PYTHONIOENCODING", 'PYTHONNOUSERSITE', 'LC_ALL', 'MSYS2_PATH_TYPE'):
+        if name in env:
+            os.environ[name] = env[name]
 
 
 def next_round_dir(parent, prefix):
@@ -319,7 +464,7 @@ def next_round_dir(parent, prefix):
 
 def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     parent = Path(cfg["repo"]) / ROUND_PARENT_REL
-    parent.mkdir(exist_ok=True)
+    parent.mkdir(parents=True, exist_ok=True)
     prefix = datetime.now().strftime("%Y-%m-%d_%H%M") + "_" + label + "_" + cfg["target_commit"][:7]
     root = next_round_dir(parent, prefix)
     cfg["ascii_bridge"] = str(Path(cfg["repo"]) / "results" / ("_eval_ascii_" + uuid.uuid4().hex))
@@ -332,15 +477,40 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     shutil.copyfile(PACKAGE / "validate.py", root / "01_来源与环境_meta/validate.py.snapshot")
     shutil.copyfile(PACKAGE / "report.py", root / "01_来源与环境_meta/report.py.snapshot")
     shutil.copyfile(PACKAGE / "POLICY.md", root / "POLICY.md")
-    shutil.copyfile(PACKAGE / "config.json", meta / "config.json")
+    shutil.copyfile(Path(cfg.get("config_path", PACKAGE / "config.json")), meta / "config.json")
     shutil.copyfile(PACKAGE / cfg["suite_manifest"], meta / "suite_manifest.json")
+    normalize_text_file(meta / "suite_manifest.json")
+    toolchain = cfg.get("builtin") or {}
+    identity_path = toolchain.get("toolchain_identity_manifest")
+    if identity_path:
+        evidence_dir = meta / "工具链与构建证据"
+        evidence_dir.mkdir()
+        shutil.copyfile(identity_path, evidence_dir / "toolchain_identity.json")
+        dependency_path = toolchain.get("toolchain_dependency_manifest")
+        if dependency_path:
+            shutil.copyfile(dependency_path, evidence_dir / "msys2_packages.txt")
+        log_dir = evidence_dir / "build_logs"
+        log_dir.mkdir()
+        for item in toolchain.get("toolchain_build_logs", []):
+            source_log = Path(item["path"])
+            if digest(source_log) != item["sha256"]:
+                raise ValueError("工具构建日志哈希变化：" + str(source_log))
+            shutil.copyfile(source_log, log_dir / item["name"])
     # 冻结四例输入与自检素材（不含回归/H2/规模资产）。
     tree = root / "02_冻结源码与输入_assets/tree"
     shutil.copytree(PACKAGE / "suite-official4/tree", tree)
+    normalized_inputs = normalize_text_tree(tree)
     (tree / "src").mkdir()
     (tree / "src/pmux_opt.cc").write_bytes(source)
-    shutil.copytree(PACKAGE / "suite-official4/selfcheck",
-                    root / "10_验证工具自检_selfcheck/assets")
+    selfcheck_assets = root / "10_验证工具自检_selfcheck/assets"
+    shutil.copytree(PACKAGE / "suite-official4/selfcheck", selfcheck_assets)
+    normalized_selfcheck = normalize_text_tree(selfcheck_assets)
+    normalized_files = normalized_inputs + normalized_selfcheck
+    save(meta / "frozen_text_normalization.json", {
+        "policy": "Windows Git autocrlf CRLF 规范化为 LF，保持清单中的冻结输入 SHA-256。",
+        "files": [{"path": str(p.relative_to(root)), "sha256": digest(p)}
+                  for p in normalized_files],
+    })
     cfg["created_at"] = datetime.now().astimezone().isoformat()
     cfg["runner_sha256"] = {p.name: digest(p) for p in (root / "03_脚本与插件_runner").iterdir()
                             if p.is_file()}
@@ -349,16 +519,21 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
         git(cfg["repo"], "status", "--porcelain", "--untracked-files=no") + "\n")
     (meta / "algorithm_commit.txt").write_text(
         git(cfg["repo"], "show", "-s", "--format=fuller", cfg["target_commit"]) + "\n")
-    env_lines = [subprocess.check_output(["uname", "-a"], text=True), "Python: " + sys.version + "\n"]
+    env_lines = ["Platform: " + sys.platform + "\n", "Python: " + sys.version + "\n"]
     if collect_tools_env:
         env_lines.append(subprocess.check_output([cfg["tools"]["yosys"]["path"], "-V"], text=True))
         env_lines.append(subprocess.check_output([cfg["tools"]["eqy"]["path"], "--version"], text=True))
-        env_lines.append(subprocess.check_output([cfg["tools"]["z3"]["path"], "--version"], text=True))
-        compiler = subprocess.check_output([cfg["tools"]["yosys_config"]["path"], "--cxx"], text=True).strip()
-        for command in ([compiler, "--version"], ["lscpu"]):
+        if cfg["tools"].get("z3"):
+            env_lines.append(subprocess.check_output([cfg["tools"]["z3"]["path"], "--version"], text=True))
+        compiler = (subprocess.check_output([cfg["tools"]["yosys_config"]["path"], "--cxx"], text=True).strip()
+                    if cfg["tools"].get("yosys_config") else cfg["tools"]["compiler"]["path"])
+        commands = [[compiler, "--version"]]
+        commands.append(["lscpu"] if os.name != "nt" else ["cmd.exe", "/c", "ver"])
+        for command in commands:
             result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             env_lines.append("\n" + repr(command) + "\n" + result.stdout)
-        env_lines.append("\n" + Path("/proc/meminfo").read_text())
+        if os.name != "nt" and Path("/proc/meminfo").is_file():
+            env_lines.append("\n" + Path("/proc/meminfo").read_text())
     (meta / "environment.txt").write_text("".join(env_lines))
     return root
 
@@ -372,12 +547,13 @@ def execute(root, name, cmd, stages, timeout=10800):
     print("START", name, flush=True)
     with (meta / (name + ".log")).open("x") as log:
         p = subprocess.Popen(cmd, cwd=root, stdout=log, stderr=subprocess.STDOUT,
-                             env=dict(os.environ, LC_ALL="C.UTF-8", PYTHONUNBUFFERED="1"),
-                             start_new_session=True)
+                             env=dict(os.environ, LC_ALL="C.UTF-8", PYTHONUNBUFFERED="1",
+                                      PYTHONUTF8="1", PYTHONIOENCODING="utf-8"),
+                             **process_group_kwargs())
         try:
             rc = p.wait(timeout=timeout)
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
-            os.killpg(p.pid, signal.SIGKILL)
+            terminate_process_tree(p)
             p.wait()
             rc = 124
     entry.update(rc=rc, state="COMPLETED" if rc == 0 else "ERROR",
@@ -391,13 +567,19 @@ def execute(root, name, cmd, stages, timeout=10800):
 def selfcheck_fingerprints(cfg, runner_dir):
     """自检证据指纹：关键工具、四例输入、本轮代码/配置。任一变化即失效。"""
     return {
+        "optimized_yosys_sha256": cfg.get('builtin',{}).get('optimized',{}).get('binary_sha256'),
+        "builtin_abc_sha256": {side:digest(path) for side,path in cfg.get('builtin',{}).get('abc',{}).items()},
+        "compiler_sha256": cfg.get('tools',{}).get('compiler',{}).get('sha256'),
+        "platform": cfg.get('platform'),
+        "performance_scheme": cfg.get("performance_scheme"),
+        "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
         "flow_version": cfg["flow_version"],
         "model_version": cfg.get("model_version"),
         "strategy_version": cfg.get("strategy_version"),
-        "baseline_yosys_sha256": cfg["tools"]["yosys"]["sha256"],
+        "baseline_yosys_sha256": (cfg.get("builtin",{}).get("baseline",{}).get("binary_sha256") or cfg["tools"]["yosys"]["sha256"]),
         "abc_sha256": cfg["tools"]["abc"]["sha256"],
         "eqy_sha256": cfg["tools"]["eqy"]["sha256"],
-        "z3_sha256": cfg["tools"]["z3"]["sha256"],
+        "z3_sha256": (cfg["tools"].get("z3") or {}).get("sha256"),
         "suite_manifest_sha256": cfg["suite_manifest_sha256"],
         "runner_sha256": {p.name: digest(p) for p in sorted(Path(runner_dir).iterdir())
                           if p.is_file()},
@@ -415,7 +597,12 @@ def load_selfcheck_cache(path):
 def cache_entry_valid(cache, stage, fingerprints):
     """指纹匹配且结果为真实通过时才允许复用；缺证据或指纹不一致不得假定已自检。"""
     entry = ((cache or {}).get("entries") or {}).get(stage)
-    return bool(entry and entry.get("ok") and entry.get("fingerprint") == fingerprints)
+    matched = bool(entry and entry.get("ok") and entry.get("fingerprint") == fingerprints)
+    if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_CPU_SCHEME:
+        evidence = entry.get('measurement_evidence') or {}
+        path = Path(evidence.get('path',''))
+        return path.is_file() and digest(path) == evidence.get('sha256')
+    return matched
 
 
 def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
@@ -424,6 +611,10 @@ def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
     entries[stage] = {"fingerprint": fingerprints, "ok": bool(ok),
                       "finished_at": datetime.now().astimezone().isoformat(),
                       "evidence_root": str(evidence_root)}
+    if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_CPU_SCHEME and ok:
+        proof = Path(evidence_root) / '09_时间内存开销_performance/selftest/selftest_results.json'
+        if not proof.is_file(): raise ValueError('v6 selfcheck evidence missing')
+        entries[stage]['measurement_evidence'] = dict(path=str(proof),sha256=digest(proof))
     # 首次运行时共享缓存目录可能尚不存在，写入前创建父目录。
     path.parent.mkdir(parents=True, exist_ok=True)
     save(path, cache)
@@ -459,6 +650,7 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
         return 3
     cfg["builtin"] = prep["builtin"]
     cfg["builtin_prepare"] = prep["record"]
+    configure_windows_runtime(cfg)
     save(root / "validation_context.json", cfg)
     save(meta / "builtin_prepare.json", prep["record"])
 
@@ -488,9 +680,14 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
     status = "NEEDS_REVIEW"
     from report import build_builtin_report
     try:
-        for name, script, args in BUILTIN_PLAN:
+        stage_plan=list(BUILTIN_PLAN)
+        if cfg.get('performance_scheme')==MEAN_CPU_SCHEME:
+            stage_plan.insert(3,('cpu_method_qualification','qualify_cpu_method.py',()))
+        elif cfg.get('performance_scheme')==ETW_CPU_SCHEME:
+            stage_plan.insert(3,('cpu_etw_selfcheck','cpu_selfcheck_v5.py',()))
+        for name, script, args in stage_plan:
             if name == "performance":
-                args = ("--pairs", str(cfg["performance_pairs"]))
+                args = () if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME) else ("--pairs", str(cfg["performance_pairs"]))
             if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
                 stages.append({"name": name, "state": "NOT_RUN", "reason": "dependency failed"})
                 failed.add(name)
@@ -507,6 +704,8 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
             rc = execute(root, name, [sys.executable, str(runner / script), *args], stages)
             if rc:
                 failed.add(name)
+                if name in ('cpu_method_qualification','cpu_etw_selfcheck'):
+                    raise RuntimeError('CPU method qualification failed; no reference/certificate substitution or performance resampling')
             if name in BUILTIN_CACHED_STAGES:
                 update_selfcheck_cache(cache_path, cache, fingerprints, name, rc == 0, root)
                 if rc:
@@ -644,11 +843,24 @@ def main():
         sys.path.insert(0, str(PACKAGE / "runner"))
         from prepare_builtin import plan_builtin
         plan = plan_builtin(cfg, cfg["source_sha256"], cache_dir=args.builtin_cache_dir)
+        cpu_method=None
+        if cfg.get('performance_scheme')==MEAN_CPU_SCHEME:
+            from cpu_qualification import qualification_status
+            cpu_method=qualification_status(cfg)
+        elif cfg.get('performance_scheme')==ETW_CPU_SCHEME:
+            from cpu_selfcheck_v5 import status as etw_status
+            cpu_method=etw_status(cfg)
         print(json.dumps({k: cfg[k] for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
               "performance_pairs", "performance_scheme", "tool_data_checked"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({"mode_default": "builtin", "builtin_plan": plan,
+                          'cpu_policy':cfg.get('cpu_policy'),'cpu_method_qualification':cpu_method,
+                          'performance_expected_runs':16 if cfg.get('performance_scheme')==SINGLE_CPU_SCHEME else 2720 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else None,
+                          'cpu_pairs_per_case':300 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
+                          'memory_pairs_per_case':15 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
+                          'performance_estimate_note':'16次目标性能运行，无预热/重采样/ETW；构建、自检、功能证明另计' if cfg.get('performance_scheme')==SINGLE_CPU_SCHEME else '2720次历史性能方案',
+                          "runtime_identity": cfg.get('runtime_identity'),
                           "note": "plan 只读：不创建轮次/构建目录、不编译、不登记。run 默认先自动准备"
                                   "（复用或构建）再执行内置四例验收；四例插件预检需 --mode plugin。"},
                          ensure_ascii=False, indent=2))
@@ -656,6 +868,8 @@ def main():
         return 0
     if args.mode == "builtin":
         return run_builtin(cfg, source, args.label, build_cache_dir=args.builtin_cache_dir)
+    if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME):
+        raise ValueError('mean CPU policy is Windows builtin-only; no plugin substitution')
     frozen = None
     if args.frozen_round:
         p = Path(args.frozen_round)

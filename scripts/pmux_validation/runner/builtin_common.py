@@ -115,3 +115,114 @@ def compare_other_resources(base, opt):
     increases = [k for k in kinds if opt.get(k,0) > base.get(k,0)]
     return {'ok': not increases, 'counts': counts, 'increases': increases,
             'policy': 'per_cell_type_nonincrease; unclassified types retained conservatively'}
+
+
+_IO_CELL_TYPES = {
+    'cycloneiv_io', 'cycloneiv_io_ibuf', 'cycloneiv_io_obuf', 'cycloneiv_io_oe',
+}
+_CONSTANT_CELL_TYPES = {'VCC', 'GND'}
+
+
+def _rtlil_cells(mapped_il: str, top: str):
+    module = re.search(r'^module \\' + re.escape(top) + r'\n(.*?)^end$',
+                       mapped_il, re.M | re.S)
+    if not module:
+        raise ValueError('mapped RTLIL top module missing: {}'.format(top))
+    pattern = r'^\s*cell (\\?\S+) \S+\s*\n(.*?)^\s*end\s*$'
+    for match in re.finditer(pattern, module.group(1), re.M | re.S):
+        yield match.group(1).lstrip('\\'), match.group(2)
+
+
+def parse_resource_counts(stat_data, mapped_il: str, top: str) -> dict:
+    """Parse final Cyclone IV resources, counting vector inverters by output bits.
+
+    ``comb`` remains a compatibility alias for LUT count. ``logic_units`` is the
+    p6 headline metric: Cyclone IV LUTs plus independent inverter bits. Any cell
+    type outside the explicitly understood set blocks the resource conclusion.
+    """
+    design = stat_data.get('design', stat_data)
+    raw_types = design.get('num_cells_by_type') or {}
+    cell_types = {str(k).lstrip('\\'): int(v) for k, v in raw_types.items()}
+
+    cells = list(_rtlil_cells(mapped_il, top))
+    inverters = {'$not': 0, '$_NOT_': 0}
+    for kind, body in cells:
+        if kind == '$not':
+            widths = re.findall(r'^\s*parameter \\Y_WIDTH\s+(\d+)\s*$', body, re.M)
+            if len(widths) != 1 or int(widths[0]) <= 0:
+                raise ValueError('cannot determine $not output width for inverter count')
+            inverters[kind] += int(widths[0])
+        elif kind == '$_NOT_':
+            inverters[kind] += 1
+
+    for kind in ('$not', '$_NOT_'):
+        mapped_instances = sum(1 for cell_kind, _ in cells if cell_kind == kind)
+        if cell_types.get(kind, 0) != mapped_instances:
+            raise ValueError('stat/mapped.il inverter instance mismatch for {}: {} != {}'
+                             .format(kind, cell_types.get(kind, 0), mapped_instances))
+
+    lut_count = cell_types.get('cycloneiv_lcell_comb', 0)
+    inverter_count = sum(inverters.values())
+    dff_types = {kind: count for kind, count in cell_types.items()
+                 if re.search(r'(?:dff|latch)', kind, re.I)}
+    dff_count = sum(dff_types.values())
+    io_types = {kind: count for kind, count in cell_types.items()
+                if kind in _IO_CELL_TYPES}
+    other_types = {}
+    unknown = []
+    for kind, count in cell_types.items():
+        if kind in ('cycloneiv_lcell_comb', '$not', '$_NOT_'):
+            continue
+        if kind in dff_types or kind in io_types:
+            continue
+        if kind in _CONSTANT_CELL_TYPES:
+            other_types[kind] = count
+            continue
+        unknown.append(kind)
+    if unknown:
+        raise ValueError('unclassified mapped cell types: {}'.format(', '.join(sorted(unknown))))
+
+    modules = stat_data.get('modules') or {}
+    module_stats = modules.get('\\' + top) or modules.get(top) or design
+    return {
+        'lut_count': lut_count,
+        'comb': lut_count,
+        'inverter_count': inverter_count,
+        'logic_units': lut_count + inverter_count,
+        'dff_count': dff_count,
+        'dff_cell_types': dff_types,
+        'io_ports': int(module_stats.get('num_ports', design.get('num_ports', 0))),
+        'io_bits': int(module_stats.get('num_port_bits', design.get('num_port_bits', 0))),
+        'io_cell_types': io_types,
+        'other_cell_types': other_types,
+        'cell_types': dict(sorted(cell_types.items())),
+    }
+def compare_resource_counts(base: dict, opt: dict) -> dict:
+    """Compute per-example logic reduction and check every nonlogic resource."""
+    baseline_logic = int(base['logic_units'])
+    optimized_logic = int(opt['logic_units'])
+    logic_reduction_pct = ((baseline_logic - optimized_logic) / baseline_logic * 100.0
+                           if baseline_logic else None)
+    dff_nonincrease = int(opt['dff_count']) <= int(base['dff_count'])
+    io_nonincrease = (int(opt['io_ports']) <= int(base['io_ports']) and
+                      int(opt['io_bits']) <= int(base['io_bits']))
+    io_keys = sorted(set(base.get('io_cell_types', {})) | set(opt.get('io_cell_types', {})))
+    io_counts = {k: {'baseline': int(base.get('io_cell_types', {}).get(k, 0)),
+                     'optimized': int(opt.get('io_cell_types', {}).get(k, 0))} for k in io_keys}
+    io_increases = [k for k, v in io_counts.items() if v['optimized'] > v['baseline']]
+    io_nonincrease = io_nonincrease and not io_increases
+    other_keys = sorted(set(base['other_cell_types']) | set(opt['other_cell_types']))
+    other_counts = {kind: {'baseline': int(base['other_cell_types'].get(kind, 0)),
+                           'optimized': int(opt['other_cell_types'].get(kind, 0))}
+                    for kind in other_keys}
+    other_increases = [kind for kind, counts in other_counts.items()
+                       if counts['optimized'] > counts['baseline']]
+    return {
+        'logic_reduction_pct': logic_reduction_pct,
+        'dff_nonincrease': dff_nonincrease,
+        'io_nonincrease': io_nonincrease,
+        'io_resources': {'ok': not io_increases, 'counts': io_counts, 'increases': io_increases},
+        'other_resources': {'ok': not other_increases, 'counts': other_counts,
+                            'increases': other_increases},
+        'resource_checks_ok': dff_nonincrease and io_nonincrease and not other_increases,
+    }

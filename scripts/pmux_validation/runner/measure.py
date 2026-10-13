@@ -18,9 +18,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import builtin_common as B
+from measure_format import collect_metric_values, format_run_progress, sample_errors, merge_cpu_memory_runs, EXIT_PEAK_SCHEME
 
-PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
-CLK_TCK = os.sysconf("SC_CLK_TCK")
+PAGE_SIZE = os.sysconf("SC_PAGE_SIZE") if os.name != "nt" else None
+CLK_TCK = os.sysconf("SC_CLK_TCK") if os.name != "nt" else None
 
 
 # ---------------------------------------------------------------- 进程树 RSS 采样
@@ -130,6 +131,10 @@ def run_measured(cmd, *, cwd, log_path, timeout_s=1800, sample_interval=0.005):
     返回键：rc, timed_out, wall_s, cpu_user_s, cpu_system_s, cpu_total_s,
            tree_rss_peak_kb, rss_samples, max_sample_gap_s, gn_time（dict）
     """
+    if os.name == "nt":
+        from win_measure import run_measured as run_windows_measured
+        return run_windows_measured(cmd, cwd=cwd, log_path=log_path, timeout_s=timeout_s)
+
     log_path = Path(log_path)
     time_out = log_path.with_suffix(".gnu_time.txt")
 
@@ -291,16 +296,34 @@ def measure_case(
                 cmd = [str(C.TOOL_YOSYS), "-m", str(C.PLUGIN_SO), "-s", str(ys_path)]
             log_path = out_dir / f"{side}_{seq:02d}.log"
             cwd = C.REPO
-        res = run_measured(
-            cmd,
-            cwd=cwd,
-            log_path=log_path,
-            timeout_s=timeout_s,
-        )
+        if os.name == 'nt' and builtin:
+            from win_measure import run_cpu_measured, run_measured as run_exit_measured
+            subruns = {}
+            for purpose, execute in (('cpu', run_cpu_measured), ('memory', run_exit_measured)):
+                subdir = run_dir / purpose
+                subdir.mkdir()
+                (subdir / 'flow.ys').write_text(ys_text)
+                value = execute(cmd, cwd=subdir, log_path=subdir / 'run.log', timeout_s=timeout_s)
+                value['stat_exists'] = (subdir / 'stat.json').is_file()
+                value['evidence_dir'] = str(subdir)
+                (subdir / 'metrics.json').write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+                subruns[purpose] = value
+            res = merge_cpu_memory_runs(subruns['cpu'], subruns['memory'])
+            try:
+                cpu_stat = C.parse_stat_json(run_dir / 'cpu/stat.json')
+                memory_stat = C.parse_stat_json(run_dir / 'memory/stat.json')
+                res['subruns_stat_match'] = cpu_stat['cell_types'] == memory_stat['cell_types']
+            except (OSError, ValueError, KeyError):
+                res['subruns_stat_match'] = False
+            res['stat_exists'] = all(v['stat_exists'] for v in subruns.values())
+            res['cpu_stat_sha256'] = C.sha256_file(run_dir / 'cpu/stat.json') if subruns['cpu']['stat_exists'] else None
+            res['memory_stat_sha256'] = C.sha256_file(run_dir / 'memory/stat.json') if subruns['memory']['stat_exists'] else None
+        else:
+            res = run_measured(cmd, cwd=cwd, log_path=log_path, timeout_s=timeout_s)
+            res['stat_exists'] = stat_json.exists()
         res["side"] = side
         res["seq"] = seq
         res["order"] = order
-        res["stat_exists"] = stat_json.exists()
         if builtin:
             res["run_dir"] = str(run_dir)
         runs.append(res)
@@ -315,19 +338,22 @@ def measure_case(
             order_tag = "O→B"
         for side in order_sides:
             r = one(side, side == "optimized", i + 1, order_tag)
-            print(
-                f"  [{rtl.stem}] pair{i+1} {order_tag} {side}: rc={r['rc']} "
-                f"cpu={r['cpu_total_s']}s wall={r['wall_s']}s "
-                f"rss_main={r['yosys_main_rss_peak_kb']}kB "
-                f"gn_rss={r['gn_time_maxrss_kb']}kB"
-            )
+            print(format_run_progress(rtl.stem, i + 1, order_tag, side, r))
 
     # 汇总（中位数与全部原值）
     def collect(side, key):
-        vals = [r[key] for r in runs if r["side"] == side and r["rc"] == 0 and not r["timed_out"] and r[key] is not None]
-        return vals
+        return collect_metric_values(runs, side, key)
 
-    summary = {"case": top, "pairs": pairs, "runs": runs, "memory_metric": "yosys_main_rss_peak_kb", "performance_scheme": "pmux-perf-15p-mainrss-v2"}
+    memory_metric = next((r.get("memory_metric") for r in runs if r.get("memory_metric")),
+                         "yosys_main_rss_peak_kb")
+    summary = {"case": top, "pairs": pairs, "runs": runs,
+               "memory_metric": memory_metric,
+               "performance_scheme": (EXIT_PEAK_SCHEME
+                                       if memory_metric == "yosys_peak_working_set_bytes"
+                                       else "pmux-perf-15p-mainrss-v2")}
+    summary['invalid_samples'] = [dict(index=i + 1, side=r.get('side'), reasons=sample_errors(r))
+                                  for i, r in enumerate(runs) if sample_errors(r)]
+    summary['samples_valid'] = not summary['invalid_samples']
     for side in ("baseline", "optimized"):
         for key, name in (
             ("cpu_total_s", "cpu_total"),
@@ -335,6 +361,7 @@ def measure_case(
             ("cpu_system_s", "cpu_system"),
             ("tree_rss_peak_kb", "tree_rss_peak"),
             ("yosys_main_rss_peak_kb", "yosys_main_rss_peak"),
+            ("yosys_peak_working_set_bytes", "yosys_peak_working_set_bytes"),
             ("gn_time_maxrss_kb", "gn_maxrss"),
             ("gn_time_user_s", "gn_cpu_user"),
             ("gn_time_system_s", "gn_cpu_system"),
@@ -352,6 +379,8 @@ def measure_case(
 # ---------------------------------------------------------------- 自检
 def selftest(out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=False)
+    if os.name == "nt":
+        return windows_selftest(out_dir)
     results = {}
 
     # 1) CPU 受控工作：忙循环约 1s
@@ -443,12 +472,73 @@ def selftest(out_dir: Path):
     return 0 if ok else 1
 
 
+def windows_selftest(out_dir: Path):
+    """Windows-only checks for Job Object CPU, main-process peak memory and timeout."""
+    results = {}
+    native_python = getattr(sys, "_base_executable", sys.executable)
+    child_cpu = "import time; end=time.perf_counter()+0.65; x=0\nwhile time.perf_counter()<end: x+=1"
+    parent_cpu = "import subprocess; subprocess.run(" + repr([native_python, "-c", child_cpu]) + ",check=True)"
+    from win_measure import run_cpu_measured
+    cpu = run_cpu_measured([native_python, "-c", parent_cpu], cwd=out_dir,
+                           log_path=out_dir / "child_cpu.log", timeout_s=30)
+    results["child_cpu"] = cpu
+
+    child_mem = ("import time; value=bytearray(96*1024*1024); "
+                 "[value.__setitem__(i,1) for i in range(0,len(value),4096)]; time.sleep(0.5)")
+    parent_mem = ("import subprocess; value=bytearray(12*1024*1024); "
+                  "[value.__setitem__(i,1) for i in range(0,len(value),4096)]; "
+                  "subprocess.run(" + repr([native_python, "-c", child_mem]) + ",check=True)")
+    memory = run_measured([native_python, "-c", parent_mem], cwd=out_dir,
+                          log_path=out_dir / "child_memory.log", timeout_s=30)
+    results["child_memory"] = memory
+
+    short = run_measured([native_python, "-c", "pass"], cwd=out_dir,
+                         log_path=out_dir / "short_lived.log", timeout_s=10)
+    results["short_lived"] = short
+    nonzero = run_measured([native_python, "-c", "raise SystemExit(3)"], cwd=out_dir,
+                           log_path=out_dir / "nonzero.log", timeout_s=10)
+    results["nonzero_exit"] = nonzero
+    timeout = run_measured([native_python, "-c", "import time; time.sleep(10)"], cwd=out_dir,
+                           log_path=out_dir / "timeout.log", timeout_s=0.6)
+    results["timeout"] = timeout
+
+    checks = [
+        ("child CPU included", cpu["rc"] == 0 and cpu["cpu_total_s"] >= 0.5),
+        ("main process peak excludes child memory",
+         memory["rc"] == 0 and memory["yosys_peak_working_set_bytes"] is not None
+         and 12 * 1024 * 1024 < memory["yosys_peak_working_set_bytes"] < 70 * 1024 * 1024
+         and memory["memory_capture_complete"]),
+        ("short process peak retained",
+         short["rc"] == 0 and short["metrics_valid"]
+         and short["memory_capture_complete"]
+         and short["yosys_peak_working_set_bytes"] is not None
+         and short["yosys_peak_working_set_bytes"] > 0),
+        ("nonzero exit retained", nonzero["rc"] == 3 and nonzero["metrics_valid"]),
+        ("timeout classified", timeout["timed_out"] is True and timeout["rc"] == 124),
+    ]
+    for name, passed in checks:
+        results.setdefault("checks", []).append({"name": name, "pass": passed})
+    results["selftest_ok"] = all(passed for _, passed in checks)
+    results["method"] = {
+        "cpu": "Windows Job Object total user plus kernel time, including descendants",
+        "memory": "root PeakWorkingSetSize at EXIT_PROCESS_DEBUG_EVENT before ContinueDebugEvent; ABC excluded",
+        "memory_sampling_limit": "no periodic sampling gap; failed or missing final event invalidates the sample",
+        "cpu_is_separate_uninstrumented_run": True,
+    }
+    (out_dir / "selftest_results.json").write_text(
+        json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for name, passed in checks:
+        print("selftest {}: {}".format(name, "PASS" if passed else "FAIL"))
+    print("selftest_ok={}".format(results["selftest_ok"]))
+    return 0 if results["selftest_ok"] else 1
+
+
 # ---------------------------------------------------------------- 主入口
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--cases", nargs="*", default=["test1", "test2", "test3", "test4"])
-    ap.add_argument("--pairs", type=int, default=5)
+    ap.add_argument("--pairs", type=int, default=None)
     ap.add_argument("--out", type=str, default=None)
     args = ap.parse_args()
 
@@ -459,34 +549,88 @@ def main():
     )
 
     if args.selftest:
+        from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
+        if C.CONTEXT.get('performance_scheme') == SINGLE_CPU_SCHEME:
+            from selfcheck_v6 import run
+            return run(C.CONTEXT, C.ROUND_DIR / '09_时间内存开销_performance' / 'selftest')
         return selftest(C.ROUND_DIR / "09_时间内存开销_performance" / "selftest")
+
+    from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
+    if C.CONTEXT.get('performance_scheme') == SINGLE_CPU_SCHEME:
+        import measure_v6
+        if os.name != 'nt' or C.CONTEXT.get('mode') != 'builtin': raise ValueError('v6 requires Windows builtin')
+        if args.pairs is not None or args.out is not None or args.cases != ['test1','test2','test3','test4']:
+            raise ValueError('v6 fixed four-case single-run policy cannot be overridden')
+        binaries=B.select_binaries(C.CONTEXT['builtin'])
+        flows={}
+        for case in args.cases:
+            rtl=C.stage_to_ascii_bridge(C.TREE/f'pmux_case/competition_case/{case}/{case}.v',f'builtin_inputs/{case}.v')
+            flows[case]=C.gen_builtin_synth_ys(rtl,case)
+        return measure_v6.run(C.CONTEXT,C.ROUND_DIR,binaries,flows)
+
+    from cpu_statistics import SCHEME as MEAN_CPU_SCHEME
+    from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME
+    if C.CONTEXT.get('performance_scheme') not in (None,'','pmux-perf-15p-mainrss-v2','pmux-perf-5p-mainrss-v1',
+                                                  'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',MEAN_CPU_SCHEME,ETW_CPU_SCHEME):
+        raise ValueError('unknown performance scheme; cannot infer execution policy')
+    if C.CONTEXT.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME):
+        if os.name!='nt' or C.CONTEXT.get('mode')!='builtin':
+            raise ValueError('v4 mean policy requires Windows builtin mode')
+        if args.pairs is not None or args.out is not None or args.cases!=['test1','test2','test3','test4']:
+            raise ValueError('v4 fixed four-case policy cannot be overridden by legacy --pairs/--out/--cases')
+        import measure_v4
+        import measure_v5
+        binaries=B.select_binaries(C.CONTEXT['builtin'])
+        flows={}
+        for case in args.cases:
+            rtl=C.stage_to_ascii_bridge(C.TREE/f'pmux_case/competition_case/{case}/{case}.v',f'builtin_inputs/{case}.v')
+            flows[case]=C.gen_builtin_synth_ys(rtl,case)
+        return (measure_v5 if C.CONTEXT.get('performance_scheme')==ETW_CPU_SCHEME else measure_v4).run(C.CONTEXT,C.ROUND_DIR,binaries,flows)
 
     builtin = (C.CONTEXT.get("mode") == "builtin")
     summaries = []
     for case in args.cases:
-        rtl = C.TREE / "pmux_case" / "competition_case" / case / f"{case}.v"
+        rtl_source = C.TREE / "pmux_case" / "competition_case" / case / f"{case}.v"
+        rtl = (C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(case))
+               if builtin else rtl_source)
         print(f"=== {case} ===")
-        summ = measure_case(rtl, case, base / case, pairs=args.pairs,
+        summ = measure_case(rtl, case, base / case, pairs=args.pairs or 5,
                             plugin=not builtin, builtin=builtin)
         summaries.append(summ)
 
     # 汇总 CSV
     import csv
 
+    windows_memory = bool(summaries and summaries[0].get("memory_metric") ==
+                          "yosys_peak_working_set_bytes")
     with open(base / "performance_summary.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(
-            [
-                "case",
-                "cpu_base_median_s", "cpu_opt_median_s", "cpu_overhead_pct",
-                "rss_base_median_kb", "rss_opt_median_kb", "rss_overhead_pct",
-                "wall_base_median_s", "wall_opt_median_s",
-                "gn_rss_base_median_kb", "gn_rss_opt_median_kb",
-            ]
-        )
+        if windows_memory:
+            w.writerow(["case", "cpu_base_median_s", "cpu_opt_median_s", "cpu_overhead_pct",
+                        "yosys_peak_working_set_base_bytes", "yosys_peak_working_set_opt_bytes",
+                        "yosys_peak_working_set_base_mib", "yosys_peak_working_set_opt_mib",
+                        "memory_overhead_pct", "wall_base_median_s", "wall_opt_median_s",
+                        "memory_metric"])
+        else:
+            w.writerow(["case", "cpu_base_median_s", "cpu_opt_median_s", "cpu_overhead_pct",
+                        "rss_base_median_kb", "rss_opt_median_kb", "rss_overhead_pct",
+                        "wall_base_median_s", "wall_opt_median_s",
+                        "gn_rss_base_median_kb", "gn_rss_opt_median_kb"])
         for s in summaries:
             b = s.get("baseline_cpu_total_median")
             o = s.get("optimized_cpu_total_median")
+            if windows_memory:
+                mb = s.get("baseline_yosys_peak_working_set_bytes_median")
+                mo = s.get("optimized_yosys_peak_working_set_bytes_median")
+                w.writerow([s["case"], b, o,
+                            round((o - b) / b * 100, 4) if b else "",
+                            mb, mo,
+                            round(mb / (1024 * 1024), 4) if mb else "",
+                            round(mo / (1024 * 1024), 4) if mo else "",
+                            round((mo - mb) / mb * 100, 4) if mb else "",
+                            s.get("baseline_wall_median"), s.get("optimized_wall_median"),
+                            s.get("memory_metric")])
+                continue
             rb = s.get("baseline_yosys_main_rss_peak_median")
             ro = s.get("optimized_yosys_main_rss_peak_median")
             w.writerow(

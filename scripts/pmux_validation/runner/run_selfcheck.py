@@ -46,52 +46,58 @@ def build_cfg(check, gold, gate, model, top):
 def run_check(check, gold, gate, model, d):
     cfg = d / "config.eqy"
     cfg.write_text(build_cfg(check, gold, gate, model, check["top"]))
-    rc = F.setup_eqy(cfg, d / "work", d / "setup.log",
-                     yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
-    if rc != 0:
-        return {"state": "TOOL_OR_CONFIG_ERROR", "error": "eqy -m rc={}".format(rc),
-                "partitions": {}}
-    parts = {}
-    for sdir in sorted((d / "work" / "strategies").glob("*/simple")):
-        pname = sdir.parent.name
-        res = {}
-        try:
-            run_ys = sdir / "run.ys"
-            orig = run_ys.read_text()
-            new_text, info = F.transform_run_ys(orig)
-        except F.TransformError as exc:
-            return {"state": "TRANSFORM_ERROR", "error": "{}: {}".format(pname, exc),
-                    "partitions": parts}
-        (sdir / "run.ys.eqy-generated").write_text(orig)
-        run_ys.write_text(new_text)
-        (sdir / "transform.json").write_text(json.dumps(
-            {"strategy_version": F.STRATEGY_VERSION,
-             "orig_sha256": F.sha256_file(sdir / "run.ys.eqy-generated"),
-             "new_sha256": F.sha256_file(run_ys), "info": info},
-            ensure_ascii=False, indent=2) + "\n")
-        prc = F.run_yosys_script(run_ys, sdir / "run_noDF.log", sdir,
-                                 yosys=C.TOOL_YOSYS, timeout_s=PROOF_TIMEOUT)
-        proof = F.classify_proof_text((sdir / "run_noDF.log").read_text(errors="replace"))
-        proof["rc"] = prc
-        if prc == 124:
-            proof["state"] = "TIMEOUT"
-        elif prc != 0 and proof["state"] in ("PASS", "INCOMPLETE"):
-            proof["state"] = "TOOL_OR_CONFIG_ERROR"
-        probes = {}
-        for variant in ("noDF", "DF"):
-            base = new_text if variant == "noDF" else orig
-            pys = sdir / "probe_{}.ys".format(variant)
-            pys.write_text(F.make_probe_ys(base, variant))
-            xrc = F.run_yosys_script(pys, sdir / "probe_{}.log".format(variant), sdir,
-                                     yosys=C.TOOL_YOSYS, timeout_s=PROBE_TIMEOUT)
-            pv = F.classify_probe_text(
-                (sdir / "probe_{}.log".format(variant)).read_text(errors="replace"))
-            pv["rc"] = xrc
-            probes[variant] = pv
-        res = {"proof": proof, "probes": probes}
-        (sdir / "status_noDF.json").write_text(json.dumps(res, ensure_ascii=False, indent=2) + "\n")
-        parts[pname] = res
-    return {"state": "RUN_DONE", "partitions": parts}
+    work = F.ascii_eqy_workdir(C.ASCII_BRIDGE,
+                               Path("selfcheck") / "attempt01" / d.name)
+    work.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        rc = F.setup_eqy(cfg, work, d / "setup.log",
+                         yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
+        if rc != 0:
+            return {"state": "TOOL_OR_CONFIG_ERROR", "error": "eqy -m rc={}".format(rc),
+                    "partitions": {}}
+        parts = {}
+        for sdir in sorted((work / "strategies").glob("*/simple")):
+            pname = sdir.parent.name
+            res = {}
+            try:
+                run_ys = sdir / "run.ys"
+                orig = run_ys.read_text()
+                new_text, info = F.transform_run_ys(orig)
+            except F.TransformError as exc:
+                return {"state": "TRANSFORM_ERROR", "error": "{}: {}".format(pname, exc),
+                        "partitions": parts}
+            (sdir / "run.ys.eqy-generated").write_text(orig)
+            run_ys.write_text(new_text)
+            (sdir / "transform.json").write_text(json.dumps(
+                {"strategy_version": F.STRATEGY_VERSION,
+                 "orig_sha256": F.sha256_file(sdir / "run.ys.eqy-generated"),
+                 "new_sha256": F.sha256_file(run_ys), "info": info},
+                ensure_ascii=False, indent=2) + "\n")
+            prc = F.run_yosys_script(run_ys, sdir / "run_noDF.log", sdir,
+                                     yosys=C.TOOL_YOSYS, timeout_s=PROOF_TIMEOUT)
+            proof = F.classify_proof_text((sdir / "run_noDF.log").read_text(errors="replace"))
+            proof["rc"] = prc
+            if prc == 124:
+                proof["state"] = "TIMEOUT"
+            elif prc != 0 and proof["state"] in ("PASS", "INCOMPLETE"):
+                proof["state"] = "TOOL_OR_CONFIG_ERROR"
+            probes = {}
+            for variant in ("noDF", "DF"):
+                base = new_text if variant == "noDF" else orig
+                pys = sdir / "probe_{}.ys".format(variant)
+                pys.write_text(F.make_probe_ys(base, variant))
+                xrc = F.run_yosys_script(pys, sdir / "probe_{}.log".format(variant), sdir,
+                                         yosys=C.TOOL_YOSYS, timeout_s=PROBE_TIMEOUT)
+                pv = F.classify_probe_text(
+                    (sdir / "probe_{}.log".format(variant)).read_text(errors="replace"))
+                pv["rc"] = xrc
+                probes[variant] = pv
+            res = {"proof": proof, "probes": probes}
+            (sdir / "status_noDF.json").write_text(json.dumps(res, ensure_ascii=False, indent=2) + "\n")
+            parts[pname] = res
+        return {"state": "RUN_DONE", "partitions": parts}
+    finally:
+        F.copy_eqy_workdir(work, d / "work")
 
 
 def judge(check, res):

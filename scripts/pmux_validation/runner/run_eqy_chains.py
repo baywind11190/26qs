@@ -198,9 +198,11 @@ def aggregate_partitions(parts: dict) -> dict:
 
 
 # ---------------------------------------------------------------- 合并证明（test3）
-def run_merged(case: str, cdir: Path, *, yosys: str) -> dict:
+def run_merged(case: str, cdir: Path, *, yosys: str,
+               workdir: Path | None = None, merged_dir: Path | None = None) -> dict:
     meta = MERGED[case]
-    strat = sorted(d.name for d in (cdir / "work" / "strategies").iterdir() if d.is_dir())
+    workdir = Path(workdir) if workdir is not None else cdir / "work"
+    strat = sorted(d.name for d in (workdir / "strategies").iterdir() if d.is_dir())
     expected = sorted(meta["port_of_partition"])
     if strat != expected:
         return {"state": "METHOD_REVIEW_REQUIRED",
@@ -212,11 +214,11 @@ def run_merged(case: str, cdir: Path, *, yosys: str) -> dict:
     if missing:
         return {"state": "METHOD_REVIEW_REQUIRED",
                 "reason": "模板未覆盖端口: " + ", ".join(missing)}
-    src_il = cdir / "work" / "modules" / "{}.il".format(case)
+    src_il = workdir / "modules" / "{}.il".format(case)
     if not src_il.is_file():
         return {"state": "METHOD_REVIEW_REQUIRED",
                 "reason": "缺少合并模块文件: {}".format(src_il)}
-    mdir = cdir / "merged"
+    mdir = Path(merged_dir) if merged_dir is not None else cdir / "merged"
     mdir.mkdir(exist_ok=True)
     (mdir / "test3_miter.sv").write_text(tmpl)
     (mdir / "{}.merged.il".format(case)).write_text(src_il.read_text())
@@ -435,59 +437,75 @@ def main():
                 else:
                     raise ValueError(cname)
                 (cdir / "config.eqy").write_text(cfg_text)
-                rc = F.setup_eqy(cdir / "config.eqy", cdir / "work", cdir / "setup.log",
-                                 yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
-                if rc != 0:
-                    row = {"case": top, "chain": cname, "rc": 2, "state": "TOOL_OR_CONFIG_ERROR",
-                           "method": "partition", "error": "eqy -m rc={}".format(rc),
-                           "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
+                eqy_job = F.ascii_eqy_workdir(
+                    C.ASCII_BRIDGE, Path("chains") / args.attempt / top / cname)
+                work = eqy_job / "work"
+                work.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    rc = F.setup_eqy(cdir / "config.eqy", work, cdir / "setup.log",
+                                     yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
+                    if rc != 0:
+                        row = {"case": top, "chain": cname, "rc": 2,
+                               "state": "TOOL_OR_CONFIG_ERROR", "method": "partition",
+                               "error": "eqy -m rc={}".format(rc),
+                               "strategy_version": F.STRATEGY_VERSION,
+                               "model_version": F.MODEL_VERSION,
+                               "input_mode": args.input_mode,
+                           "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
+                               "partitions_total": 0, "partitions_pass": 0,
+                               "partition_states": {}, "probes_noDF_all_sat": False,
+                               "df_probes_unsat": 0, "merged": None, "verified": False,
+                               "frozen_round": (str(frozen) if frozen else None),
+                               "evidence": C.rel(cdir)}
+                        rows.append(row)
+                        (cdir / "summary.json").write_text(
+                            json.dumps(row, ensure_ascii=False, indent=2) + "\n")
+                        print("{} {}: setup FAILED rc={}".format(top, cname, rc))
+                        continue
+                    parts = run_partitions(work, yosys=C.TOOL_YOSYS)
+                    agg = aggregate_partitions(parts)
+                    merged = None
+                    if (top in MERGED and cname in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
+                            and agg["state"] != "PASS"):
+                        merged = run_merged(top, cdir, yosys=C.TOOL_YOSYS,
+                                            workdir=work, merged_dir=eqy_job / "merged")
+                        final_state = merged["state"]
+                        method = "merged_miter"
+                    else:
+                        final_state = agg["state"]
+                        method = "partition"
+                    row = {"case": top, "chain": cname,
+                           "rc": 0 if final_state == "PASS" else 2,
+                           "state": final_state, "method": method,
+                           "strategy_version": F.STRATEGY_VERSION,
+                           "model_version": F.MODEL_VERSION,
                            "input_mode": args.input_mode,
-                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
-                           "partitions_total": 0, "partitions_pass": 0, "partition_states": {},
-                           "probes_noDF_all_sat": False, "df_probes_unsat": 0, "merged": None,
-                           "verified": False, "frozen_round": (str(frozen) if frozen else None),
+                           "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
+                           "partitions_total": agg["partitions_total"],
+                           "partitions_pass": agg["partitions_pass"],
+                           "partition_states": agg["partition_states"],
+                           "probes_noDF_all_sat": agg["probes_noDF_all_sat"],
+                           "df_probes_unsat": agg["df_probes_unsat"],
+                           "merged": merged, "verified": final_state == "PASS",
+                           "frozen_round": (str(frozen) if frozen else None),
                            "evidence": C.rel(cdir)}
                     rows.append(row)
-                    (cdir / "summary.json").write_text(json.dumps(row, ensure_ascii=False, indent=2) + "\n")
-                    print("{} {}: setup FAILED rc={}".format(top, cname, rc))
-                    continue
-                parts = run_partitions(cdir / "work", yosys=C.TOOL_YOSYS)
-                agg = aggregate_partitions(parts)
-                merged = None
-                if top in MERGED and cname in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped"):
-                    merged = run_merged(top, cdir, yosys=C.TOOL_YOSYS)
-                    final_state = merged["state"]
-                    method = "merged_miter"
-                else:
-                    final_state = agg["state"]
-                    method = "partition"
-                row = {"case": top, "chain": cname,
-                       "rc": 0 if final_state == "PASS" else 2,
-                       "state": final_state, "method": method,
-                       "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION,
-                       "input_mode": args.input_mode,
-                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
-                       "partitions_total": agg["partitions_total"],
-                       "partitions_pass": agg["partitions_pass"],
-                       "partition_states": agg["partition_states"],
-                       "probes_noDF_all_sat": agg["probes_noDF_all_sat"],
-                       "df_probes_unsat": agg["df_probes_unsat"],
-                       "merged": merged, "verified": final_state == "PASS",
-                       "frozen_round": (str(frozen) if frozen else None),
-                       "evidence": C.rel(cdir)}
-                rows.append(row)
-                (cdir / "summary.json").write_text(json.dumps(row, ensure_ascii=False, indent=2) + "\n")
-                extra = ""
-                if merged:
-                    extra = " merged={}@k{} probe={}".format(
-                        merged["state"], merged.get("k"), merged.get("probe"))
-                elif agg["partition_states"]:
-                    detail = ", ".join("{}={}".format(k, v) for k, v in
-                                       sorted(agg["partition_states"].items())[:6])
-                    extra = " partitions: " + detail
-                print("{} {}: {} ({} / {}){}".format(
-                    top, cname, final_state, agg["partitions_pass"], agg["partitions_total"], extra),
-                    flush=True)
+                    (cdir / "summary.json").write_text(
+                        json.dumps(row, ensure_ascii=False, indent=2) + "\n")
+                    extra = ""
+                    if merged:
+                        extra = " merged={}@k{} probe={}".format(
+                            merged["state"], merged.get("k"), merged.get("probe"))
+                    elif agg["partition_states"]:
+                        detail = ", ".join("{}={}".format(k, v) for k, v in
+                                           sorted(agg["partition_states"].items())[:6])
+                        extra = " partitions: " + detail
+                    print("{} {}: {} ({} / {}){}".format(
+                        top, cname, final_state, agg["partitions_pass"],
+                        agg["partitions_total"], extra), flush=True)
+                finally:
+                    F.copy_eqy_workdir(work, cdir / "work")
+                    F.copy_eqy_workdir(eqy_job / "merged", cdir / "merged")
     except F.TransformError as exc:
         (out / "transform_blocked.json").write_text(json.dumps(
             {"strategy_version": F.STRATEGY_VERSION, "error": str(exc)},

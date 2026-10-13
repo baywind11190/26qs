@@ -14,8 +14,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from process_utils import process_group_kwargs, terminate_process_tree
 
 STRATEGY_VERSION = "noDF-local-r1"
 MODEL_VERSION = "dffeas-v3"
@@ -31,6 +33,31 @@ MARK_EXHAUSTED = "Reached maximum"
 
 class TransformError(ValueError):
     """EQY 生成的 run.ys 不符合预期格式：必须停止并说明，不得静默继续。"""
+
+
+def ascii_eqy_workdir(ascii_root, relative_name):
+    """Return a contained EQY scratch path rooted under an ASCII-only directory."""
+    root = Path(ascii_root).resolve()
+    work = (root / "eqy_work" / relative_name).resolve()
+    try:
+        work.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("EQY work path escapes ASCII scratch root") from exc
+    if not str(work).isascii():
+        raise ValueError("EQY scratch path must contain ASCII characters only")
+    return work
+
+
+def copy_eqy_workdir(source, destination):
+    """Copy completed or partial ASCII EQY evidence into the result directory."""
+    source, destination = Path(source), Path(destination)
+    if not source.is_dir():
+        return False
+    if destination.exists():
+        raise FileExistsError("refusing to overwrite EQY evidence: {}".format(destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination)
+    return True
 
 
 def sha256_file(path) -> str:
@@ -162,11 +189,12 @@ def setup_eqy(cfg_path, workdir, log_path, *, yosys, abc, eqy, timeout_s=1800, j
            "--yosys", str(yosys), "--abc", str(abc), str(cfg_path)]
     with log_path.open("x") as f:
         p = subprocess.Popen(cmd, cwd=str(cfg_path.parent), stdout=f,
-                             stderr=subprocess.STDOUT, env=env, start_new_session=True)
+                             stderr=subprocess.STDOUT, env=env,
+                             **process_group_kwargs())
         try:
             return p.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, 9)
+            terminate_process_tree(p)
             p.wait()
             return 124
 
@@ -179,10 +207,10 @@ def run_yosys_script(ys_path, log_path, cwd, *, yosys, timeout_s) -> int:
     cmd = [str(yosys), "-ql", str(log_path.resolve()), ys_path.name]
     with open(os.devnull, "wb") as devnull:
         p = subprocess.Popen(cmd, cwd=str(cwd), stdout=devnull,
-                             stderr=subprocess.STDOUT, start_new_session=True)
+                             stderr=subprocess.STDOUT, **process_group_kwargs())
         try:
             return p.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, 9)
+            terminate_process_tree(p)
             p.wait()
             return 124

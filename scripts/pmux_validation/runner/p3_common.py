@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from process_utils import process_group_kwargs, terminate_process_tree
 
 import json
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -25,7 +26,7 @@ ASCII_BRIDGE = Path(CONTEXT["ascii_bridge"])
 TOOL_YOSYS = Path(CONTEXT["tools"]["yosys"]["path"])
 TOOL_YOSYS_CONFIG = Path(CONTEXT["tools"]["yosys_config"]["path"])
 TOOL_EQY = Path(CONTEXT["tools"]["eqy"]["path"])
-TOOL_Z3 = Path(CONTEXT["tools"]["z3"]["path"])
+TOOL_Z3 = Path((CONTEXT.get("tools", {}).get("z3") or {}).get("path", ""))
 EQY_YOSYS = TOOL_YOSYS
 EQY_ABC = Path(CONTEXT["tools"]["abc"]["path"])
 TARGET_COMMIT = CONTEXT["target_commit"]
@@ -190,13 +191,13 @@ def run_yosys(
             stdout=logf,
             stderr=subprocess.STDOUT,
             cwd=str(REPO),
-            start_new_session=True,
+            **process_group_kwargs(),
         )
         try:
             p.communicate(ys_script.encode(), timeout=timeout)
             return p.returncode
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, 9)
+            terminate_process_tree(p)
             p.wait()
             return 124
 
@@ -223,13 +224,13 @@ def run_binary(
             stdout=logf,
             stderr=subprocess.STDOUT,
             cwd=str(cwd),
-            start_new_session=True,
+            **process_group_kwargs(),
         )
         try:
             p.communicate(ys_script.encode(), timeout=timeout)
             return p.returncode
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, 9)
+            terminate_process_tree(p)
             p.wait()
             return 124
 

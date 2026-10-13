@@ -26,13 +26,16 @@ pmux_opt）两份 Yosys 0.69 构建：
   下写登记文件。
 """
 import hashlib
+import runtime_patch
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
+from process_utils import process_group_kwargs, terminate_process_tree
 
 SCHEMA = 1
 INTEGRATION_ID = "pmux-opt-inline-p3-v1"
@@ -70,13 +73,14 @@ def _git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
 
-def _run_logged(cmd, *, cwd, log, timeout):
+def _run_logged(cmd, *, cwd, log, timeout, env=None):
     with open(log, "w") as lf:
-        p = subprocess.Popen(cmd, cwd=str(cwd), stdout=lf, stderr=subprocess.STDOUT)
+        p = subprocess.Popen(cmd, cwd=str(cwd), stdout=lf, stderr=subprocess.STDOUT,
+                             env=env, **process_group_kwargs())
         try:
             return p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            p.kill()
+            terminate_process_tree(p)
             p.wait()
             return 124
 
@@ -87,7 +91,16 @@ def build_profile(cfg):
     return {
         "cmake_build_type": b.get("cmake_build_type", "Release"),
         "shared_libs": bool(b.get("shared_libs", True)),
+        "generator": b.get("generator"),
     }
+
+
+def _build_product_path(tree, name, *, windows=None):
+    """Return the CMake build output path for a Yosys executable."""
+    if windows is None:
+        windows = os.name == "nt"
+    suffix = ".exe" if windows else ""
+    return Path(tree) / "build" / (name + suffix)
 
 
 def compiler_identity(cfg):
@@ -98,11 +111,15 @@ def compiler_identity(cfg):
 def cache_key(cfg, source_sha256):
     """optimized 缓存键：算法源码哈希、基础提交、集成模板/位置、构建参数、编译器。"""
     return {
+        "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
         "algorithm_source_sha256": source_sha256,
         "base_commit": cfg["builtin"]["source_commit"],
         "integration_id": INTEGRATION_ID,
         "build_profile": build_profile(cfg),
         "compiler_sha256": cfg["tools"]["compiler"]["sha256"],
+        "compiler_version": cfg["tools"]["compiler"].get("version"),
+        "platform": cfg.get("platform", sys.platform),
+        "toolchain_dependency_sha256": cfg["builtin"].get("toolchain_dependency_sha256"),
     }
 
 
@@ -198,6 +215,10 @@ def verify_entry_files(entry, sides=("baseline", "optimized")):
         src = Path(spec.get("src_dir", "") or "")
         if not (src / ".git").exists():
             reasons.append("%s 源码树缺失：%s" % (side, src))
+        if spec.get("runtime_patch"):
+            try:
+                if runtime_patch.verify(src) != spec["runtime_patch"]: reasons.append("计量补丁身份不符")
+            except (OSError, ValueError, subprocess.SubprocessError) as exc: reasons.append(str(exc))
         if side == "optimized" and spec.get("algorithm_source_path"):
             alg = src / spec["algorithm_source_path"]
             if not alg.is_file():
@@ -227,14 +248,33 @@ def find_cached_optimized(cache_dir, key, *, current_abc_commit=None):
 def resolve_baseline_reuse(cfg):
     """config.builtin.baseline_reuse 核对。返回 (spec, reasons)；reasons 为空即可复用。"""
     spec = (cfg["builtin"].get("baseline_reuse") or {}) or None
+    if runtime_patch.enabled(cfg):
+        for entry in reversed(_read_registry_entries(cfg['builtin']['cache_dir'])):
+            key = entry.get('key', {})
+            wanted = cache_key(cfg, key.get('algorithm_source_sha256'))
+            if entry.get('status') == 'READY' and key == wanted:
+                candidate = entry.get('baseline') or {}
+                ok, _ = verify_entry_files(entry, sides=('baseline',))
+                if ok and candidate.get('runtime_patch') == runtime_patch.identity():
+                    spec = dict(candidate, build_profile=build_profile(cfg))
+                    break
     if not spec:
         return None, ["无 baseline 复用登记"]
     reasons = []
+    if runtime_patch.enabled(cfg) and spec.get("runtime_patch") != runtime_patch.identity():
+        reasons.append("公共计量补丁身份缺失或不匹配")
     if spec.get("build_profile") != build_profile(cfg):
         reasons.append("构建参数与当前配置不一致")
     c = cfg["tools"]["compiler"]
     if spec.get("compiler_sha256") and spec["compiler_sha256"] != c["sha256"]:
         reasons.append("编译器身份与当前登记不一致")
+    if spec.get("compiler_version") and spec["compiler_version"] != c.get("version"):
+        reasons.append("编译器版本与当前登记不一致")
+    if spec.get("platform") and spec["platform"] != cfg.get("platform", sys.platform):
+        reasons.append("构建平台与当前配置不一致")
+    if spec.get("toolchain_dependency_sha256") and spec["toolchain_dependency_sha256"] != \
+            cfg["builtin"].get("toolchain_dependency_sha256"):
+        reasons.append("工具链依赖指纹与当前登记不一致")
     if spec.get("src_commit") and cfg["builtin"].get("source_commit") and \
             spec["src_commit"] != cfg["builtin"]["source_commit"]:
         reasons.append("基础提交与当前配置不一致")
@@ -258,13 +298,55 @@ def _build_environment_blockers(cfg):
                                           % (head, cfg["builtin"]["source_commit"])})
         except (subprocess.CalledProcessError, OSError) as exc:
             blocked.append({"item": "source_repo", "detail": "git 检查失败：%s" % exc})
-    for name in ("cmake", "rsync"):
-        if not shutil.which(name):
-            blocked.append({"item": name, "detail": "%s 不可用" % name})
+    required = ("cmake", "ninja", "bash") if os.name == "nt" else ("cmake", "rsync")
+    for name in required:
+        spec = cfg["tools"].get(name) or {}
+        path = spec.get("path")
+        available = Path(path).is_file() if path else shutil.which(name) is not None
+        if not available:
+            blocked.append({"item": name, "detail": "%s 不可用" % (path or name)})
     comp = Path(cfg["tools"]["compiler"]["path"])
     if not comp.is_file():
         blocked.append({"item": "compiler", "detail": "编译器缺失：%s" % comp})
     return blocked
+
+
+def _build_env(cfg, extra_paths=()):
+    env = dict(os.environ)
+    if os.name == "nt":
+        bash = Path((cfg["tools"].get("bash") or {}).get("path", ""))
+        msys_root = bash.parent.parent.parent
+        paths = [str(Path(p)) for p in extra_paths if p]
+        paths += [str(msys_root / "mingw64" / "bin")]
+        # MSYS2 Git misparses the native commit^{commit} argument. Keep the
+        # recorded Git for Windows used to create the LF source trees.
+        git_path = ((cfg.get('runtime_tools') or {}).get('git') or {}).get('path')
+        if git_path:
+            paths.append(str(Path(git_path).parent))
+        paths += [str(msys_root / "usr" / "bin")]
+        paths += env.get("PATH", "").split(os.pathsep)
+        dedup, seen = [], set()
+        for path in paths:
+            if path and path.casefold() not in seen:
+                seen.add(path.casefold())
+                dedup.append(path)
+        env["PATH"] = os.pathsep.join(dedup)
+        env["MSYSTEM"] = "MINGW64"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        for name in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE', 'BASH_ENV', 'ENV'):
+            env.pop(name, None)
+        env['PYTHONNOUSERSITE'] = '1'
+        env['LC_ALL'] = 'C.UTF-8'
+        env['MSYS2_PATH_TYPE'] = 'inherit'
+    return env
+
+
+def _tool_path(cfg, name):
+    spec = cfg["tools"].get(name) or {}
+    if spec.get("path"):
+        return str(spec["path"])
+    return shutil.which(name) or name
 
 
 # ---------------------------------------------------------------- 计划（只读）
@@ -329,8 +411,30 @@ def _unique_build_dir(cache_dir, source_sha256):
     raise BuildError("无法创建唯一构建目录（cache_dir=%s）" % cache_dir)
 
 
+def _ignore_root_build(src_root):
+    """Ignore only Yosys's generated top-level build tree when copying on Windows.
+
+    Nested directories named ``build`` can contain tracked source files (including
+    submodule content), so a recursive ignore pattern would make the copied Git
+    tree differ from its pinned commit.
+    """
+    root = Path(src_root).resolve()
+
+    def ignore(directory, names):
+        if Path(directory).resolve() == root:
+            return [name for name in names if name == "build"]
+        return []
+
+    return ignore
+
+
 def _copy_source_tree(cfg, dst, logs, side):
     src = Path(cfg["builtin"]["source_repo"])
+    if os.name == "nt":
+        shutil.copytree(src, dst, ignore=_ignore_root_build(src))
+        (logs / ("copy-source-%s.log" % side)).write_text(
+            "copytree source=%s destination=%s\n" % (src, dst), encoding="utf-8")
+        return
     log = logs / ("rsync-%s.log" % side)
     cmd = ["rsync", "-a", "--exclude=/build/", str(src) + "/", str(dst) + "/"]
     rc = _run_logged(cmd, cwd=logs.parent, log=log, timeout=3600)
@@ -362,7 +466,8 @@ def _write_provenance(cfg, src_tree, copy_cmd, logs, side):
         "copy_cmd: %s" % " ".join(copy_cmd),
         "copy_head: %s" % _git(src_tree, "rev-parse", "HEAD"),
     ]
-    (logs / ("source_provenance_%s.txt" % side)).write_text("\n".join(lines) + "\n")
+    (logs / ("source_provenance_%s.txt" % side)).write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _cmake_build(src_tree, logs, side, cfg):
@@ -370,34 +475,41 @@ def _cmake_build(src_tree, logs, side, cfg):
     build = src_tree / "build"
     (logs / ("build-%s.start" % side)).write_text(_now() + "\n")
     cfg_log = logs / ("cmake-%s.log" % side)
-    cmd = ["cmake", "-S", str(src_tree), "-B", str(build),
+    cmake = _tool_path(cfg, "cmake")
+    cmd = [cmake, "-S", str(src_tree), "-B", str(build),
            "-DCMAKE_BUILD_TYPE=%s" % profile["cmake_build_type"],
            "-DBUILD_SHARED_LIBS=%s" % ("ON" if profile["shared_libs"] else "OFF"),
            "-DCMAKE_CXX_COMPILER=%s" % cfg["tools"]["compiler"]["path"]]
-    rc = _run_logged(cmd, cwd=src_tree, log=cfg_log, timeout=1800)
+    if profile.get("generator"):
+        cmd += ["-G", profile["generator"]]
+    if os.name == "nt":
+        cmd += ["-DCMAKE_MAKE_PROGRAM=%s" % _tool_path(cfg, "ninja")]
+    env = _build_env(cfg)
+    rc = _run_logged(cmd, cwd=src_tree, log=cfg_log, timeout=1800, env=env)
     if rc:
         raise BuildError("cmake 配置失败（rc=%d），日志 %s" % (rc, cfg_log))
     b_log = logs / ("build-%s.log" % side)
     jobs = str((cfg["builtin"].get("build_profile") or {}).get("parallel_jobs", 8))
-    cmd = ["cmake", "--build", str(build), "-j", jobs]
-    rc = _run_logged(cmd, cwd=src_tree, log=b_log, timeout=7200)
+    cmd = [cmake, "--build", str(build), "-j", jobs]
+    rc = _run_logged(cmd, cwd=src_tree, log=b_log, timeout=7200, env=env)
     if rc:
         raise BuildError("编译失败（rc=%d），日志 %s" % (rc, b_log))
     (logs / ("build-%s.end" % side)).write_text(_now() + "\n")
 
 
-def _verify_binary(binary, need_pmux, expected_version):
+def _verify_binary(binary, need_pmux, expected_version, env=None):
     if not binary.is_file():
         raise BuildError("构建产物缺失：%s" % binary)
     p = subprocess.run([str(binary), "-V"], text=True, stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, timeout=300)
+                       stderr=subprocess.STDOUT, timeout=300, env=env)
     version_ok = p.returncode == 0 and expected_version in p.stdout
     if not version_ok:
         raise BuildError("二进制身份检查失败：%s（rc=%d）" % (binary, p.returncode))
     help_ok = None
     if need_pmux:
         p2 = subprocess.run([str(binary), "-p", "help pmux_opt"], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=300, env=env)
         help_ok = p2.returncode == 0 and "No such command" not in p2.stdout \
             and "pmux_opt" in p2.stdout
         if not help_ok:
@@ -406,7 +518,7 @@ def _verify_binary(binary, need_pmux, expected_version):
             "version_ok": version_ok, "help_pmux_ok": help_ok}
 
 
-def _smoke(build_dir, opt_binary, logs):
+def _smoke(build_dir, opt_binary, logs, cfg=None):
     """小型 synth_intel 调用冒烟（冻结 test4 输入；检查 rc=0 且 PMUX_OPT 恰一次）。"""
     rtl = Path(__file__).resolve().parent.parent / \
         "suite-official4/tree/pmux_case/competition_case/test4/test4.v"
@@ -417,7 +529,8 @@ def _smoke(build_dir, opt_binary, logs):
     ys = smoke_dir / "smoke.ys"
     ys.write_text("read_verilog -sv %s\nsynth_intel -family cycloneiv -top test4\n" % rtl)
     log = smoke_dir / "smoke.log"
-    rc = _run_logged([str(opt_binary), "-s", str(ys)], cwd=smoke_dir, log=log, timeout=900)
+    rc = _run_logged([str(opt_binary), "-s", str(ys)], cwd=smoke_dir, log=log,
+                     timeout=900, env=_build_env(cfg, [str(opt_binary.parent)]) if cfg else None)
     text = log.read_text(errors="replace")
     count = len(re.findall(r"\bExecuting\s+PMUX_OPT\b", text))
     ok = rc == 0 and count == 1
@@ -430,7 +543,7 @@ def _write_registry_entry(cache_dir, entry):
     d = registry_dir(cache_dir)
     d.mkdir(parents=True, exist_ok=True)
     path = d / (entry["name"] + ".json")
-    path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n")
+    path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -443,14 +556,18 @@ def _assemble_builtin_cfg(cfg, baseline_spec, opt_spec):
     return {
         "baseline": {"path": baseline_spec["binary"], "src_repo": baseline_spec["src_dir"],
                      "src_commit": baseline_spec["src_commit"],
-                     "binary_sha256": baseline_spec["binary_sha256"]},
+                     "binary_sha256": baseline_spec["binary_sha256"],
+                     "runtime_patch": baseline_spec.get("runtime_patch"),
+                     "full_diff_sha256": baseline_spec.get("full_diff_sha256")},
         "optimized": {"path": opt_spec["binary"], "src_repo": opt_spec["src_dir"],
                       "src_commit": opt_spec["src_commit"],
                       "binary_sha256": opt_spec["binary_sha256"],
                       "algorithm_source_path": opt_spec.get("algorithm_source_path",
                                                              ALGORITHM_SOURCE_PATH),
                       "algorithm_source_sha256": opt_spec["algorithm_source_sha256"],
-                      "integration_diff_sha256": opt_spec["integration_diff_sha256"]},
+                      "integration_diff_sha256": opt_spec["integration_diff_sha256"],
+                      "runtime_patch": opt_spec.get("runtime_patch"),
+                      "full_diff_sha256": opt_spec.get("full_diff_sha256")},
         "abc": {"baseline": baseline_spec["abc"], "optimized": opt_spec["abc"]},
         "expected_version": cfg["builtin"]["expected_version"],
         "integration_evidence": list(cfg["builtin"]["integration_evidence"]),
@@ -499,9 +616,10 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                         raise BuildError("提取的算法源码哈希与请求提交不一致")
                     cmake = tree / "passes/opt/CMakeLists.txt"
                     synth = tree / "techlibs/intel/synth_intel.cc"
-                    c_new, s_new, _ = insert_integration(cmake.read_text(), synth.read_text())
-                    cmake.write_text(c_new)
-                    synth.write_text(s_new)
+                    c_new, s_new, _ = insert_integration(
+                        cmake.read_text(encoding="utf-8"), synth.read_text(encoding="utf-8"))
+                    cmake.write_bytes(c_new.encode("utf-8"))
+                    synth.write_bytes(s_new.encode("utf-8"))
                     diff_text = _git(tree, "diff")
                     diff_sha = _check_integration_diff(diff_text)
                     entry["optimized"] = {
@@ -509,22 +627,28 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                         "algorithm_source_path": ALGORITHM_SOURCE_PATH,
                         "algorithm_source_sha256": source_sha256,
                         "integration_diff_sha256": diff_sha,
-                        "binary": str(tree / "build/yosys"),
+                        "binary": str(_build_product_path(tree, "yosys")),
                         "binary_sha256": None,
-                        "abc": str(tree / "build/yosys-abc"), "abc_sha256": None,
+                        "abc": str(_build_product_path(tree, "yosys-abc")), "abc_sha256": None,
                     }
                 else:
                     if _git(tree, "diff"):
                         raise BuildError("baseline 树存在未提交改动")
                     entry["baseline"] = {
                         "action": "built", "src_dir": str(tree), "src_commit": head,
-                        "binary": str(tree / "build/yosys"), "binary_sha256": None,
-                        "abc": str(tree / "build/yosys-abc"), "abc_sha256": None,
+                        "binary": str(_build_product_path(tree, "yosys")), "binary_sha256": None,
+                        "abc": str(_build_product_path(tree, "yosys-abc")), "abc_sha256": None,
                     }
+                if runtime_patch.enabled(cfg):
+                    runtime_patch.apply(tree)
+                    entry[side]['runtime_patch'] = runtime_patch.verify(tree)
+                    entry[side]['full_diff_sha256'] = hashlib.sha256(_git(tree, 'diff').encode()).hexdigest()
                 _cmake_build(tree, logs, side, cfg)
-                _write_provenance(cfg, tree, ["rsync", "-a", "--exclude=/build/",
-                                              str(cfg["builtin"]["source_repo"]) + "/",
-                                              str(tree) + "/"], logs, side)
+                copy_cmd = (["shutil.copytree", str(cfg["builtin"]["source_repo"]),
+                             str(tree), "ignore=build"] if os.name == "nt" else
+                            ["rsync", "-a", "--exclude=/build/",
+                             str(cfg["builtin"]["source_repo"]) + "/", str(tree) + "/"])
+                _write_provenance(cfg, tree, copy_cmd, logs, side)
             # 完整登记复用侧信息（若 baseline 或 optimized 某侧为复用）。
             if not need_baseline and baseline_spec is not None:
                 entry["baseline"] = dict(baseline_spec, action="reuse")
@@ -546,9 +670,12 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                 entry[side] = spec
                 if side in sides:
                     verification[side] = _verify_binary(
-                        binary, side == "optimized", cfg["builtin"]["expected_version"])
+                        binary, side == "optimized",
+                        cfg["builtin"]["expected_version"],
+                        env=_build_env(cfg, [str(binary.parent)]))
             if "optimized" in sides:
-                verification["smoke"] = _smoke(build_dir, Path(entry["optimized"]["binary"]), logs)
+                verification["smoke"] = _smoke(
+                    build_dir, Path(entry["optimized"]["binary"]), logs, cfg=cfg)
             entry["verification"] = verification
             entry["status"] = "READY"
         except Exception as exc:
@@ -650,13 +777,16 @@ def import_prebuilt(cfg, build_dir, name=None):
             if head != src_commit:
                 raise BuildError("%s 树 HEAD=%s 与登记基础提交不一致" % (side, head))
             spec = {"action": "reuse", "src_dir": str(tree), "src_commit": head,
-                    "binary": str(tree / "build/yosys"),
-                    "abc": str(tree / "build/yosys-abc")}
+                    "binary": str(_build_product_path(tree, "yosys")),
+                    "abc": str(_build_product_path(tree, "yosys-abc"))}
+            if runtime_patch.enabled(cfg):
+                spec['runtime_patch'] = runtime_patch.verify(tree)
+                spec['full_diff_sha256'] = hashlib.sha256(_git(tree, 'diff').encode()).hexdigest()
             if side == "baseline":
-                if _git(tree, "diff"):
+                if _git(tree, "diff", '--', '.', ':(exclude)kernel/driver.cc') if runtime_patch.enabled(cfg) else _git(tree, "diff"):
                     raise BuildError("baseline 树存在未提交改动（影响来源证据）")
             else:
-                diff_text = _git(tree, "diff")
+                diff_text = _git(tree, "diff", "--", "passes/opt/CMakeLists.txt", "techlibs/intel/synth_intel.cc") if runtime_patch.enabled(cfg) else _git(tree, "diff")
                 spec["integration_diff_sha256"] = _check_integration_diff(diff_text)
                 alg = tree / ALGORITHM_SOURCE_PATH
                 if not alg.is_file():
@@ -680,9 +810,11 @@ def import_prebuilt(cfg, build_dir, name=None):
         for side in ("baseline", "optimized"):
             verification[side] = _verify_binary(Path(entry[side]["binary"]),
                                                 side == "optimized",
-                                                cfg["builtin"]["expected_version"])
+                                                cfg["builtin"]["expected_version"],
+                                                env=_build_env(
+                                                    cfg, [str(Path(entry[side]["binary"]).parent)]))
         verification["smoke"] = _smoke(build_dir, Path(entry["optimized"]["binary"]),
-                                       build_dir / "build-logs")
+                                       build_dir / "build-logs", cfg=cfg)
         entry["verification"] = verification
         entry["status"] = "READY"
     except Exception as exc:

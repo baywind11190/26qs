@@ -31,7 +31,8 @@ import builtin_common as B
 
 
 def run_case(top: str, out_root: Path) -> dict:
-    rtl = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+    rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+    rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
     case_dir = out_root / top
     case_dir.mkdir(parents=True, exist_ok=False)
     builtin = C.CONTEXT.get("builtin") or {}
@@ -39,7 +40,9 @@ def run_case(top: str, out_root: Path) -> dict:
 
     script = B.gen_builtin_formal_ys(rtl, top)
     script_sha = hashlib.sha256(script.encode()).hexdigest()
-    result = {"case": top, "input": C.rel(rtl), "input_sha256": C.sha256_file(rtl),
+    result = {"case": top, "input": C.rel(rtl_source),
+              "input_sha256": C.sha256_file(rtl_source),
+              "staged_input": str(rtl), "staged_input_sha256": C.sha256_file(rtl),
               "script_sha256": script_sha}
 
     for side, binary in binaries.items():
@@ -53,6 +56,11 @@ def run_case(top: str, out_root: Path) -> dict:
         if rc != 0:
             raise RuntimeError("{} {} synthesis rc={}; see run.log".format(top, side, rc))
         stat = C.parse_stat_json(side_dir / "stat.json")
+        resource = B.parse_resource_counts(
+            json.loads((side_dir / "stat.json").read_text(encoding="utf-8")),
+            (side_dir / "mapped.il").read_text(encoding="utf-8", errors="replace"),
+            top,
+        )
         from formal_status import check_post_abc_model
         stage_info = check_post_abc_model(side_dir / "post_abc.il", top)
         full_stat_path = C.ROUND_DIR / "04_流程一致性_flowcheck" / "builtin_run01" / top / side / "stat.json"
@@ -79,8 +87,15 @@ def run_case(top: str, out_root: Path) -> dict:
             "{}_rc".format(side): rc,
             "{}_wall_s".format(side): round(wall, 3),
             "{}_total".format(side): stat["total_cells"],
-            "{}_comb".format(side): stat["comb"],
-            "{}_dff".format(side): stat["dffeas"],
+            "{}_comb".format(side): resource["comb"],
+            "{}_lut_count".format(side): resource["lut_count"],
+            "{}_inverter_count".format(side): resource["inverter_count"],
+            "{}_logic_units".format(side): resource["logic_units"],
+            "{}_dff".format(side): resource["dff_count"],
+            "{}_io_ports".format(side): resource["io_ports"],
+            "{}_io_bits".format(side): resource["io_bits"],
+            "{}_other_cell_types".format(side): resource["other_cell_types"],
+            "{}_resources".format(side): resource,
             "{}_check_assert".format(side): ca_ok,
             "{}_mapped_sha256".format(side): C.sha256_file(side_dir / "mapped.il"),
         })
@@ -94,11 +109,15 @@ def run_case(top: str, out_root: Path) -> dict:
 
     result["total_reduction_pct"] = red(result["baseline_total"], result["optimized_total"])
     result["comb_reduction_pct"] = red(result["baseline_comb"], result["optimized_comb"])
-    result["dff_nonincrease"] = result["optimized_dff"] <= result["baseline_dff"]
-    base_types = json.loads((case_dir / "baseline/cell_types.json").read_text())
-    opt_types = json.loads((case_dir / "optimized/cell_types.json").read_text())
-    result["other_resources"] = B.compare_other_resources(base_types, opt_types)
+    resource_comparison = B.compare_resource_counts(
+        result["baseline_resources"], result["optimized_resources"])
+    result["logic_reduction_pct"] = resource_comparison["logic_reduction_pct"]
+    result["dff_nonincrease"] = resource_comparison["dff_nonincrease"]
+    result["io_nonincrease"] = resource_comparison["io_nonincrease"]
+    result["io_resources"] = resource_comparison["io_resources"]
+    result["other_resources"] = resource_comparison["other_resources"]
     result["other_resources_nonincrease"] = result["other_resources"]["ok"]
+    result["resource_checks_ok"] = resource_comparison["resource_checks_ok"]
     trig = json.loads((case_dir / "optimized" / "triggers.json").read_text())
     result["h2_candidate"] = trig.get("h2_candidate_cells", 0)
     result["h2_rebuilt"] = trig.get("h2_rebuilt", 0)
@@ -122,8 +141,10 @@ def main():
             row["baseline_dff"], row["optimized_dff"], row["script_sha256"][:12]))
 
     comb_reds = [r["comb_reduction_pct"] for r in rows]
+    logic_reds = [r["logic_reduction_pct"] for r in rows]
     total_reds = [r["total_reduction_pct"] for r in rows]
     mean_comb = sum(comb_reds) / 4 if len(comb_reds) == 4 and None not in comb_reds else None
+    mean_logic = sum(logic_reds) / 4 if len(logic_reds) == 4 and None not in logic_reds else None
     mean_total = (sum(total_reds) / 4 if len(total_reds) == 4 and None not in total_reds
                   else None)
 
@@ -138,12 +159,15 @@ def main():
         "flow": ("builtin synth_intel (pmux_opt inside synth_intel.cc between fsm;opt "
                  "and wreduce); external script identical for both sides"),
         "cases": rows,
+        "resource_metric": "cycloneiv_lcell_comb + independent inverter bits",
+        "public_mean_logic_reduction_pct": mean_logic,
         "public_mean_comb_reduction_pct": mean_comb,
         "public_mean_total_reduction_pct": mean_total,
     }
     (out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
-    print("\n内置公开均值: comb {}%  total {}%".format(mean_comb, mean_total))
+    print("\n内置公开均值: logic_units {}%  LUT {}%  total {}%".format(
+        mean_logic, mean_comb, mean_total))
     return 0
 
 

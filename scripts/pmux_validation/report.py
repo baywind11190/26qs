@@ -1,4 +1,4 @@
-"""官方四例（official4-p4）判定与中文报告；缺失证据永不算通过。
+"""官方四例判定与中文报告；缺失证据永不算通过。
 
 判定规则（详见 POLICY.md，来源为官方答疑 Sheet1 C21~C26、C34、C37、C41）：
 - 逻辑单元（cycloneiv_lcell_comb）逐例缩减率算术平均；DFF 单独检查、不应增加；
@@ -7,13 +7,22 @@
 - 插件预检永远不能得出内置验收完成；缺功能证明、工具错误、无效样本不输出通过。
 """
 import json
+import math
+import hashlib
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent / 'runner'))
+from measure_format import sample_errors, finite_positive, EXIT_PEAK_SCHEME
+from cpu_statistics import SCHEME as MEAN_CPU_SCHEME, POLICY as CPU_POLICY
+from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME, METHOD as ETW_CPU_METHOD
+from runtime_patch import SCHEME as SINGLE_CPU_SCHEME, METHOD as SINGLE_CPU_METHOD
 
 OVERHEAD_LIMIT_PCT = 5.0
 # 判定使用未舍入值；仅容忍 1e-9 个百分点量级的浮点表示误差（不等于四舍五入后的显示值比较）。
 OVERHEAD_EPS_PCT = 1e-9
 CPU_LIMIT_S = 60.0
 RSS_LIMIT_KB = 2 * 1024 * 1024
+MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 CASES = ("test1", "test2", "test3", "test4")
 MAIN_CHAINS = ("c1_local", "c2_stage", "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
 FULL_CHAINS = ("c1_local", "c2_stage", "c3a_rtl_opt", "c3b_rtl_base",
@@ -45,43 +54,122 @@ def overhead_pct(base, opt):
     return (opt - base) / base * 100.0
 
 
-def judge_case_performance(summ, pairs=5):
+def judge_area(mean):
+    valid = type(mean) in (int, float) and math.isfinite(mean)
+    return {'area_requirement_met': bool(valid and mean + OVERHEAD_EPS_PCT >= 10.0),
+            'area_20pct_band_met': bool(valid and mean + OVERHEAD_EPS_PCT >= 20.0),
+            'area_mean_pct': mean if valid else None}
+
+
+def judge_delivery(root, ctx):
+    """Delivery is independent of four-case verification and bound to ZIP identity."""
+    local_evidence = Path(root) / 'delivery_evidence.json'
+    registered = ctx.get('delivery_evidence') or {}
+    if local_evidence.is_file():
+        evidence = _read_json(local_evidence, {})
+    else:
+        registered_path = Path(registered.get('path') or '__missing_delivery__')
+        evidence = (_read_json(registered_path, {}) if registered_path.is_file()
+                    and sha_file(registered_path) == registered.get('sha256') else {})
+    reasons = []
+    identity_ok = bool(evidence) and all(evidence.get(k) == ctx.get(k) and ctx.get(k)
+                                      for k in ('target_commit', 'source_sha256'))
+    artifact = Path(evidence.get('package_path') or '__missing_package__')
+    if not artifact.is_file():
+        identity_ok = False
+        reasons.append('交付包缺失')
+    elif hashlib.sha256(artifact.read_bytes()).hexdigest() != evidence.get('package_sha256'):
+        identity_ok = False
+        reasons.append('交付包 SHA-256 与验收身份不符')
+    if not identity_ok:
+        reasons.append('交付证据缺失或算法/包身份不匹配')
+    checks = {}
+    for name in ('c55', 'eqy_portable'):
+        spec = (evidence.get('checks') or {}).get(name) or {}
+        state = spec.get('state', 'NOT_RUN')
+        if state == 'PASS':
+            proof_path = Path(spec.get('evidence_path') or '__missing_check__')
+            proof_ok = proof_path.is_file() and sha_file(proof_path) == spec.get('evidence_sha256')
+            proof = _read_json(proof_path, {}) if proof_ok else {}
+            proof_ok = (proof_ok and proof.get(name) == 'PASS'
+                        and proof.get('package_sha256') == evidence.get('package_sha256'))
+            if not identity_ok or not proof_ok:
+                state = 'NOT_RUN'
+                reasons.append(name + ' 验收记录缺失/变化/不匹配当前包')
+        checks[name] = dict(spec, state=state)
+    states = [v['state'] for v in checks.values()]
+    verdict = ('PASS' if all(s == 'PASS' for s in states) else
+               'FAIL' if 'FAIL' in states else 'PAUSED' if 'PAUSED' in states else 'NOT_RUN')
+    return {'delivery_verdict': verdict, 'checks': checks, 'reasons': reasons,
+            'identity_ok': bool(identity_ok), 'evidence': evidence}
+
+
+def sha_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def judge_case_performance(summ, pairs=5, *, certificate_cache=None):
     """逐例性能判定。无效样本不判通过；5% 边界按不超过处理；不做跨例平均。"""
+    if summ.get('performance_scheme') == SINGLE_CPU_SCHEME:
+        from measure_v6 import judge_case
+        return judge_case(summ)
+    if summ.get('performance_scheme') == ETW_CPU_SCHEME:
+        from performance_report_v5 import judge_case
+        return judge_case(summ,certificate_cache)
+    if summ.get('performance_scheme') == MEAN_CPU_SCHEME:
+        return judge_case_performance_v4(summ)
     runs = summ.get("runs") or []
-    main_memory = summ.get("memory_metric") == "yosys_main_rss_peak_kb"
-    mem_key = "yosys_main_rss_peak_kb" if main_memory else "tree_rss_peak_kb"
-    mem_summary = "yosys_main_rss_peak" if main_memory else "tree_rss_peak"
+    memory_metric = summ.get("memory_metric")
+    windows_memory = memory_metric == "yosys_peak_working_set_bytes"
+    main_memory = memory_metric == "yosys_main_rss_peak_kb"
+    mem_key = ("yosys_peak_working_set_bytes" if windows_memory else
+               "yosys_main_rss_peak_kb" if main_memory else "tree_rss_peak_kb")
+    mem_summary = ("yosys_peak_working_set_bytes" if windows_memory else
+                   "yosys_main_rss_peak" if main_memory else "tree_rss_peak")
+    memory_limit = MEMORY_LIMIT_BYTES if windows_memory else RSS_LIMIT_KB
     reasons = []
 
     def count(side):
         return sum(1 for r in runs if r.get("side") == side)
 
+    sample_failures = [dict(index=i + 1, side=r.get('side'), reasons=sample_errors(
+        dict(r, memory_metric=memory_metric) if not windows_memory else r, windows=windows_memory))
+        for i, r in enumerate(runs)]
+    sample_failures = [r for r in sample_failures if r['reasons']]
+    if summ.get('performance_scheme') not in (None,'','pmux-perf-15p-mainrss-v2','pmux-perf-5p-mainrss-v1',EXIT_PEAK_SCHEME):
+        sample_failures.append(dict(index=0,side='policy',reasons=['unknown performance scheme; no median fallback']))
+    if summ.get('performance_scheme') == EXIT_PEAK_SCHEME:
+        for i, r in enumerate(runs):
+            if r.get('performance_scheme') != EXIT_PEAK_SCHEME:
+                sample_failures.append(dict(index=i + 1, side=r.get('side'),
+                                            reasons=['required exit-event scheme missing/mismatch']))
     valid = (
         len(runs) == pairs * 2
         and count("baseline") == pairs and count("optimized") == pairs
-        and all(
-            r.get("rc") == 0 and not r.get("timed_out") and r.get("stat_exists") is True
-            and (r.get("cpu_total_s") or 0) > 0 and (r.get(mem_key) or 0) > 0
-            for r in runs
-        )
+        and not sample_failures
     )
     base_cpu = summ.get("baseline_cpu_total_median")
     opt_cpu = summ.get("optimized_cpu_total_median")
-    base_rss = summ.get("baseline_" + mem_summary + "_median")
-    opt_rss = summ.get("optimized_" + mem_summary + "_median")
+    base_memory = summ.get("baseline_" + mem_summary + "_median")
+    opt_memory = summ.get("optimized_" + mem_summary + "_median")
+    valid = valid and all(finite_positive(v) for v in (base_cpu, opt_cpu, base_memory, opt_memory))
     cpu_over = overhead_pct(base_cpu, opt_cpu) if valid else None
-    mem_over = overhead_pct(base_rss, opt_rss) if valid else None
+    mem_over = overhead_pct(base_memory, opt_memory) if valid else None
     cpu_ok = valid and cpu_over is not None and cpu_over <= OVERHEAD_LIMIT_PCT + OVERHEAD_EPS_PCT
     mem_ok = valid and mem_over is not None and mem_over <= OVERHEAD_LIMIT_PCT + OVERHEAD_EPS_PCT
     limit_ok, limit_bits = False, {}
-    if valid and opt_cpu is not None and opt_rss is not None:
+    if valid and opt_cpu is not None and opt_memory is not None:
         cpu_exempt = base_cpu is not None and base_cpu > CPU_LIMIT_S
-        rss_exempt = base_rss is not None and base_rss > RSS_LIMIT_KB
+        rss_exempt = base_memory is not None and base_memory > memory_limit
         limit_bits = {"cpu_exempt_upstream_over_limit": cpu_exempt,
-                      "rss_exempt_upstream_over_limit": rss_exempt}
-        limit_ok = (opt_cpu <= CPU_LIMIT_S or cpu_exempt) and (opt_rss <= RSS_LIMIT_KB or rss_exempt)
+                      "rss_exempt_upstream_over_limit": rss_exempt,
+                      "memory_metric": memory_metric or "tree_rss_peak_kb",
+                      "memory_limit": memory_limit}
+        limit_ok = (opt_cpu <= CPU_LIMIT_S or cpu_exempt) and \
+            (opt_memory <= memory_limit or rss_exempt)
     if not valid:
         reasons.append("样本不完整或存在无效样本，不判定通过")
+        reasons.extend('样本 {index} ({side}): {reasons}'.format(**r) for r in sample_failures)
     elif not cpu_ok:
         reasons.append("CPU 相对开销超过 5%")
     if valid and not mem_ok:
@@ -90,13 +178,80 @@ def judge_case_performance(summ, pairs=5):
         reasons.append("超出 60s/2GB 且原版未超限")
     return {
         "case": summ.get("case"), "valid": valid,
+        "invalid_samples": sample_failures,
         "cpu_overhead_pct": cpu_over, "mem_overhead_pct": mem_over,
         "cpu_ok": cpu_ok, "mem_ok": mem_ok, "limit_ok": limit_ok, "limit_bits": limit_bits,
         "base_cpu_s": base_cpu, "opt_cpu_s": opt_cpu,
-        "base_rss_kb": base_rss, "opt_rss_kb": opt_rss,
+        "base_rss_kb": base_memory if not windows_memory else None,
+        "opt_rss_kb": opt_memory if not windows_memory else None,
+        "base_memory_bytes": base_memory if windows_memory else None,
+        "opt_memory_bytes": opt_memory if windows_memory else None,
+        "base_memory_mib": (base_memory / (1024 * 1024)
+                            if windows_memory and finite_positive(base_memory) else None),
+        "opt_memory_mib": (opt_memory / (1024 * 1024)
+                           if windows_memory and finite_positive(opt_memory) else None),
         "pass": bool(valid and cpu_ok and mem_ok and limit_ok),
         "reasons": reasons,
     }
+
+
+def v4_non_cpu_performance_ok(judgments):
+    return (len(judgments)==4 and {j.get('case') for j in judgments}==set(CASES)
+            and all(j.get('valid') is True and j.get('limit_ok') is True for j in judgments))
+
+
+def verification_verdict_v4(categories,structural_ok):
+    if not structural_ok or any(v in ('FAIL','INVALID','NOT_RUN') for v in categories.values()):return 'FAIL'
+    if any(v=='INCONCLUSIVE' for v in categories.values()):return 'INCONCLUSIVE'
+    return 'PASS' if all(v=='PASS' for v in categories.values()) else 'FAIL'
+
+
+def judge_case_performance_v4(summ):
+    from cpu_statistics import analyse_cpu_runs,judge_cpu,aa_is_healthy
+    from cpu_qualification import certificate_valid
+    from measure_v4 import memory_errors
+    import statistics
+    cpu=summ.get('cpu_runs') or [];memory=summ.get('memory_runs') or []
+    stats=analyse_cpu_runs(cpu)
+    if summ.get('cpu_policy')!=CPU_POLICY or any(r.get('execution_kind')!='synthesis' or r.get('performance_scheme')!=MEAN_CPU_SCHEME for r in cpu):
+        stats.update(valid=False,baseline_mean_s=None,optimized_mean_s=None,overhead_pct=None,ci95_pct=None)
+        stats['errors'].append('v4 CPU policy or sample scheme mismatch')
+    aa=analyse_cpu_runs(summ.get('aa_runs') or [],pairs_per_block=5)
+    cert=summ.get('method_certificate') or {}
+    qualified,qual_reason=certificate_valid(cert,summ.get('qualification_fingerprint'))
+    decision=judge_cpu(stats,qualified=qualified,guard_pct=cert.get('guard_pct'),aa_ok=aa_is_healthy(aa))
+    expected={(s,p) for s in ('baseline','optimized') for p in range(1,16)}
+    mem_errors=[dict(index=i+1,side=r.get('side'),reasons=memory_errors(r)) for i,r in enumerate(memory) if memory_errors(r)]
+    mem_valid=len(memory)==30 and {(r.get('side'),r.get('pair')) for r in memory}==expected and not mem_errors
+    mb=mo=None
+    if mem_valid:
+        mb=statistics.median(r['yosys_peak_working_set_bytes'] for r in memory if r['side']=='baseline')
+        mo=statistics.median(r['yosys_peak_working_set_bytes'] for r in memory if r['side']=='optimized')
+    mem_over=overhead_pct(mb,mo) if mem_valid else None
+    mem_ok=mem_valid and mem_over<=5+OVERHEAD_EPS_PCT
+    b,o=stats['baseline_mean_s'],stats['optimized_mean_s']
+    valid=stats['valid'] and mem_valid
+    bits=dict(cpu_exempt_upstream_over_limit=finite_positive(b) and b>CPU_LIMIT_S,
+              rss_exempt_upstream_over_limit=finite_positive(mb) and mb>MEMORY_LIMIT_BYTES,
+              memory_metric='yosys_peak_working_set_bytes',memory_limit=MEMORY_LIMIT_BYTES)
+    limit_ok=bool(valid and (o<=CPU_LIMIT_S or bits['cpu_exempt_upstream_over_limit']) and
+                  (mo<=MEMORY_LIMIT_BYTES or bits['rss_exempt_upstream_over_limit']))
+    reasons=[]
+    if not stats['valid']:reasons.append('CPU 样本不完整或无效：'+'; '.join(stats['errors'][:8]))
+    if not qualified:reasons.append('CPU 方法资格无效：'+str(qual_reason))
+    if not aa_is_healthy(aa):reasons.append('A/A控制未通过或未完成，不能确认CPU开销')
+    if decision['cpu_verdict']=='INCONCLUSIVE':reasons.append('CPU 暂不能判断；均值点估计和扩展区间分别报告')
+    elif decision['cpu_verdict']=='FAIL':reasons.append('CPU 扩展区间下限超过5%，支持超限')
+    if not mem_valid:reasons.append('内存样本不完整或无效')
+    elif not mem_ok:reasons.append('内存相对开销超过5%')
+    if valid and not limit_ok:reasons.append('超出60s/2GB且原版未超限')
+    return dict(decision,case=summ.get('case'),valid=valid,invalid_samples=mem_errors,
+        cpu_statistics=stats,aa_statistics=aa,qualification_reason=qual_reason,
+        cpu_ok=decision['cpu_verdict']=='PASS',mem_ok=mem_ok,mem_overhead_pct=mem_over,
+        memory_valid=mem_valid,limit_ok=limit_ok,limit_bits=bits,base_cpu_s=b,opt_cpu_s=o,
+        base_rss_kb=None,opt_rss_kb=None,base_memory_bytes=mb,opt_memory_bytes=mo,
+        base_memory_mib=mb/1024**2 if mb is not None else None,opt_memory_mib=mo/1024**2 if mo is not None else None,
+        **{'pass':valid and decision['cpu_verdict']=='PASS' and mem_ok and limit_ok},reasons=reasons)
 
 
 def _read_json(path, default):
@@ -194,7 +349,8 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
         row_functional_ok(r) for r in chains
         if (r.get("case"), r.get("chain")) in expected_pairs)
     gate("功能证明（默认链集合）", default_pass)
-    judgments = [judge_case_performance(p, pairs=pairs) for p in perf]
+    certificate_cache={}
+    judgments = [judge_case_performance(p, pairs=pairs,certificate_cache=certificate_cache) for p in perf]
     gate("四例性能逐例判定", len(perf) == 4 and {p.get("case") for p in perf} == set(CASES)
          and all(j["pass"] for j in judgments))
     gate("四例输入指纹已核验", ctx.get("suite_verified") is True)
@@ -386,7 +542,7 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
 
     与插件预检的区别：交付形态为两份内置 Yosys（外部脚本直接调用 synth_intel；
     优化版由 synth_intel.cc 在 fsm;opt 之后、wreduce 之前自动调用 pmux_opt）；
-    功能证明主链为 c4a/c4b（原始 RTL ↔ 两侧最终映射网表；test3 为无切割合并
+    p5/p6 功能证明主链为 c4a/c4b（原始 RTL ↔ 两侧 ABC9 后 post_abc.il；test3 为无切割合并
     证明）；c1/c2 依赖 P3 中间网表，内置模式不适用（NOT_APPLICABLE，不虚构）。
     完成状态 BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE 仅在全部门通过时给出；
     本地验收不代表主办方认可。
@@ -399,13 +555,22 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         root / "01_来源与环境_meta/stages.json", [])
     evidence = _read_json(root / "01_来源与环境_meta/builtin_evidence.json", {})
     fc = _read_json(root / "04_流程一致性_flowcheck/builtin_run01/builtin_flowcheck.json", {})
-    pub = _read_json(root / "05_公开四例_public/round01/summary.json", {}).get("cases", [])
+    pub_summary = _read_json(root / "05_公开四例_public/round01/summary.json", {})
+    pub = pub_summary.get("cases", [])
     chains = _read_json(
         root / f"10_验证工具自检_selfcheck/chains/{chain_attempt}/chains_summary.json", [])
     perf = _read_json(root / "09_时间内存开销_performance/round01/performance_summary.json", [])
     pairs = ctx.get("performance_pairs", 5)
     prep = ctx.get("builtin_prepare") or {}
     scheme = ctx.get("performance_scheme") or ""
+    p6_windows = ctx.get("flow_version") == "official4-p6-windows"
+    single_cpu = p6_windows and scheme == SINGLE_CPU_SCHEME
+    etw_cpu = p6_windows and scheme == ETW_CPU_SCHEME
+    mean_cpu = p6_windows and scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME)
+    if mean_cpu:pairs=300
+    exit_peak = p6_windows and scheme in (EXIT_PEAK_SCHEME,MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME)
+    area = judge_area(None)
+    io_comparisons = {}
 
     gates, reasons = {}, []
 
@@ -420,8 +585,9 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         s = stage_by.get(name)
         return bool(s) and s.get("rc") == 0 and s.get("state") in ("COMPLETED", "REUSED")
 
-    gate("执行阶段完整（内置）", {s.get("name") for s in stages} == BUILTIN_EXPECTED_STAGES
-         and all(stage_ok(n) for n in BUILTIN_EXPECTED_STAGES))
+    expected_stages=BUILTIN_EXPECTED_STAGES | ({'cpu_etw_selfcheck'} if etw_cpu else {'cpu_method_qualification'} if mean_cpu else set())
+    gate("执行阶段完整（内置）", {s.get("name") for s in stages} == expected_stages
+         and all(stage_ok(n) for n in expected_stages))
     fc_ok = (evidence.get("ok") is True and fc.get("all_ok") is True
              and len(fc.get("cases") or []) == 4)
     gate("内置构建与调用证据", fc_ok)
@@ -430,22 +596,80 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
                  and p.get("baseline_check_assert") and p.get("optimized_check_assert")
                  for p in pub))
     gate("DFF逐例不增加", len(pub) == 4 and all(p.get("dff_nonincrease") is True for p in pub))
-    if ctx.get("flow_version") == "official4-p5":
+    if p6_windows:
+        resource_complete = len(pub) == 4 and {p.get("case") for p in pub} == set(CASES)
+        resource_rows_ok = resource_complete
+        computed_rates = []
+        for p in pub:
+            for side in ("baseline", "optimized"):
+                lut = p.get(side + "_lut_count")
+                inv = p.get(side + "_inverter_count")
+                logic = p.get(side + "_logic_units")
+                if not all(isinstance(v, (int, float)) for v in (lut, inv, logic)):
+                    resource_rows_ok = False
+                    continue
+                resource_rows_ok = resource_rows_ok and logic == lut + inv
+                resource_rows_ok = resource_rows_ok and p.get(side + "_comb") == lut
+            base_logic, opt_logic = p.get("baseline_logic_units"), p.get("optimized_logic_units")
+            rate = p.get("logic_reduction_pct")
+            if not all(isinstance(v, (int, float)) for v in (base_logic, opt_logic, rate)):
+                resource_rows_ok = False
+            elif base_logic <= 0 or not math.isclose(
+                    rate, (base_logic - opt_logic) / base_logic * 100.0,
+                    rel_tol=0.0, abs_tol=1e-9):
+                resource_rows_ok = False
+            else:
+                computed_rates.append(rate)
+        expected_mean = sum(computed_rates) / 4 if len(computed_rates) == 4 else None
+        reported_mean = pub_summary.get("public_mean_logic_reduction_pct")
+        if expected_mean is None or not isinstance(reported_mean, (int, float)) or not math.isclose(
+                expected_mean, reported_mean, rel_tol=0.0, abs_tol=1e-9):
+            resource_rows_ok = False
+        gate("资源统计完整且取反位计入逻辑单元", resource_rows_ok)
+        area = judge_area(expected_mean if resource_rows_ok else None)
+        gate("四例平均面积缩减达到10%", area['area_requirement_met'])
+        from builtin_common import compare_resource_counts
+        for p in pub:
+            try:
+                io_comparisons[p['case']] = compare_resource_counts(
+                    p['baseline_resources'], p['optimized_resources'])
+            except (KeyError, TypeError, ValueError):
+                io_comparisons[p.get('case')] = {'resource_checks_ok': False,
+                                                'io_resources': {'error': '缺少逐类资源计数'}}
+        gate("DFF、IO及其他硬件资源逐例不增加", len(pub) == 4 and all(
+            p.get("resource_checks_ok") is True and p.get("dff_nonincrease") is True
+            and p.get("io_nonincrease") is True
+            and io_comparisons[p.get('case')].get('resource_checks_ok') is True
+            and p.get("other_resources_nonincrease") is True for p in pub))
+    if ctx.get("flow_version") in ("official4-p5", "official4-p6-windows"):
         gate("其他硬件单元逐类不增加", len(pub) == 4 and all(p.get("other_resources_nonincrease") is True for p in pub))
         gate("ABC9与功能输入阶段", len(pub) == 4 and all(
             p.get(side + "_abc9_ok") is True and p.get(side + "_formal_netlist_stage") == "post_abc" and p.get(side + "_split_full_resources_match") is True
             for p in pub for side in ("baseline", "optimized")))
-        gate("主进程内存口径", len(perf) == 4 and all(p.get("memory_metric") == "yosys_main_rss_peak_kb" for p in perf))
+        expected_memory_metric = ("yosys_peak_working_set_bytes" if p6_windows
+                                  else "yosys_main_rss_peak_kb")
+        gate("主进程内存口径", len(perf) == 4 and all(
+            p.get("memory_metric") == expected_memory_metric for p in perf))
+        if exit_peak:
+            gate('普通CPU与退出事件内存方案身份一致', len(perf) == 4 and all(
+                p.get('performance_scheme') == scheme for p in perf))
     expected_pairs = {(c, ch) for c in CASES for ch in BUILTIN_MAIN_CHAINS}
     have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
     func_ok = expected_pairs <= have_pairs and all(
         row_functional_ok(r) for r in chains
         if (r.get("case"), r.get("chain")) in expected_pairs)
-    if ctx.get("flow_version") == "official4-p5":
+    if ctx.get("flow_version") in ("official4-p5", "official4-p6-windows"):
         func_ok = func_ok and all(r.get("formal_netlist_stage") == "post_abc"
                                   for r in chains if (r.get("case"), r.get("chain")) in expected_pairs)
     gate("功能证明（内置主链 c4a/c4b）", func_ok)
-    judgments = [judge_case_performance(p, pairs=pairs) for p in perf]
+    certificate_cache={}
+    judgments = [judge_case_performance(p, pairs=pairs,certificate_cache=certificate_cache) for p in perf]
+    if mean_cpu or single_cpu:gate('四例性能完整性与绝对限值',v4_non_cpu_performance_ok(judgments))
+    if p6_windows:
+        gate("CPU相对开销逐例判定", len(judgments) == 4
+             and all(j.get("cpu_ok") is True for j in judgments))
+        gate("Yosys峰值工作内存逐例判定", len(judgments) == 4
+             and all(j.get("mem_ok") is True for j in judgments))
     gate("四例性能逐例判定", len(perf) == 4 and {p.get("case") for p in perf} == set(CASES)
          and all(j["pass"] for j in judgments))
     gate("四例输入指纹已核验", ctx.get("suite_verified") is True)
@@ -453,14 +677,45 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     complete = all(gates.values())
     status = BUILTIN_COMPLETE_STATUS if complete else "NEEDS_REVIEW"
     unresolved = [r for r in chains if r.get("state") != "PASS"]
+    category_status = {
+        "formal": "PASS" if func_ok else "FAIL",
+        "resources": "PASS" if p6_windows and gates.get("资源统计完整且取反位计入逻辑单元", False)
+        and gates.get("DFF、IO及其他硬件资源逐例不增加", False)
+        and area['area_requirement_met'] else "FAIL",
+        "cpu": "PASS" if judgments and len(judgments) == 4
+        and all(j.get("cpu_ok") is True for j in judgments) else "FAIL",
+        "memory": "PASS" if judgments and len(judgments) == 4
+        and all(j.get("mem_ok") is True for j in judgments) else "FAIL",
+    }
+    if mean_cpu or single_cpu:
+        verdicts=[j.get('cpu_verdict','INVALID') for j in judgments]
+        category_status['cpu']=('NOT_RUN' if not perf else 'INVALID' if len(verdicts)!=4 or 'INVALID' in verdicts else
+                                'FAIL' if 'FAIL' in verdicts else 'INCONCLUSIVE' if 'INCONCLUSIVE' in verdicts else 'PASS')
+        if not perf:category_status['memory']='NOT_RUN'
+        elif single_cpu and (len(judgments)!=4 or any(not j.get('memory_valid') for j in judgments)): category_status['memory']='INVALID'
     out = output_root / "11_汇总与证据_summary"
     out.mkdir(exist_ok=True)
     ev_all = evidence.get("evidence") or {}
     opt_ev = ev_all.get("optimized") or {}
     base_ev = ev_all.get("baseline") or {}
     alg_ev = ev_all.get("optimized_algorithm_source") or {}
+    delivery = judge_delivery(output_root, ctx)
+    verification_verdict = 'PASS' if complete else 'FAIL'
+    if mean_cpu or single_cpu:
+        non_cpu_gates={k:v for k,v in gates.items() if k not in ('CPU相对开销逐例判定','四例性能逐例判定')}
+        verification_verdict=verification_verdict_v4(category_status,all(non_cpu_gates.values()))
+    readiness = 'READY' if complete and delivery['delivery_verdict'] == 'PASS' and not single_cpu else 'NOT_READY'
     manifest = {
         "run_status": status, "mode": "builtin",
+        "overall_verdict": verification_verdict,
+        "overall_verdict_scope": "工程内四例验证；交付及整体就绪分别见独立字段",
+        "verification_verdict": verification_verdict,
+        "delivery_verdict": delivery['delivery_verdict'],
+        "project_readiness": readiness,
+        "project_readiness_scope": "当前四例验证与C55/EQY包检查；不包含答辩材料审查或官方认可",
+        "delivery": delivery,
+        **area,
+        "io_resources": {k: v.get('io_resources') for k, v in io_comparisons.items()},
         "marking": "官方四例内置验收（本地）",
         "official_acceptance": "NOT_CLAIMED",
         "builtin_execution": "COMPLETE" if complete else "NEEDS_REVIEW",
@@ -470,8 +725,22 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         "chains_run": sorted(f"{c}/{ch}" for c, ch in sorted(have_pairs)),
         "unresolved_chains": unresolved,
         "performance": judgments,
+        "category_status": category_status,
         "builtin_prepare": prep,
         "performance_scheme": scheme,
+        'cpu_statistic':'single' if single_cpu else 'arithmetic_mean' if mean_cpu else 'median',
+        'stress_test_status':'WAITING_OFFICIAL_CASES' if single_cpu else 'NOT_IN_SCOPE',
+        'cpu_method_qualification':(_read_json(root/'10_验证工具自检_selfcheck/cpu_method_qualification/qualification_result.json',{})
+                                   or _read_json(root/'01_来源与环境_meta/cpu_qualification.json',{})) if mean_cpu and not etw_cpu else None,
+        'cpu_primary_method':SINGLE_CPU_METHOD if single_cpu else ETW_CPU_METHOD if etw_cpu else None,
+        'cpu_etw_selfcheck':_read_json(root/'01_来源与环境_meta/cpu_etw_selfcheck.json',{}) if etw_cpu else None,
+        "resource_metric": ("cycloneiv_lcell_comb + independent inverter bits"
+                            if p6_windows else "cycloneiv_lcell_comb"),
+        "mean_logic_reduction_pct": (
+            sum(p.get("logic_reduction_pct") for p in pub) / 4
+            if p6_windows and len(pub) == 4 and all(
+                isinstance(p.get("logic_reduction_pct"), (int, float)) for p in pub)
+            else None),
         "builtin_evidence": evidence,
         "context": ctx, "stages": stages, "evidence_root": str(root),
         "chain_attempt": chain_attempt,
@@ -481,6 +750,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     lines = [
         "# 官方四例内置验收（本地）", "",
         f"执行状态：**{status}**。",
+        f"工程内四例验证：**{verification_verdict}**；交付：**{delivery['delivery_verdict']}**；当前流程就绪：**{readiness}**。",
+        "兼容字段 overall_verdict 仅覆盖工程内四例验证；项目就绪另含 C55 与本地 EQY 包检查，不覆盖答辩材料或主办方认可。",
         f"形态：**内置四例验收（本地，自动内置准备 + 每例 {pairs} 对性能）**——"
         "原版/优化版两份 Yosys 0.69 隔离构建（复用或按目标源码构建，见“工具准备”）；"
         "外部综合脚本两侧逐字节相同、直接调用 `synth_intel`；优化版由 "
@@ -516,21 +787,56 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         "", "## 检查结果", "", "| 项目 | 结果 |", "|---|---|",
     ]
     lines += [f"| {name} | {'满足' if ok else '未满足或缺证据'} |" for name, ok in gates.items()]
-    lines += ["", "## 四例资源与缩减率", "",
-              "| 用例 | Comb 前→后 | DFF 前→后 | Comb 缩减率 |", "|---|---|---|---|"]
-    rates = []
-    for p in pub:
-        b, o = p.get("baseline_comb"), p.get("optimized_comb")
-        rate = (b - o) / b * 100 if b else None
-        rates.append(rate)
-        lines.append(f"| {p.get('case')} | {b}→{o} | {p.get('baseline_dff')}→{p.get('optimized_dff')} | {_fmt_pct(rate)} |")
-    average = sum(rates) / 4 if len(rates) == 4 and None not in rates else None
-    lines += ["", f"四例 Comb 缩减率算术平均：{average if average is not None else '不可计算（缺测不缩分母）'}%。",
-              "逻辑单元口径为 `cycloneiv_lcell_comb`；DFF 独立检查、不应增加；Total 仅辅助。", "",
-              "## 功能证明状态", "",
+    lines += ['', '## 交付状态', '', '| 检查 | 状态 | 证据 |', '|---|---|---|']
+    for name, check in delivery['checks'].items():
+        lines.append(f"| {name} | {check['state']} | {check.get('evidence_path', '未提供当前包验收证据')} |")
+    lines += ['- ' + reason for reason in delivery['reasons']]
+    lines += ['', f"面积10%技术指标：{area['area_requirement_met']}；20%数值档：{area['area_20pct_band_met']}。",
+              '按未舍入四例平均判断，20%不是基本通过门槛；不推算10%～20%分数，实际评分由主办方决定。',
+              'IO 器件逐类对照：' + json.dumps(manifest['io_resources'], ensure_ascii=False), '']
+    if p6_windows:
+        lines += ["", "## 分类结论", "",
+                  "| 项目 | 结论 |", "|---|---|",
+                  f"| Formal（功能等价证明） | {category_status['formal']} |",
+                  f"| 资源与逐例缩减率 | {category_status['resources']} |",
+                  f"| CPU 相对开销 | {category_status['cpu']} |",
+                  f"| Yosys 主进程峰值内存 | {category_status['memory']} |", ""]
+    lines += ["", "## 四例资源与缩减率", ""]
+    if p6_windows:
+        lines += ["| 用例 | LUT 前→后 | 取反位 前→后 | 逻辑单元 前→后 | 逐例缩减率 | DFF 前→后 | IO 端口 前→后 | IO 位 前→后 |",
+                  "|---|---|---|---|---|---|---|---|"]
+        rates = []
+        for p in pub:
+            b, o = p.get("baseline_logic_units"), p.get("optimized_logic_units")
+            rate = ((b - o) / b * 100.0) if isinstance(b, (int, float)) and b > 0 \
+                and isinstance(o, (int, float)) else None
+            rates.append(rate)
+            lines.append(
+                f"| {p.get('case')} | {p.get('baseline_lut_count')}→{p.get('optimized_lut_count')} "
+                f"| {p.get('baseline_inverter_count')}→{p.get('optimized_inverter_count')} "
+                f"| {b}→{o} | {_fmt_pct(rate)} "
+                f"| {p.get('baseline_dff')}→{p.get('optimized_dff')} "
+                f"| {p.get('baseline_io_ports')}→{p.get('optimized_io_ports')} "
+                f"| {p.get('baseline_io_bits')}→{p.get('optimized_io_bits')} |")
+        average = sum(rates) / 4 if len(rates) == 4 and None not in rates else None
+        lines += ["", f"四例逐例缩减率算术平均：{average if average is not None else '不可计算（缺测不缩分母）'}%。",
+                  "逻辑单元 = `cycloneiv_lcell_comb` LUT 数 + 独立取反单元输出位数；ABC 后 `$lut` 不加入映射后资源合计。",
+                  "DFF、IO 与其他单元另列并逐例检查不增加；Total cells 仅作辅助。", ""]
+    else:
+        lines += ["| 用例 | Comb 前→后 | DFF 前→后 | Comb 缩减率 |", "|---|---|---|---|"]
+        rates = []
+        for p in pub:
+            b, o = p.get("baseline_comb"), p.get("optimized_comb")
+            rate = (b - o) / b * 100 if b else None
+            rates.append(rate)
+            lines.append(f"| {p.get('case')} | {b}→{o} | {p.get('baseline_dff')}→{p.get('optimized_dff')} | {_fmt_pct(rate)} |")
+        average = sum(rates) / 4 if len(rates) == 4 and None not in rates else None
+        lines += ["", f"四例 Comb 缩减率算术平均：{average if average is not None else '不可计算（缺测不缩分母）'}%。",
+                  "逻辑单元口径为 `cycloneiv_lcell_comb`；DFF 独立检查、不应增加；Total 仅辅助。", ""]
+    lines += ["## 功能证明状态", "",
               "内置主链：`c4a_rtl_opt_mapped`（原始 RTL ↔ 优化版功能网表（阶段见下））与 "
               "`c4b_rtl_base_mapped`（原始 RTL ↔ 原版功能网表（阶段见下））；两侧分别独立运行；"
-              "test3 为无切割整模块合并证明。插件轮的 `c1_local`/`c2_stage` 依赖 P3 中间网表，"
+              "test3 保存分区证明；分区未证明时同时保存整设计合并证明日志和结果。插件轮的 `c1_local`/`c2_stage` 依赖 P3 中间网表，"
               "内置流程（synth_intel 内部调用）不产生该中间产物，故本模式不适用（NOT_APPLICABLE，不虚构）。",
               f"内置完整公开证明链：{'PASS' if func_ok else 'NOT_CLOSED'}。", "",
               "每例两侧功能状态（两侧分别独立运行；不使用“两链同结果”推断）："]
@@ -539,42 +845,82 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         lines += [f"- {r.get('case')} / {r.get('chain')}：{r.get('state')}，rc={r.get('rc')}" for r in unresolved]
     else:
         lines += ["- 内置主链全部通过。"]
+    memory_header = ("PeakWorkingSet 前→后(MiB)" if p6_windows else "RSS 前→后(KiB)")
     lines += ["- COUNTEREXAMPLE_REQUIRES_REVIEW 表示工具报告分区不等价，需复核配置、假设和反例，"
               "不自动断言算法错误；MODEL_UNSUPPORTED 表示映射模型适用条件不满足，保留条件、不强行证明。", "",
               "## 四例性能（逐例判定）", "",
-              "| 用例 | CPU 中位数前→后(s) | CPU 开销 | CPU 5% | RSS 前→后(KiB) | 内存开销 | 内存 5% | 60s/2GB | 样本有效 |",
+              "| 用例 | CPU " + ("单次总时间" if single_cpu else "平均值" if mean_cpu else "中位数") + "前→后(s) | CPU 开销（点估计） | CPU 5% | " + memory_header + " | 内存开销 | 内存 5% | 60s/2GB | 样本有效 |",
               "|---|---|---|---|---|---|---|---|---|"]
     for j in judgments:
         cpu = f"{j['base_cpu_s']}→{j['opt_cpu_s']}"
-        rss = f"{j['base_rss_kb']}→{j['opt_rss_kb']}"
-        limit_disp = "通过" if j["limit_ok"] else "超限"
+        rss = (f"{j['base_memory_mib']:.2f}→{j['opt_memory_mib']:.2f}"
+               if p6_windows and j.get("base_memory_mib") is not None
+               and j.get("opt_memory_mib") is not None else
+               f"{j['base_rss_kb']}→{j['opt_rss_kb']}")
+        limit_disp = "不可判断" if not j['valid'] else "通过" if j["limit_ok"] else "超限"
         if j["limit_bits"].get("cpu_exempt_upstream_over_limit") or \
            j["limit_bits"].get("rss_exempt_upstream_over_limit"):
             limit_disp += "（原版超限例外）"
         lines.append(
             f"| {j['case']} | {cpu} | {_fmt_pct(j['cpu_overhead_pct'])} | "
-            f"{'满足' if j['cpu_ok'] else '未满足'} | {rss} | {_fmt_pct(j['mem_overhead_pct'])} | "
+            f"{j.get('cpu_verdict') if mean_cpu else '满足' if j['cpu_ok'] else '未满足'} | {rss} | {_fmt_pct(j['mem_overhead_pct'])} | "
             f"{'满足' if j['mem_ok'] else '未满足'} | {limit_disp} | {j['valid']} |")
+        lines += ['- ' + j['case'] + '：' + reason for reason in j['reasons']]
     lines += ["",
-              f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较"
-              "（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。",
-              "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。",
-              ("p5 内存仅计 Yosys 主进程 Linux VmHWM，5ms 轮询；不含 ABC 和计时包装器；短进程可能缺测。"
-               if ctx.get("flow_version") == "official4-p5" else
-               "历史内存为 5ms 间隔进程组 RSS 求和采样；可能漏峰、重复计共享页或含包装器。"),
-              "不是精确官方内存计量。",
+              ("每例每侧一次普通CPU、一次独立内存，共16次；不预热、不平均、不取中位数、不自动补跑。原始整数逐例比较5%。" if single_cpu else "事件CPU每侧300次，原始整数计数取算术平均；平均开销≤5%为PASS，>5%为FAIL。统计区间和A/A差异仅提示，不叠加Job一致性裕量。内存每侧15次中位数。" if etw_cpu else "CPU每侧300次完整普通运行，20批×15对，全部原始整数计数取算术平均。每批5对原版A/A单独统计。配对整批Bootstrap 20000次、种子20261011、近似95%分位区间，加资格裕量为扩展区间；它不是严格95%总误差保证。均值≤5%的点估计与PASS/FAIL/INCONCLUSIVE分开；内存仍每侧15次取中位数。" if mean_cpu else
+               f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。"),
+              ("CPU由Yosys主函数中的私有Job累计用户态与内核态时间，包含已退出ABC及其子进程。入口建立计量至退出前读取；不含计量文件写入和操作系统最后退出尾段。100ns是计数单位，不是精度保证。外部Job及墙钟仅诊断，调试运行CPU不评分。" if single_cpu else "CPU来自ETW线程切换事件，包含Yosys和全部子进程含ABC；扣除DPC/ISR，完整生命周期核验，无事件或资源证据不回退Job。每批独立采集，全部CPU分析后再测退出事件内存；调试CPU不计分。" if etw_cpu else "CPU与A/A全部完成后，再测根进程退出事件内存；两侧相同外部脚本，各次资源统计与对应正式综合一致。CPU来自未调试的Job Object，包含ABC；调试CPU不得评分。首轮、慢样本和原始计数保留，不预热、不扣启动，不追加采样。" if mean_cpu else
+               "CPU用独立的普通Job Object运行，包含ABC子进程；内存另用同输入同脚本的根进程退出调试事件运行，只计Yosys。每侧15个CPU样本和15个内存样本各取中位数，两次运行的日志、统计和退出状态全部保留。调试运行CPU不用于CPU评分。"
+               if exit_peak else
+               "CPU 使用 Windows Job Object 累计用户态与内核态时间，包含 ABC 子进程；内存每 5 ms 读取存活中的 Yosys 主进程 PeakWorkingSetSize 累计峰值字段，"
+               "以字节记录，不含 ABC；无有效采样的样本判无效。"
+               if p6_windows else
+               "CPU 时间为 wait4 采集并覆盖子进程树（含 ABC 子进程）；测量自检含孙进程 CPU 累计检查。"),
+              ("在匹配根PID的EXIT_PROCESS_DEBUG_EVENT中，读取系统累计PeakWorkingSetSize后再ContinueDebugEvent放行最后清理。末段不依赖轮询；完整退出事件、读数和正常放行缺一即样本无效，不回退旧采样。调试可能影响内存布局，本值对应事件观测运行；不得声称等于未调试运行内存。该具体方法官方认可尚未确认。"
+               if exit_peak else
+               "Windows 在运行期间读取系统维护的 PeakWorkingSetSize 累计峰值；退出前最后一个成功采样间隔可能漏峰。5 ms 为目标间隔，实际调度可延迟，不保证误差上界；官方对该具体测量方法的认可尚未确认。"
+               if p6_windows else
+               ("p5 内存仅计 Yosys 主进程 Linux VmHWM，5ms 轮询；不含 ABC 和计时包装器；短进程可能缺测。"
+                if ctx.get("flow_version") == "official4-p5" else
+                "历史内存为 5ms 间隔进程组 RSS 求和采样；可能漏峰、重复计共享页或含包装器。")),
+              ("内存计数口径与 Windows 系统峰值工作集字段一致。" if p6_windows else
+               "不是精确官方内存计量。"),
               "60s/2GB 以原版为对照；原版超限时允许优化版也超限；不自行发明扣分计算。",
               "无效样本（含工具失败、超时、缺失）不判定通过；原始样本全部保留、不自动剔除。", "",
               "## 证据", "",
               "- `01_来源与环境_meta/builtin_evidence.json`：两侧二进制/源码/ABC/数据文件与指纹绑定。",
               "- `04_流程一致性_flowcheck/builtin_run01/`：优化版自动调用 pmux_opt 的位置与次数证据。",
-              "- `05_公开四例_public/round01/`：功能 post_abc.il（p5）；资源 mapped.il 与 stat；性能仍完整综合。",
-              "功能输入阶段：" + ("ABC9 后 $lut + 受支持 dffeas" if ctx.get("flow_version") == "official4-p5" else "历史最终映射网表"),
+              "- `05_公开四例_public/round01/`：功能 post_abc.il（ABC9 后、map_cells 前）；资源 mapped.il 与 stat；性能运行完整综合。",
+              "- `01_来源与环境_meta/工具链与构建证据/`：Yosys、ABC、EQY、编译器版本，MSYS2 依赖包指纹及两侧构建日志。",
+              "功能输入阶段：" + ("ABC9 后 $lut + 受支持 dffeas" if ctx.get("flow_version") in ("official4-p5", "official4-p6-windows") else "历史最终映射网表"),
               "其他硬件资源对照：" + json.dumps({p.get("case"): p.get("other_resources") for p in pub}, ensure_ascii=False),
               f"- `10_验证工具自检_selfcheck/chains/{chain_attempt}/`：功能证明（含支持配置预检与逐分区证据）。",
               f"- 本报告清单：`{out / 'manifest.json'}`。",
               f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（生成于运行收尾）。", "",
               "阶段完成不等于功能或性能通过；缺失证据与需复核项保持原样记录；没有擅自补充官方分数。"]
+    if single_cpu:
+        lines += ['', '千节点压力测试：WAITING_OFFICIAL_CASES，等待官方统一用例；四例结果不外推。',
+                  '依据最新答疑C87，CPU和内存相对开销不得超过5%；不推算未明确的扣分公式。',
+                  '原版无PMUX优化，两侧包含同一公共计量补丁。交付包未在本次重建，不继承旧包通过状态。']
+    if etw_cpu:
+        from performance_report_v5 import report_lines
+        pos=lines.index('## 证据');lines[pos:pos]=report_lines(judgments,manifest['cpu_etw_selfcheck'])
+    elif mean_cpu:
+        interval_lines=['## CPU稳定性与方法资格','',
+            '点估计满足5%只描述均值，不等于已证明满足。统计区间与扩展区间分别列示；扩展区间不是严格95%总误差保证。',
+            '| 用例 | 均值点估计满足5% | 近似95%统计区间 | 资格裕量(百分点) | 扩展区间 | A/A正常 |',
+            '|---|---|---|---|---|---|']
+        for j in judgments:
+            interval_lines.append('| {} | {} | {} | {} | {} | {} |'.format(j['case'],j.get('cpu_point_requirement_met'),
+                j.get('cpu_ci95_pct'),j.get('guard_pct'),j.get('cpu_expanded_interval_pct'),j.get('aa_ok')))
+        q=manifest['cpu_method_qualification'] or {}
+        q_summary={k:q.get(k) for k in ('ok','qualified','required','guard_pct','actual_samples') if k in q}
+        q_error=q.get('error') or q.get('reason')
+        if q_error:q_summary['原因摘要']=str(q_error)[:500]
+        interval_lines += ['', 'CPU方法资格记录：'+json.dumps(q_summary,ensure_ascii=False),
+                           '完整资格指纹、错误及原始证据见10_验证工具自检_selfcheck/cpu_method_qualification与01_来源与环境_meta/cpu_qualification.json。',
+                           '资格校验失败、样本未完成或A/A异常时，不能宣布CPU目标通过；原始失败记录保留。','']
+        pos=lines.index('## 证据');lines[pos:pos]=interval_lines
     (output_root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
     return status
 

@@ -1,4 +1,4 @@
-import unittest, sys, tempfile
+import os, unittest, sys, tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent/'runner'))
 import builtin_common as B
@@ -31,11 +31,22 @@ class P5Tests(unittest.TestCase):
         self.assertFalse(judge_case_performance(s,pairs=1)['valid'])
     def test_main_memory_excludes_child(self):
         with tempfile.TemporaryDirectory() as d:
-            code="import subprocess,sys,time; a=bytearray(12*1024*1024); subprocess.run([sys.executable,'-c','import time; a=bytearray(96*1024*1024); time.sleep(0.3)']); time.sleep(0.05)"
-            r=run_measured([sys.executable,'-c',code],cwd=d,log_path=Path(d)/'run.log')
-            self.assertIn('yosys_main_rss_peak_kb',r)
-            self.assertGreater(r['yosys_main_rss_peak_kb'],12*1024)
-            self.assertLess(r['yosys_main_rss_peak_kb'],70*1024)
+            native_python = getattr(sys, '_base_executable', sys.executable)
+            child=("import time; a=bytearray(96*1024*1024); "
+                   "[a.__setitem__(i,1) for i in range(0,len(a),4096)]; time.sleep(0.3)")
+            code=("import subprocess,sys,time; a=bytearray(12*1024*1024); "
+                  "[a.__setitem__(i,1) for i in range(0,len(a),4096)]; "
+                  "subprocess.run(" + repr([native_python, '-c', child]) + "); time.sleep(0.05)")
+            r=run_measured([native_python,'-c',code],cwd=d,log_path=Path(d)/'run.log')
+            if os.name == 'nt':
+                key = 'yosys_peak_working_set_bytes'
+                low, high = 12*1024*1024, 70*1024*1024
+            else:
+                key = 'yosys_main_rss_peak_kb'
+                low, high = 12*1024, 70*1024
+            self.assertIn(key,r)
+            self.assertGreater(r[key],low)
+            self.assertLess(r[key],high)
 
     def test_main_memory_is_selected_and_cpu_limit_retained(self):
         s={'memory_metric':'yosys_main_rss_peak_kb','runs':[],

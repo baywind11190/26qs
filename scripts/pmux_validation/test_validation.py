@@ -7,6 +7,7 @@ import io
 import json
 import contextlib
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 import sys
@@ -16,7 +17,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).parent / 'runner'))
 from formal_status import summarize_eqy, check_mapped_model
 from function_common import (transform_run_ys, make_probe_ys, classify_proof_text,
-                             classify_probe_text, verify_expected_asserts, TransformError)
+                             classify_probe_text, verify_expected_asserts, TransformError,
+                             ascii_eqy_workdir, copy_eqy_workdir)
 from report import build_report, row_functional_ok
 
 
@@ -41,6 +43,41 @@ def _lcell_il(missing=None):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_measure_progress_line_handles_platform_specific_metrics(self):
+        from measure_format import collect_metric_values, format_run_progress
+
+        windows_line = format_run_progress(
+            'test1', 1, 'B→O', 'baseline', {
+                'rc': 0, 'cpu_total_s': 1.25, 'wall_s': 1.4,
+                'memory_metric': 'yosys_peak_working_set_bytes',
+                'yosys_peak_working_set_bytes': 16 * 1024 * 1024,
+            })
+        self.assertIn('yosys_main_peak=16777216 B (16.00 MiB)', windows_line)
+        self.assertNotIn('gn_rss=', windows_line)
+
+        linux_line = format_run_progress(
+            'test1', 1, 'B→O', 'baseline', {
+                'rc': 0, 'cpu_total_s': 1.25, 'wall_s': 1.4,
+                'memory_metric': 'yosys_main_rss_peak_kb',
+                'yosys_main_rss_peak_kb': 16384,
+                'gn_time_maxrss_kb': 32768,
+            })
+        self.assertIn('yosys_main_peak=16384 kB', linux_line)
+        self.assertIn('gn_rss=32768kB', linux_line)
+
+        windows_runs = [
+            {'side': 'baseline', 'rc': 0, 'timed_out': False,
+             'cpu_total_s': 0.5,
+             'yosys_peak_working_set_bytes': 16 * 1024 * 1024},
+            {'side': 'baseline', 'rc': 0, 'timed_out': False,
+             'cpu_total_s': 0.6,
+             'yosys_peak_working_set_bytes': 17 * 1024 * 1024},
+        ]
+        self.assertEqual(collect_metric_values(windows_runs, 'baseline', 'cpu_total_s'),
+                         [0.5, 0.6])
+        self.assertEqual(collect_metric_values(windows_runs, 'baseline', 'tree_rss_peak_kb'),
+                         [])
+
     def test_status_requires_successful_completion(self):
         with tempfile.TemporaryDirectory() as t:
             log = Path(t) / 'verify.log'
@@ -151,6 +188,22 @@ class TransformAndVerdictTests(unittest.TestCase):
         DF = make_probe_ys(self.SAMPLE, 'DF')
         self.assertIn('sat -seq 1 -set-init-undef -set-def-formal -set-def-inputs '
                       '-set-assumes miter', DF)
+
+    def test_eqy_work_runs_in_ascii_path_and_copies_evidence_back(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            ascii_root = root / 'ascii_scratch'
+            evidence_root = root / '轮次' / 'case'
+            work = ascii_eqy_workdir(ascii_root, 'chains/run01/test1/c4a')
+            self.assertTrue(str(work).isascii())
+            work.mkdir(parents=True)
+            (work / 'setup.log').write_text('ASCII workspace')
+            destination = evidence_root / 'work'
+            self.assertTrue(copy_eqy_workdir(work, destination))
+            self.assertEqual((destination / 'setup.log').read_text(), 'ASCII workspace')
+            self.assertFalse(copy_eqy_workdir(root / 'missing', evidence_root / 'missing'))
+            with self.assertRaises(ValueError):
+                ascii_eqy_workdir(ascii_root, '../../escape')
 
     def test_classify_proof_joint_verdict(self):
         real_pass = ("** Trying induction with length 1 **\n"
@@ -357,6 +410,86 @@ class PerformanceJudgementTests(unittest.TestCase):
         self.assertTrue(j['limit_ok'])
         j2 = judge_case_performance(self._summary(50.0, 61.0, 1000, 1000))
         self.assertFalse(j2['limit_ok'])
+
+    def test_windows_peak_working_set_bytes_are_the_memory_metric(self):
+        from report import judge_case_performance
+
+        runs = [
+            {'side': side, 'rc': 0, 'timed_out': False, 'stat_exists': True,
+             'cpu_total_s': 1.0,
+             'metrics_valid': True, 'measurement_error': None,
+             'yosys_peak_working_set_bytes': 1000 if side == 'baseline' else 1040}
+            for side in ('baseline', 'optimized')
+        ]
+        summary = {
+            'case': 'test1', 'pairs': 1, 'runs': runs,
+            'memory_metric': 'yosys_peak_working_set_bytes',
+            'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': 1.0,
+            'baseline_yosys_peak_working_set_bytes_median': 1000,
+            'optimized_yosys_peak_working_set_bytes_median': 1040,
+        }
+
+        result = judge_case_performance(summary, pairs=1)
+
+        self.assertTrue(result['valid'])
+        self.assertEqual(result['base_memory_bytes'], 1000)
+        self.assertAlmostEqual(result['mem_overhead_pct'], 4.0)
+        self.assertTrue(result['pass'])
+
+
+@unittest.skipUnless(os.name == 'nt', 'Windows Job Object implementation')
+class WindowsMeasurementTests(unittest.TestCase):
+    def test_job_cpu_includes_child_and_peak_memory_is_main_process_only(self):
+        import win_measure
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            native_python = getattr(sys, '_base_executable', sys.executable)
+            child = "import time; end=time.perf_counter()+0.65; x=0\nwhile time.perf_counter()<end: x+=1"
+            parent = "import subprocess; subprocess.run(" + repr([native_python, '-c', child]) + ",check=True)"
+            result = win_measure.run_measured(
+                [native_python, '-c', parent], cwd=root,
+                log_path=root / 'child.log', timeout_s=15)
+
+            self.assertEqual(result['rc'], 0)
+            self.assertGreaterEqual(result['cpu_total_s'], 0.5)
+            self.assertGreater(result['yosys_peak_working_set_bytes'], 0)
+            self.assertLess(result['yosys_peak_working_set_bytes'], 64 * 1024 * 1024)
+            self.assertEqual(result['memory_metric'], 'yosys_peak_working_set_bytes')
+            self.assertGreater(result['memory_sample_count'], 0)
+            self.assertTrue(result['memory_sampled_before_exit'])
+
+            child_memory = ("import time; a=bytearray(96*1024*1024); "
+                            "[a.__setitem__(i,1) for i in range(0,len(a),4096)]; "
+                            "time.sleep(0.3)")
+            parent_memory = ("import subprocess; a=bytearray(12*1024*1024); "
+                             "[a.__setitem__(i,1) for i in range(0,len(a),4096)]; "
+                             "subprocess.run(" + repr([native_python, '-c', child_memory]) + ",check=True)")
+            memory = win_measure.run_measured(
+                [native_python, '-c', parent_memory], cwd=root,
+                log_path=root / 'child-memory.log', timeout_s=15)
+            self.assertEqual(memory['rc'], 0)
+            self.assertGreater(memory['yosys_peak_working_set_bytes'], 12 * 1024 * 1024)
+            self.assertLess(memory['yosys_peak_working_set_bytes'], 70 * 1024 * 1024)
+            self.assertTrue(memory['memory_sampled_before_exit'])
+
+    def test_job_timeout_and_nonzero_exit_are_retained(self):
+        import win_measure
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            timeout = win_measure.run_measured(
+                [getattr(sys, '_base_executable', sys.executable), '-c', 'import time; time.sleep(10)'],
+                cwd=root, log_path=root / 'timeout.log', timeout_s=0.4)
+            failed = win_measure.run_measured(
+                [getattr(sys, '_base_executable', sys.executable), '-c', 'raise SystemExit(7)'],
+                cwd=root, log_path=root / 'nonzero.log', timeout_s=10)
+
+            self.assertTrue(timeout['timed_out'])
+            self.assertEqual(timeout['rc'], 124)
+            self.assertTrue(failed['metrics_valid'])
+            self.assertEqual(failed['rc'], 7)
+            self.assertGreater(failed['yosys_peak_working_set_bytes'], 0)
 
 
 class SelfcheckCacheTests(unittest.TestCase):
@@ -652,6 +785,119 @@ class BuiltinModeTests(unittest.TestCase):
         self.assertEqual(entries2[0], ("12.3", "OPT pass (legacy)."))
         self.assertEqual(entries2[1], (None, "PMUX_OPT pair-swap optimization."))
 
+
+    def test_resource_counts_include_vector_and_scalar_inverters(self):
+        import builtin_common as B
+
+        stat = {"design": {
+            "num_ports": 9,
+            "num_port_bits": 18,
+            "num_cells_by_type": {
+                "cycloneiv_lcell_comb": 5,
+                "$not": 1,
+                "$_NOT_": 2,
+                "dffeas": 2,
+            },
+        }}
+        mapped = (
+            "module \\top\n"
+            "  cell $not vector_not\n"
+            "    parameter \\Y_WIDTH 4\n"
+            "  end\n"
+            "  cell \\$_NOT_ scalar_not_a\n"
+            "  end\n"
+            "  cell \\$_NOT_ scalar_not_b\n"
+            "  end\n"
+            "end\n"
+        )
+
+        result = B.parse_resource_counts(stat, mapped, "top")
+
+        self.assertEqual(result["lut_count"], 5)
+        self.assertEqual(result["inverter_count"], 6)
+        self.assertEqual(result["logic_units"], 11)
+        self.assertEqual(result["dff_count"], 2)
+        self.assertEqual(result["io_ports"], 9)
+        self.assertEqual(result["io_bits"], 18)
+
+    def test_unclassified_cell_blocks_resource_conclusion(self):
+        import builtin_common as B
+
+        stat = {"design": {"num_cells_by_type": {"$_AND_": 1}}}
+        with self.assertRaisesRegex(ValueError, "unclassified"):
+            B.parse_resource_counts(stat, "module \\top\nend\n", "top")
+
+    def test_resource_comparison_uses_logic_units_and_checks_all_other_resources(self):
+        import builtin_common as B
+
+        base = {"logic_units": 10, "dff_count": 2, "io_ports": 4, "io_bits": 8,
+                "other_cell_types": {"VCC": 1}}
+        optimized = {"logic_units": 8, "dff_count": 2, "io_ports": 4, "io_bits": 8,
+                     "other_cell_types": {"VCC": 1}}
+
+        result = B.compare_resource_counts(base, optimized)
+
+        self.assertEqual(result["logic_reduction_pct"], 20.0)
+        self.assertTrue(result["resource_checks_ok"])
+        optimized["io_bits"] = 9
+        self.assertFalse(B.compare_resource_counts(base, optimized)["resource_checks_ok"])
+        optimized["io_bits"] = 8
+        optimized["other_cell_types"]["VCC"] = 2
+        self.assertFalse(B.compare_resource_counts(base, optimized)["resource_checks_ok"])
+
+    def test_p6_report_uses_inverter_adjusted_average_and_requires_full_resources(self):
+        import report as R
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._write_builtin_round(root, include_chains=True)
+            ctx_path = root / "validation_context.json"
+            ctx = json.loads(ctx_path.read_text())
+            ctx["flow_version"] = "official4-p6-windows"
+            ctx["performance_pairs"] = 15
+            ctx_path.write_text(json.dumps(ctx) + "\n")
+            chain_path = root / "10_验证工具自检_selfcheck/chains/run01/chains_summary.json"
+            chain_rows = json.loads(chain_path.read_text())
+            for chain_row in chain_rows:
+                chain_row["formal_netlist_stage"] = "post_abc"
+            chain_path.write_text(json.dumps(chain_rows) + "\n")
+            summary_path = root / "05_公开四例_public/round01/summary.json"
+            summary = json.loads(summary_path.read_text())
+            for row in summary["cases"]:
+                row.update({
+                    "baseline_comb": 20, "optimized_comb": 15,
+                    "baseline_lut_count": 20, "optimized_lut_count": 15,
+                    "baseline_inverter_count": 1, "optimized_inverter_count": 2,
+                    "baseline_logic_units": 21, "optimized_logic_units": 17,
+                    "logic_reduction_pct": (21 - 17) / 21 * 100,
+                    "baseline_dff": 10, "optimized_dff": 10,
+                    "baseline_io_ports": 4, "optimized_io_ports": 4,
+                    "baseline_io_bits": 8, "optimized_io_bits": 8,
+                    "dff_nonincrease": True, "io_nonincrease": True,
+                    "other_resources_nonincrease": True, "resource_checks_ok": True,
+                })
+            summary["public_mean_logic_reduction_pct"] = 4 / 21 * 100
+            for row in summary['cases']:
+                for side in ('baseline', 'optimized'):
+                    row[side + '_resources'] = dict(
+                        logic_units=row[side + '_logic_units'], dff_count=10,
+                        io_ports=4, io_bits=8, io_cell_types={}, other_cell_types={})
+            summary_path.write_text(json.dumps(summary) + "\n")
+
+            status = R.build_builtin_report(root, chain_attempt="run01")
+
+            manifest = json.loads((root / "11_汇总与证据_summary/manifest.json").read_text())
+            self.assertEqual(status, "NEEDS_REVIEW")
+            self.assertTrue(manifest["gates"]["资源统计完整且取反位计入逻辑单元"])
+            self.assertTrue(manifest["gates"]["DFF、IO及其他硬件资源逐例不增加"])
+            self.assertAlmostEqual(manifest["mean_logic_reduction_pct"], 4 / 21 * 100)
+            text = (root / "00_本轮验证结论.md").read_text()
+            self.assertIn("取反位 前→后", text)
+            self.assertIn("逻辑单元 前→后", text)
+            self.assertIn("IO 端口 前→后", text)
+            self.assertEqual(manifest["category_status"]["formal"], "PASS")
+            self.assertEqual(manifest["overall_verdict"], "FAIL")
+
     @staticmethod
     def _git_init(repo: Path, files):
         repo.mkdir()
@@ -665,7 +911,7 @@ class BuiltinModeTests(unittest.TestCase):
         for fn, text in files.items():
             f = repo / fn
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(text)
+            f.write_bytes(text.encode('utf-8'))
         run("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
         run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c1")
 
@@ -680,7 +926,7 @@ class BuiltinModeTests(unittest.TestCase):
             self._git_init(orepo, {'kernel/x.cc': 'int x;\n'})
             alg = "// pmux algorithm\nint pmux;\n"
             (orepo / 'passes/opt').mkdir(parents=True, exist_ok=True)
-            (orepo / 'passes/opt/pmux_opt.cc').write_text(alg)
+            (orepo / 'passes/opt/pmux_opt.cc').write_bytes(alg.encode('utf-8'))
             (orepo / 'passes/opt/CMakeLists.txt').write_text(
                 'yosys_pass(pmux_opt\n\tpmux_opt.cc\n)\n')
             (orepo / 'techlibs/intel').mkdir(parents=True, exist_ok=True)
@@ -698,6 +944,7 @@ class BuiltinModeTests(unittest.TestCase):
                 abc.write_text('abc')
                 abc.chmod(0o755)
                 (bdir / 'share/intel/cycloneiv').mkdir(parents=True)
+                (bdir / 'share/intel/cycloneiv/cells_map.v').write_text('// map\n')
                 (bdir / 'share/intel/cycloneiv/cells_sim.v').write_text('// c\n')
                 (bdir / 'share/intel/common').mkdir(parents=True)
                 (bdir / 'share/intel/common/m9k_bb.v').write_text('// m\n')
@@ -829,6 +1076,23 @@ class BuiltinModeTests(unittest.TestCase):
 class PrepareBuiltinCacheTests(unittest.TestCase):
     """自动内置准备：缓存键绑定、命中核验、失败不发布、plan 只读（不编译、不写文件）。"""
 
+    def test_windows_source_copy_ignores_only_root_build_directory(self):
+        import prepare_builtin as P
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t) / 'source'
+            (root / 'build').mkdir(parents=True)
+            (root / 'build/cache.txt').write_text('generated')
+            (root / 'pyosys/build').mkdir(parents=True)
+            (root / 'pyosys/build/local_backend.py').write_text('tracked source')
+            (root / 'submodule/build').mkdir(parents=True)
+            (root / 'submodule/build/tracked.txt').write_text('tracked submodule source')
+            copied = Path(t) / 'copy'
+            P.shutil.copytree(root, copied, ignore=P._ignore_root_build(root))
+            self.assertFalse((copied / 'build').exists())
+            self.assertEqual((copied / 'pyosys/build/local_backend.py').read_text(), 'tracked source')
+            self.assertEqual((copied / 'submodule/build/tracked.txt').read_text(),
+                             'tracked submodule source')
+
     def _cfg(self, base: Path):
         return {
             'repo': str(base / 'repo'),
@@ -856,7 +1120,7 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             (t / 'build/yosys-abc').write_text('abc-' + tag)
         (otree / 'passes/opt').mkdir(parents=True)
         alg = 'algorithm for ' + tag + '\n'
-        (otree / 'passes/opt/pmux_opt.cc').write_text(alg)
+        (otree / 'passes/opt/pmux_opt.cc').write_bytes(alg.encode('utf-8'))
         return btree, otree, hashlib.sha256(alg.encode()).hexdigest()
 
     def _entry(self, base: Path, tag='e', status='READY'):
@@ -878,6 +1142,25 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
                           'abc': str(otree / 'build/yosys-abc'),
                           'abc_sha256': hashlib.sha256(('abc-' + tag).encode()).hexdigest()},
         }
+
+    def test_windows_build_products_use_exe_suffix_and_msys_root(self):
+        import prepare_builtin as P
+        self.assertEqual(str(P._build_product_path(Path('C:/cache/side'), 'yosys', windows=True)),
+                         str(Path('C:/cache/side') / 'build' / 'yosys.exe'))
+        self.assertEqual(str(P._build_product_path(Path('C:/cache/side'), 'yosys-abc', windows=False)),
+                         str(Path('C:/cache/side') / 'build' / 'yosys-abc'))
+        if os.name == 'nt':
+            from unittest import mock
+            cfg = {'tools': {'bash': {'path': 'C:/tools/msys64/usr/bin/bash.exe'}}}
+            env = P._build_env(cfg)
+            self.assertIn(str(Path('C:/tools/msys64/mingw64/bin')), env['PATH'].split(os.pathsep))
+            self.assertIn(str(Path('C:/tools/msys64/usr/bin')), env['PATH'].split(os.pathsep))
+            self.assertEqual(env['MSYSTEM'], 'MINGW64')
+            with mock.patch.dict(P.os.environ, {'PATH': 'C:/Windows/Git/cmd;C:/Windows/System32'}):
+                ordered = P._build_env(cfg)['PATH'].split(os.pathsep)
+            self.assertLess(ordered.index(str(Path('C:/tools/msys64/usr/bin'))),
+                            ordered.index('C:/Windows/Git/cmd'))
+
 
     def test_cache_key_binds_source_profile_and_compiler(self):
         import prepare_builtin as P
@@ -911,10 +1194,11 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             # 命中：READY + 键匹配 + 产物核验通过
             self.assertIsNotNone(P.find_cached_optimized(cache, P.cache_key(cfg, alg_sha)))
             # 算法源码被改动（哈希不符）→ 不得命中
-            (Path(entry['optimized']['src_dir']) / 'passes/opt/pmux_opt.cc').write_text('tampered')
+            (Path(entry['optimized']['src_dir']) / 'passes/opt/pmux_opt.cc').write_bytes(
+                b'tampered')
             self.assertIsNone(P.find_cached_optimized(cache, P.cache_key(cfg, alg_sha)))
-            (Path(entry['optimized']['src_dir']) / 'passes/opt/pmux_opt.cc').write_text(
-                'algorithm for e\n')
+            (Path(entry['optimized']['src_dir']) / 'passes/opt/pmux_opt.cc').write_bytes(
+                b'algorithm for e\n')
             # 键不同（另一个算法提交 / 不同构建参数）→ 不得命中
             self.assertIsNone(P.find_cached_optimized(cache, P.cache_key(cfg, '0' * 64)))
             # FAILED（半成品）不发布、不命中
@@ -973,6 +1257,51 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             self.assertTrue(any(b['item'] == 'source_repo' for b in plan['blocked']))
             # plan 不写任何文件、不创建缓存目录
             self.assertFalse((base / 'cache').exists())
+
+
+class WindowsConfigTests(unittest.TestCase):
+    def test_crlf_checkout_is_verified_and_frozen_as_lf(self):
+        import validate as V
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / 'input.v'
+            f.write_bytes(b'module top;\r\nendmodule\r\n')
+            expected = hashlib.sha256(b'module top;\nendmodule\n').hexdigest()
+            self.assertEqual(V.digest_package_file(f), expected)
+            self.assertTrue(V.normalize_text_file(f))
+            self.assertEqual(f.read_bytes(), b'module top;\nendmodule\n')
+            self.assertEqual(V.digest(f), expected)
+
+    def test_tool_data_filter_matches_windows_paths(self):
+        import validate as V
+        cfg = {
+            'tool_data': [
+                {'path': 'C:/tools/yosys/share/yosys/abc9_map.v', 'sha256': 'a'},
+                {'path': 'C:/tools/yosys/share/yosys/intel/cycloneiv/cells_map.v', 'sha256': 'b'},
+                {'path': 'C:/tools/yosys/share/yosys/xilinx/cells_map.v', 'sha256': 'c'},
+            ],
+            'tool_data_fourcase_filter': {
+                'include_subpaths': ['/share/yosys/intel/'],
+                'direct_share_files': ['abc9_map.v'],
+            },
+        }
+        selected = V.selected_tool_data(cfg)
+        self.assertEqual([x['sha256'] for x in selected], ['a', 'b'])
+
+    def test_yosys_intel_data_root_supports_install_and_build_layouts(self):
+        import validate as V
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            install = root / 'install'
+            binary = install / 'bin' / 'yosys.exe'
+            data = install / 'share' / 'yosys' / 'intel' / 'cycloneiv'
+            data.mkdir(parents=True)
+            (data / 'cells_map.v').write_text('module x; endmodule\n')
+            self.assertEqual(V.yosys_share_root(binary), data.parents[1])
+            build = root / 'source' / 'build'
+            build_data = build / 'share' / 'intel' / 'cycloneiv'
+            build_data.mkdir(parents=True)
+            (build_data / 'cells_map.v').write_text('module x; endmodule\n')
+            self.assertEqual(V.yosys_share_root(build / 'yosys.exe'), build / 'share')
 
 
 class BuiltinPrepareIntegrationTests(unittest.TestCase):

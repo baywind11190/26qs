@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from process_utils import process_group_kwargs, terminate_process_tree
 
 
 def run_eqy(cfg, workdir, log, timeout_s=900):
@@ -17,11 +18,11 @@ def run_eqy(cfg, workdir, log, timeout_s=900):
            str(C.EQY_YOSYS), '--abc', str(C.EQY_ABC), str(cfg)]
     with log.open('x') as f:
         p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT,
-                             cwd=cfg.parent, env=env, start_new_session=True)
+                             cwd=cfg.parent, env=env, **process_group_kwargs())
         try:
             rc = p.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, 9)
+            terminate_process_tree(p)
             p.wait()
             rc = 124
     log.with_suffix('.execution.json').write_text(json.dumps({
