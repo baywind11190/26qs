@@ -15,6 +15,9 @@ spec.loader.exec_module(helper)
 
 def instrument(source):
     # Only generated test copies carry counters; production has no extra logs.
+    token = 'init.set(&sigmap, module);'
+    assert source.count(token) == 1
+    source = source.replace(token, 'log("FEEDBACK INIT\\n"); '+token)
     token = 'SigMap sigmap(module);'
     assert source.count(token) == 1
     source = source.replace(token, token + '''
@@ -35,12 +38,14 @@ log("BRANCH WORK builds=%d evals=%d\\n",test_builds,test_evals);
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out',type=Path,required=True)
+    ap.add_argument('--baseline',default=BASE)
+    ap.add_argument('--check-feedback-entry',action='store_true')
     ns=ap.parse_args()
     out=ns.out.resolve()
     out.mkdir(parents=True,exist_ok=False)
     plugins={}
     for label in ['baseline','candidate']:
-        source=(subprocess.check_output(['git','show',BASE+':src/pmux_opt.cc'],cwd=ROOT).decode()
+        source=(subprocess.check_output(['git','show',ns.baseline+':src/pmux_opt.cc'],cwd=ROOT).decode()
                 if label=='baseline' else (ROOT/'src/pmux_opt.cc').read_text())
         cc=out/(label+'.cc')
         cc.write_text(instrument(source))
@@ -81,12 +86,20 @@ endmodule
             text=(dest/'run.log').read_text()
             work=re.search(r'BRANCH WORK builds=(\d+) evals=(\d+)',text)
             row[label]={'cells':json.loads((dest/'stat.json').read_text())['modules']['\\'+top]['num_cells_by_type'],
-                        'work':[int(v) for v in work.groups()] if work else [0,0]}
+                        'work':[int(v) for v in work.groups()] if work else [0,0],
+                        'feedback_init':text.count('FEEDBACK INIT')}
         assert row['baseline']['cells']==row['candidate']['cells'],(name,row)
         if name=='test1': assert row['candidate']['work']==[1,33],row
         if name=='test3': assert row['candidate']['work']==[0,0],row
-        if name=='constant_xz': assert row['baseline']['work'][0]==1 and row['candidate']['work']==[0,0],row
+        if name=='constant_xz':
+            assert row['candidate']['work']==[0,0],row
+            if ns.baseline==BASE: assert row['baseline']['work'][0]==1,row
         if name=='mixed': assert row['candidate']['work'][0]==1 and row['candidate']['work'][1]>0,row
+        if ns.check_feedback_entry:
+            if name=='test1': assert row['baseline']['feedback_init']==1 and row['candidate']['feedback_init']==0,row
+            if name=='test3':
+                assert row['candidate']['feedback_init']==1,row
+                assert 'Total enable-feedback rebuilt: 1' in (out/name/'candidate/run.log').read_text()
         ys=out/name/'equiv.ys'
         ys.write_text(f'''read_rtlil {out}/{name}/baseline/rebuilt.il
 rename {top} gold

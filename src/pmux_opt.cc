@@ -458,9 +458,23 @@ struct PmuxOptPass : public Pass
             // driver_map 本身仍保持原有行为，避免影响
             // Pattern A/B/C/D。
             pool<RTLIL::SigBit> multi_driver_bits;
+            bool has_feedback_target = false;
 
             for (auto driver_cell : module->cells())
             {
+                // 6.1 needs a one-bit, positive-enable DFFE for Z.
+                // Reuse this scan and avoid initial-state/guard analysis
+                // when no selected cell can satisfy that necessary condition.
+                if (!has_feedback_target && driver_cell->type == ID($dffe) &&
+                    module->selected(driver_cell) && !driver_cell->get_bool_attribute(ID::keep) &&
+                    driver_cell->getParam(ID::EN_POLARITY).as_bool() &&
+                    driver_cell->getParam(ID::WIDTH).as_int() == 1 &&
+                    GetSize(driver_cell->getPort(ID::D)) == 1 &&
+                    GetSize(driver_cell->getPort(ID::Q)) == 1 &&
+                    GetSize(driver_cell->getPort(ID::CLK)) == 1 &&
+                    GetSize(driver_cell->getPort(ID::EN)) == 1)
+                    has_feedback_target = true;
+
                 for (auto &conn :
                      driver_cell->connections())
                 {
@@ -490,7 +504,7 @@ struct PmuxOptPass : public Pass
                 }
             }
             log("Total enable-feedback rebuilt: %d\n",
-                EnableFeedback(module, sigmap, driver_map, multi_driver_bits).run());
+                has_feedback_target ? EnableFeedback(module, sigmap, driver_map, multi_driver_bits).run() : 0);
             /*
  * ==================================================
  * Pattern D 使用：
