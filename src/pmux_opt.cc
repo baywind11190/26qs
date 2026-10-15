@@ -3237,8 +3237,6 @@ if (pattern_e_candidates > 0)
          * ==================================================
          */
         {
-            SigMap h3_sigmap(module);
-
             std::vector<RTLIL::Cell *> h3_muxes;
 
             for (auto cell : module->cells())
@@ -3249,17 +3247,13 @@ if (pattern_e_candidates > 0)
                 int width =
                     cell->getParam(ID::WIDTH).as_int();
 
-                RTLIL::SigSpec a =
-                    h3_sigmap(cell->getPort(ID::A));
+                const RTLIL::SigSpec &a = cell->getPort(ID::A);
 
-                RTLIL::SigSpec b =
-                    h3_sigmap(cell->getPort(ID::B));
+                const RTLIL::SigSpec &b = cell->getPort(ID::B);
 
-                RTLIL::SigSpec sel =
-                    h3_sigmap(cell->getPort(ID::S));
+                const RTLIL::SigSpec &sel = cell->getPort(ID::S);
 
-                RTLIL::SigSpec y =
-                    h3_sigmap(cell->getPort(ID::Y));
+                const RTLIL::SigSpec &y = cell->getPort(ID::Y);
 
                 if (width <= 0)
                     continue;
@@ -3273,6 +3267,22 @@ if (pattern_e_candidates > 0)
                 h3_muxes.push_back(cell);
             }
 
+            // 5.1 requires depth >= 3. SigMap preserves signal widths, so
+            // the existing port-shape filter needs no canonicalization.
+            // This is the last analysis in the module; skip it when no
+            // three-cell chain can exist, before building the full map.
+            if (h3_muxes.size() < 3)
+                continue;
+
+            SigMap h3_sigmap(module);
+
+            // A/Y do not change during 5.1. Index exact canonical vectors;
+            // preserve all drivers so ambiguous child matches still reject.
+            dict<RTLIL::SigSpec, std::vector<RTLIL::Cell *>> h3_by_a, h3_by_y;
+            for (auto cell : h3_muxes) {
+                h3_by_a[h3_sigmap(cell->getPort(ID::A))].push_back(cell);
+                h3_by_y[h3_sigmap(cell->getPort(ID::Y))].push_back(cell);
+            }
 
             /*
              * 当前 mux 的 Y 如果接到另一个 mux 的 A，
@@ -3281,29 +3291,15 @@ if (pattern_e_candidates > 0)
             auto h3_has_parent =
                 [&](RTLIL::Cell *cell) -> bool
             {
-                int width =
-                    cell->getParam(ID::WIDTH).as_int();
-
                 RTLIL::SigSpec y =
                     h3_sigmap(
                         cell->getPort(ID::Y));
 
-                for (auto other : h3_muxes)
-                {
-                    if (other == cell)
-                        continue;
-
-                    if (other->getParam(
-                            ID::WIDTH).as_int() != width)
-                        continue;
-
-                    RTLIL::SigSpec other_a =
-                        h3_sigmap(
-                            other->getPort(ID::A));
-
-                    if (other_a == y)
-                        return true;
-                }
+                auto it = h3_by_a.find(y);
+                if (it != h3_by_a.end())
+                    for (auto other : it->second)
+                        if (other != cell)
+                            return true;
 
                 return false;
             };
@@ -3318,50 +3314,34 @@ if (pattern_e_candidates > 0)
                     bool &ambiguous)
                     -> RTLIL::Cell *
             {
-                RTLIL::Cell *found = nullptr;
                 ambiguous = false;
-
-                for (auto candidate : h3_muxes)
-                {
-                    if (candidate->getParam(
-                            ID::WIDTH).as_int() != width)
-                        continue;
-
-                    RTLIL::SigSpec candidate_y =
-                        h3_sigmap(
-                            candidate->getPort(ID::Y));
-
-                    if (candidate_y != a)
-                        continue;
-
-                    if (found != nullptr)
-                    {
-                        ambiguous = true;
-                        return nullptr;
-                    }
-
-                    found = candidate;
-                }
-
-                return found;
+                if (GetSize(a) != width) return nullptr;
+                auto it = h3_by_y.find(a);
+                if (it == h3_by_y.end()) return nullptr;
+                ambiguous = it->second.size() > 1;
+                return ambiguous ? nullptr : it->second.front();
             };
 
 
 
-            /*
-             * 判断两个 canonical SigSpec 是否有任意 bit 重叠。
-             */
-            auto h3_sig_overlap =
-                [&](const RTLIL::SigSpec &lhs,
-                    const RTLIL::SigSpec &rhs)
-                    -> bool
-            {
-                for (auto lhs_bit : lhs)
-                    for (auto rhs_bit : rhs)
-                        if (lhs_bit == rhs_bit)
-                            return true;
-
-                return false;
+            // Build input users only when a chain reaches the privacy check.
+            // Invalidate after a rewrite because selector ports and new gates
+            // change consumers. Canonical bit keys retain partial overlaps.
+            using H3User = std::pair<RTLIL::Cell *, RTLIL::IdString>;
+            dict<RTLIL::SigBit, pool<H3User>> h3_users;
+            pool<RTLIL::SigBit> h3_output_bits;
+            bool h3_users_ready = false;
+            auto h3_prepare_users = [&]() {
+                if (h3_users_ready) return;
+                h3_users.clear();
+                h3_output_bits.clear();
+                for (auto cell : module->cells())
+                    for (auto &port : cell->connections()) if (cell->input(port.first))
+                        for (auto bit : h3_sigmap(port.second))
+                            h3_users[bit].insert(H3User(cell, port.first));
+                for (auto wire : module->wires()) if (wire->port_output)
+                    for (auto bit : h3_sigmap(RTLIL::SigSpec(wire))) h3_output_bits.insert(bit);
+                h3_users_ready = true;
             };
 
 
@@ -3382,67 +3362,18 @@ if (pattern_e_candidates > 0)
                     h3_sigmap(
                         child->getPort(ID::Y));
 
+                h3_prepare_users();
                 bool saw_expected_parent = false;
-
-                for (auto user_cell : module->cells())
-                {
-                    for (auto &conn :
-                         user_cell->connections())
-                    {
-                        if (!user_cell->input(
-                                conn.first))
-                            continue;
-
-                        RTLIL::SigSpec input =
-                            h3_sigmap(
-                                conn.second);
-
-                        if (!h3_sig_overlap(
-                                input,
-                                y))
-                            continue;
-
-                        /*
-                         * 唯一允许的使用：
-                         *
-                         * child.Y -> parent.A
-                         */
-                        if (user_cell == parent &&
-                            conn.first == ID::A &&
-                            input == y &&
-                            !saw_expected_parent)
-                        {
-                            saw_expected_parent = true;
-                            continue;
-                        }
-
-                        return false;
+                for (auto bit : y) {
+                    if (h3_output_bits.count(bit)) return false;
+                    auto it = h3_users.find(bit);
+                    if (it == h3_users.end()) continue;
+                    for (auto &user : it->second) {
+                        if (user.first != parent || user.second != ID::A) return false;
+                        saw_expected_parent = true;
                     }
                 }
-
-                if (!saw_expected_parent)
-                    return false;
-
-
-                /*
-                 * 中间节点也不能直接成为 module output。
-                 */
-                for (auto wire : module->wires())
-                {
-                    if (!wire->port_output)
-                        continue;
-
-                    RTLIL::SigSpec output =
-                        h3_sigmap(
-                            RTLIL::SigSpec(wire));
-
-                    if (h3_sig_overlap(
-                            output,
-                            y))
-                        return false;
-                }
-
-                return true;
+                return saw_expected_parent && h3_sigmap(parent->getPort(ID::A)) == y;
             };
 
 
@@ -3781,6 +3712,7 @@ if (pattern_e_candidates > 0)
 
 
                 total_h3_rebuilt++;
+                h3_users_ready = false;
 
                 log(
                     "H3 PRIORITY MUX CHAIN REBUILT\n");
