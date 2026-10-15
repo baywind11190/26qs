@@ -442,9 +442,7 @@ struct PmuxOptPass : public Pass
              *
              * 其他未知输入统一视为 X。
              */
-            ConstEval branch_consteval(
-                module,
-                RTLIL::State::Sx);
+            std::unique_ptr<ConstEval> branch_consteval;
 
             /*
              * ==================================================
@@ -1472,9 +1470,18 @@ if (pattern_d_candidates > 0)
                          * 每个 branch 都有自己独立的
                          * control == CONST 条件。
                          */
-                        branch_consteval.clear();
+                        // Constant branches need no conditional propagation,
+                        // including existing X/Z bits, which remain untouched.
+                        if (raw_branch.is_fully_const()) {
+                            new_port_b.append(raw_branch);
+                            continue;
+                        }
 
-                        branch_consteval.set(
+                        if (!branch_consteval)
+                            branch_consteval.reset(new ConstEval(module, RTLIL::State::Sx));
+                        branch_consteval->clear();
+
+                        branch_consteval->set(
                             info.control,
                             cond.value);
 
@@ -1484,7 +1491,7 @@ if (pattern_d_candidates > 0)
                         RTLIL::SigSpec undef;
 
                         bool eval_ok =
-                            branch_consteval.eval(
+                            branch_consteval->eval(
                                 evaluated_branch,
                                 undef);
 
