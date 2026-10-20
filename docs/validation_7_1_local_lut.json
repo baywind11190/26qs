@@ -1,0 +1,564 @@
+{
+  "base_commit": "9d77e9ab35451349f265ed0cf30f7c1fcf110571",
+  "yosys_base": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+  "pmux_opt_cc_sha256": "ce410fd792054e0efd38dad9a91e041aecc80e57abe072179b0b55a282be8ff8",
+  "dffeas_model_sha256": "f6e48904b4f7313754480ecb3aa6d414e146b66ace0d676c02be6375406cc2c6",
+  "resources_and_formal": {
+    "test1": {
+      "baseline": {
+        "cells": {
+          "$not": 2,
+          "cycloneiv_lcell_comb": 180,
+          "dffeas": 222
+        },
+        "logic": 182
+      },
+      "candidate": {
+        "cells": {
+          "$not": 2,
+          "cycloneiv_lcell_comb": 179,
+          "dffeas": 222
+        },
+        "logic": 181
+      },
+      "formal": "RTL PASS"
+    },
+    "test2": {
+      "baseline": {
+        "cells": {
+          "cycloneiv_lcell_comb": 16
+        },
+        "logic": 16
+      },
+      "candidate": {
+        "cells": {
+          "cycloneiv_lcell_comb": 16
+        },
+        "logic": 16
+      },
+      "formal": "RTL PASS"
+    },
+    "test3": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 8,
+          "dffeas": 12
+        },
+        "logic": 9
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 8,
+          "dffeas": 12
+        },
+        "logic": 9
+      },
+      "formal": "RTL PASS"
+    },
+    "test4": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 35,
+          "dffeas": 10
+        },
+        "logic": 36
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 31,
+          "dffeas": 10
+        },
+        "logic": 32
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_0": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 40,
+          "dffeas": 10
+        },
+        "logic": 41
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 36,
+          "dffeas": 10
+        },
+        "logic": 37
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_1": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 45,
+          "dffeas": 10
+        },
+        "logic": 46
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_2": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 35,
+          "dffeas": 10
+        },
+        "logic": 36
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 30,
+          "dffeas": 10
+        },
+        "logic": 31
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_3": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 41,
+          "dffeas": 10
+        },
+        "logic": 42
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_4": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 37,
+          "dffeas": 10
+        },
+        "logic": 38
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_5": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 40,
+          "dffeas": 10
+        },
+        "logic": 41
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_6": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 34,
+          "dffeas": 10
+        },
+        "logic": 35
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 30,
+          "dffeas": 10
+        },
+        "logic": 31
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_7": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 42,
+          "dffeas": 10
+        },
+        "logic": 43
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 30,
+          "dffeas": 10
+        },
+        "logic": 31
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_8": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 45,
+          "dffeas": 10
+        },
+        "logic": 46
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 29,
+          "dffeas": 10
+        },
+        "logic": 30
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_9": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 39,
+          "dffeas": 10
+        },
+        "logic": 40
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_10": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 35,
+          "dffeas": 10
+        },
+        "logic": 36
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_11": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 45,
+          "dffeas": 10
+        },
+        "logic": 46
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_12": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 37,
+          "dffeas": 10
+        },
+        "logic": 38
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 29,
+          "dffeas": 10
+        },
+        "logic": 30
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_13": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 32,
+          "dffeas": 10
+        },
+        "logic": 33
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 28,
+          "dffeas": 10
+        },
+        "logic": 29
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_14": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 42,
+          "dffeas": 10
+        },
+        "logic": 43
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 30,
+          "dffeas": 10
+        },
+        "logic": 31
+      },
+      "formal": "RTL PASS"
+    },
+    "variant_15": {
+      "baseline": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 38,
+          "dffeas": 10
+        },
+        "logic": 39
+      },
+      "candidate": {
+        "cells": {
+          "$not": 1,
+          "cycloneiv_lcell_comb": 33,
+          "dffeas": 10
+        },
+        "logic": 34
+      },
+      "formal": "RTL PASS"
+    }
+  },
+  "checked_proofs": {
+    "test1": "Induction step proven: SUCCESS!",
+    "test2": "Induction step proven: SUCCESS!",
+    "test3": "Induction step proven: SUCCESS!",
+    "test4": "Induction step proven: SUCCESS!",
+    "variant_0": "Induction step proven: SUCCESS!",
+    "variant_1": "Induction step proven: SUCCESS!",
+    "variant_2": "Induction step proven: SUCCESS!",
+    "variant_3": "Induction step proven: SUCCESS!",
+    "variant_4": "Induction step proven: SUCCESS!",
+    "variant_5": "Induction step proven: SUCCESS!",
+    "variant_6": "Induction step proven: SUCCESS!",
+    "variant_7": "Induction step proven: SUCCESS!",
+    "variant_8": "Induction step proven: SUCCESS!",
+    "variant_9": "Induction step proven: SUCCESS!",
+    "variant_10": "Induction step proven: SUCCESS!",
+    "variant_11": "Induction step proven: SUCCESS!",
+    "variant_12": "Induction step proven: SUCCESS!",
+    "variant_13": "Induction step proven: SUCCESS!",
+    "variant_14": "Induction step proven: SUCCESS!",
+    "variant_15": "Induction step proven: SUCCESS!"
+  },
+  "negative_controls": {
+    "test1": "actual base-case counterexample (expected)",
+    "test4": "actual base-case counterexample (expected)"
+  },
+  "boundaries": {
+    "random_0": "PASS",
+    "random_1": "PASS",
+    "random_2": "PASS",
+    "random_3": "PASS",
+    "random_4": "PASS",
+    "random_5": "PASS",
+    "random_6": "PASS",
+    "random_7": "PASS",
+    "random_8": "PASS",
+    "random_9": "PASS",
+    "random_10": "PASS",
+    "random_11": "PASS",
+    "random_12": "PASS",
+    "random_13": "PASS",
+    "random_14": "PASS",
+    "random_15": "PASS",
+    "random_16": "PASS",
+    "random_17": "PASS",
+    "random_18": "PASS",
+    "random_19": "PASS",
+    "random_20": "PASS",
+    "random_21": "PASS",
+    "random_22": "PASS",
+    "random_23": "PASS",
+    "stress_1000": "PASS",
+    "module_keep": "PASS",
+    "cell_keep": "PASS",
+    "wire_keep": "PASS",
+    "shared_outputs": "PASS",
+    "partial_selection": "PASS",
+    "multidriver": "protected boundary PASS",
+    "x_input": "protected boundary PASS",
+    "x_truth": "protected boundary PASS",
+    "cycle": "protected boundary PASS"
+  },
+  "linux_diagnostic_timing": {
+    "test1": {
+      "raw_wall_seconds": {
+        "baseline": [
+          0.6418420049958513,
+          0.1949807100027101,
+          0.18985440200049197,
+          0.6924631920046522,
+          0.49013132600521203,
+          0.2983077949975268,
+          0.20097306100069545,
+          0.22735913000360597,
+          0.21623339800135
+        ],
+        "candidate": [
+          0.4178428909945069,
+          0.2538642709987471,
+          0.205487617997278,
+          0.22713535399816465,
+          0.5635809200030053,
+          0.4375877170023159,
+          0.24383374900207855,
+          0.2540232190003735,
+          0.24803893199714366
+        ]
+      },
+      "median_baseline": 0.22735913000360597,
+      "median_candidate": 0.2538642709987471
+    },
+    "test2": {
+      "raw_wall_seconds": {
+        "baseline": [
+          1.042890892997093,
+          0.10369616200478049,
+          0.12918586600426352,
+          0.08871745199576253,
+          0.09249488599743927,
+          0.08763689500483451,
+          0.08744244599802187,
+          0.08878715600440046,
+          0.08333189800032414
+        ],
+        "candidate": [
+          0.5280108689985354,
+          0.1260246689998894,
+          0.10844165900198277,
+          0.09039395300351316,
+          0.0858278710002196,
+          0.09167183500539977,
+          0.08920781200140482,
+          0.09031469099863898,
+          0.08503428699623328
+        ]
+      },
+      "median_baseline": 0.08878715600440046,
+      "median_candidate": 0.09039395300351316
+    },
+    "test3": {
+      "raw_wall_seconds": {
+        "baseline": [
+          0.09498143200471532,
+          0.10438838799746009,
+          0.10175992199947359,
+          0.10312631499982672,
+          0.10136054600297939,
+          0.11740596400341019,
+          0.10272445300506661,
+          0.09165663999738172,
+          0.09164544600207591
+        ],
+        "candidate": [
+          0.09136383000441128,
+          0.09268639700167114,
+          0.09352383500663564,
+          0.09563645500020357,
+          0.10100406499987002,
+          0.12742045499908272,
+          0.10008262199698947,
+          0.09489013900019927,
+          0.09600057900388492
+        ]
+      },
+      "median_baseline": 0.10175992199947359,
+      "median_candidate": 0.09563645500020357
+    },
+    "test4": {
+      "raw_wall_seconds": {
+        "baseline": [
+          0.11287600899959216,
+          0.1262945669950568,
+          0.11422927399689797,
+          0.09994690199528122,
+          0.10280362900084583,
+          0.09958072600420564,
+          0.10150457499548793,
+          0.10220475000096485,
+          0.10180677299649687
+        ],
+        "candidate": [
+          0.10485263699956704,
+          0.11593162599456264,
+          0.1085009159942274,
+          0.1047939479976776,
+          0.11285990500618936,
+          0.11927351800113684,
+          0.12125960100092925,
+          0.11873811899567954,
+          0.11413953299779678
+        ]
+      },
+      "median_baseline": 0.10220475000096485,
+      "median_candidate": 0.11413953299779678
+    }
+  },
+  "windows_build": "NOT PERFORMED: native build toolchain unavailable on this host",
+  "windows_single_run_time_and_peak_memory": "NOT VERIFIED",
+  "official_efficiency_acceptance": "NOT CLAIMED",
+  "timing_note": "Both +/- fluctuations and >5% increases occurred; all raw samples retained. These medians are diagnostics, not official single-run scores."
+}

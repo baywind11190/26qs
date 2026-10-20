@@ -24,6 +24,9 @@
  * 6 寄存器更新条件优化
  *   6.1 比较条件共享与寄存器使能反馈联合重构
  *
+ * 7 映射后局部逻辑优化
+ *   7.1 有界局部LUT函数分解
+ *
  * 历史研发代号对应关系：
  *   Pattern A -> 1.1
  *   H1        -> 1.2
@@ -43,9 +46,266 @@
 #include "kernel/sigtools.h"
 #include "kernel/consteval.h"
 #include "kernel/ffinit.h"
+#include "kernel/celltypes.h"
+#include <functional>
+#include <set>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
+
+// 7.1 Bounded post-mapping LUT factorization. Included inside the pass namespace.
+// Only complete, selected LUT4 functions participate. No sequential cells change.
+
+
+
+struct LocalLutBudget
+{
+    int cuts = 16384, work = 2000000, rewrites = 64;
+    bool spend() { if (work == 0) return false; --work; return true; }
+};
+
+struct LocalLutGraph
+{
+    RTLIL::Module *module;
+    SigMap sigmap;
+    std::vector<RTLIL::Cell *> cells;
+    dict<RTLIL::SigBit, RTLIL::Cell *> drivers;
+    pool<RTLIL::SigBit> ambiguous, pinned, outputs;
+    dict<RTLIL::SigBit, pool<RTLIL::Cell *>> users;
+    dict<RTLIL::Cell *, int> index;
+    std::vector<std::vector<RTLIL::SigBit>> inputs;
+    std::vector<RTLIL::SigBit> results;
+    std::vector<unsigned> functions;
+
+    LocalLutGraph(RTLIL::Design *design, RTLIL::Module *mod) : module(mod), sigmap(mod)
+    {
+        CellTypes types(design);
+        for (auto wire : mod->wires()) {
+            for (auto bit : sigmap(wire)) {
+                if (wire->port_output) outputs.insert(bit);
+                if (wire->get_bool_attribute(ID::keep) || wire->attributes.count(ID::init)) pinned.insert(bit);
+                if (wire->port_input) pinned.insert(bit); // An input is a legal leaf, never a replaceable LUT output.
+            }
+        }
+        for (auto cell : mod->cells()) {
+            bool known = types.cell_known(cell->type);
+            for (auto &port : cell->connections()) {
+                for (auto bit : sigmap(port.second)) {
+                    if (!known) { pinned.insert(bit); users[bit].insert(cell); continue; }
+                    if (types.cell_output(cell->type, port.first)) {
+                        if (drivers.count(bit)) ambiguous.insert(bit);
+                        else drivers[bit] = cell;
+                    }
+                    if (types.cell_input(cell->type, port.first)) users[bit].insert(cell);
+                }
+            }
+        }
+        for (auto cell : mod->selected_cells()) {
+            if (cell->type != ID($lut) || cell->get_bool_attribute(ID::keep) ||
+                !cell->hasPort(ID::A) || !cell->hasPort(ID::Y) ||
+                !cell->hasParam(ID::WIDTH) || !cell->hasParam(ID::LUT)) continue;
+            int width = cell->getParam(ID::WIDTH).as_int();
+            if (width < 1 || width > 4 || GetSize(cell->getPort(ID::A)) != width ||
+                GetSize(cell->getPort(ID::Y)) != 1 ||
+                GetSize(cell->getParam(ID::LUT)) != (1 << width) ||
+                !cell->getParam(ID::LUT).is_fully_def()) continue;
+            auto y = sigmap(cell->getPort(ID::Y)).as_bit();
+            if (y.wire == nullptr || ambiguous.count(y) || pinned.count(y)) continue;
+            bool valid = true;
+            for (auto a : sigmap(cell->getPort(ID::A)))
+                if (ambiguous.count(a) || (a.wire == nullptr && a != State::S0 && a != State::S1)) valid = false;
+            if (valid) cells.push_back(cell);
+        }
+        std::sort(cells.begin(), cells.end(), [](RTLIL::Cell *a, RTLIL::Cell *b) { return a->name < b->name; });
+        for (int i = 0; i < GetSize(cells); i++) {
+            index[cells[i]] = i;
+            auto a = sigmap(cells[i]->getPort(ID::A));
+            inputs.emplace_back(a.begin(), a.end());
+            results.push_back(sigmap(cells[i]->getPort(ID::Y)).as_bit());
+            functions.push_back(cells[i]->getParam(ID::LUT).as_int());
+        }
+    }
+
+    int driver(RTLIL::SigBit bit) const
+    {
+        if (!drivers.count(bit) || !index.count(drivers.at(bit))) return -1;
+        return index.at(drivers.at(bit));
+    }
+};
+
+struct LocalLutChoice
+{
+    int root = -1;
+    std::vector<int> remove;
+    std::vector<RTLIL::SigBit> free, bound;
+    unsigned encoded = 0, truth = 0;
+    int saved() const { return GetSize(remove) - (bound.empty() ? 0 : 1); }
+};
+
+static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
+{
+    LocalLutChoice best;
+    for (int root = 0; root < GetSize(g.cells) && budget.cuts && budget.work; root++) {
+        std::set<std::vector<int>> seen;
+        std::vector<std::vector<int>> todo = {{root}};
+        while (!todo.empty() && GetSize(seen) < 2000 && budget.cuts && budget.work) {
+            auto cone = todo.back(); todo.pop_back();
+            if (!seen.insert(cone).second) continue;
+            --budget.cuts;
+            auto inside = [&](int n) { return std::binary_search(cone.begin(), cone.end(), n); };
+            std::set<RTLIL::SigBit> boundary;
+            for (int n : cone) for (auto bit : g.inputs[n])
+                if (bit.wire != nullptr && !inside(g.driver(bit))) boundary.insert(bit);
+            if (GetSize(boundary) > 8) continue;
+            std::vector<RTLIL::SigBit> leaves(boundary.begin(), boundary.end());
+            std::set<int> removable(cone.begin(), cone.end()); removable.erase(root);
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (auto it = removable.begin(); it != removable.end();) {
+                    int n = *it; bool live = g.outputs.count(g.results[n]) || g.pinned.count(g.results[n]);
+                    for (auto user : g.users[g.results[n]])
+                        if (user != g.cells[root] && (!g.index.count(user) || !removable.count(g.index.at(user)))) live = true;
+                    if (live) { it = removable.erase(it); changed = true; } else ++it;
+                }
+            }
+            if (!removable.empty()) {
+                int size = 1 << GetSize(leaves);
+                // Compute each node's whole table once. Driver lookups and
+                // recursion must not repeat for every boundary assignment.
+                std::vector<std::vector<unsigned char>> leaf_values(GetSize(leaves));
+                for (int k = 0; k < GetSize(leaves); k++) {
+                    leaf_values[k].resize(size);
+                    for (int a = 0; a < size; a++) leaf_values[k][a] = (a >> k) & 1;
+                }
+                std::vector<unsigned char> zeros(size, 0), ones(size, 1);
+                std::map<int, std::vector<unsigned char>> memo;
+                std::set<int> active;
+                std::function<bool(int)> eval = [&](int n) -> bool {
+                    if (memo.count(n)) return true;
+                    if (!active.insert(n).second) return false;
+                    std::vector<const std::vector<unsigned char> *> tables;
+                    for (auto bit : g.inputs[n]) {
+                        if (bit.wire == nullptr) tables.push_back(bit == State::S1 ? &ones : &zeros);
+                        else {
+                            auto leaf = std::find(leaves.begin(), leaves.end(), bit);
+                            if (leaf != leaves.end()) tables.push_back(&leaf_values[leaf - leaves.begin()]);
+                            else {
+                                int source = g.driver(bit);
+                                if (source < 0 || !inside(source) || !eval(source)) return false;
+                                tables.push_back(&memo.at(source));
+                            }
+                        }
+                    }
+                    std::vector<unsigned char> result(size);
+                    for (int a = 0; a < size; a++) {
+                        if (!budget.spend()) return false;
+                        int address = 0;
+                        for (int j = 0; j < GetSize(tables); j++) address |= (*tables[j])[a] << j;
+                        result[a] = (g.functions[n] >> address) & 1;
+                    }
+                    memo.emplace(n, std::move(result)); active.erase(n); return true;
+                };
+                bool valid = eval(root);
+                if (valid) {
+                    const auto &values = memo.at(root);
+                    std::vector<int> support;
+                    for (int k = 0; k < GetSize(leaves); k++) {
+                        bool depends = false;
+                        for (int a = 0; a < size; a++) if (values[a] != values[a ^ (1 << k)]) { depends = true; break; }
+                        if (depends) support.push_back(k);
+                    }
+                    LocalLutChoice choice; choice.root = root;
+                    choice.remove.assign(removable.begin(), removable.end());
+                    if (GetSize(support) <= 4) {
+                        for (int k : support) choice.free.push_back(leaves[k]);
+                        for (int a = 0; a < (1 << GetSize(support)); a++) {
+                            int key = 0;
+                            for (int j = 0; j < GetSize(support); j++) key |= ((a >> j) & 1) << support[j];
+                            choice.truth |= unsigned(values[key]) << a;
+                        }
+                        if (choice.saved() > best.saved()) best = choice;
+                    } else if (GetSize(removable) >= 2 && GetSize(support) <= 7) {
+                        bool found = false;
+                        for (int width = std::max(2, GetSize(support) - 3); width <= 4 && !found && budget.work; width++) {
+                            for (int bits = 0; bits < (1 << GetSize(support)) && !found && budget.work; bits++) {
+                                if (__builtin_popcount(unsigned(bits)) != width) continue;
+                                std::vector<int> bound, free;
+                                for (int j = 0; j < GetSize(support); j++) ((bits >> j) & 1 ? bound : free).push_back(support[j]);
+                                std::vector<unsigned> classes; unsigned encoding = 0; bool ok = true;
+                                for (int b = 0; b < (1 << width) && ok; b++) {
+                                    unsigned cofactor = 0;
+                                    for (int f = 0; f < (1 << GetSize(free)); f++) {
+                                        if (!budget.spend()) { ok = false; break; }
+                                        int key = 0;
+                                        for (int j = 0; j < width; j++) key |= ((b >> j) & 1) << bound[j];
+                                        for (int j = 0; j < GetSize(free); j++) key |= ((f >> j) & 1) << free[j];
+                                        cofactor |= unsigned(values[key]) << f;
+                                    }
+                                    auto it = std::find(classes.begin(), classes.end(), cofactor);
+                                    if (it == classes.end()) { classes.push_back(cofactor); it = classes.end() - 1; }
+                                    if (GetSize(classes) > 2) ok = false;
+                                    else encoding |= unsigned(it - classes.begin()) << b;
+                                }
+                                if (!ok || GetSize(classes) != 2) continue;
+                                for (int k : bound) choice.bound.push_back(leaves[k]);
+                                for (int k : free) choice.free.push_back(leaves[k]);
+                                choice.encoded = encoding;
+                                choice.truth = classes[0] | (classes[1] << (1 << GetSize(free)));
+                                if (choice.saved() > best.saved()) best = choice;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (GetSize(cone) < 6) for (auto bit : leaves) {
+                int source = g.driver(bit);
+                if (source < 0 || inside(source)) continue;
+                auto next = cone; next.push_back(source); std::sort(next.begin(), next.end()); todo.push_back(next);
+            }
+        }
+    }
+    return best;
+}
+
+static void optimize_local_luts(RTLIL::Design *design)
+{
+    LocalLutBudget budget;
+    int saved = 0, rewrites = 0;
+    for (auto module : design->selected_modules()) {
+        if (module->get_bool_attribute(ID::keep)) continue;
+        bool has_lut = false;
+        for (auto cell : module->selected_cells()) if (cell->type == ID($lut)) { has_lut = true; break; }
+        if (!has_lut) continue;
+        while (budget.cuts && budget.work && budget.rewrites) {
+            LocalLutGraph graph(design, module);
+            if (GetSize(graph.cells) < 2) break;
+            auto choice = find_local_lut(graph, budget);
+            if (choice.root < 0 || choice.saved() <= 0) break;
+            RTLIL::SigSpec input;
+            for (auto bit : choice.free) input.append(bit);
+            if (input.empty() && choice.bound.empty()) {
+                input.append(State::S0);
+                choice.truth = choice.truth ? 3 : 0;
+            }
+            if (!choice.bound.empty()) {
+                RTLIL::SigSpec bound;
+                for (auto bit : choice.bound) bound.append(bit);
+                auto wire = module->addWire(NEW_ID);
+                module->addLut(NEW_ID, bound, wire, RTLIL::Const(choice.encoded, 1 << GetSize(bound)));
+                input.append(wire);
+            }
+            auto root = graph.cells[choice.root];
+            root->setPort(ID::A, input);
+            root->setParam(ID::WIDTH, GetSize(input));
+            root->setParam(ID::LUT, RTLIL::Const(choice.truth, 1 << GetSize(input)));
+            for (int index : choice.remove) module->remove(graph.cells[index]);
+            saved += choice.saved(); ++rewrites; --budget.rewrites;
+        }
+    }
+    log("7.1 local LUT: %d rewrites, %d LUTs removed; cuts %d, work %d.\n", rewrites, saved, 16384 - budget.cuts, 2000000 - budget.work);
+}
 
 
 struct SelectorCondition
@@ -390,7 +650,8 @@ struct PmuxOptPass : public Pass
     void help() override
     {
         log("\n");
-        log("    pmux_opt [selection]\n");
+        log("    pmux_opt [-lut] [selection]\n");
+        log("    -lut: bounded LUT4 factorization after ABC9 (7.1).\n");
         log("\n");
         log("Detect shared-selector $pmux groups and optimize\n");
         log("pair-swap structures across two PMUX cells.\n");
@@ -407,6 +668,12 @@ struct PmuxOptPass : public Pass
         std::vector<std::string> args,
         RTLIL::Design *design) override
     {
+        if (args.size() > 1 && args[1] == "-lut") {
+            extra_args(args, 2, design);
+            log_header(design, "Executing PMUX_OPT local LUT optimization (7.1).\n");
+            optimize_local_luts(design);
+            return;
+        }
         log_header(
             design,
             "Executing PMUX_OPT pair-swap optimization.\n");
