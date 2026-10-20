@@ -198,6 +198,80 @@ def _read_registry_entries(cache_dir):
     return entries
 
 
+def reference_key_matches(candidate, wanted):
+    """Accept the legacy p6 key only when its omitted field means no runtime patch."""
+    if candidate == wanted:
+        return True
+    if "runtime_patch" not in candidate:
+        normalized = dict(candidate)
+        normalized["runtime_patch"] = None
+        return normalized == wanted
+    return False
+
+
+def _read_reference_registry(path):
+    path = Path(path)
+    try:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(entry, dict):
+        return None
+    entry["_file"] = str(path)
+    entry["_reference_file"] = str(path)
+    return entry
+
+
+def _verify_unpatched_reference(entry, cfg):
+    """Check the old source/build registration is a genuinely unpatched p6 pair."""
+    if entry.get("status") != "READY" or entry.get("optimized", {}).get("runtime_patch"):
+        return False
+    if entry.get("abc_source_commit") != _current_abc_commit(cfg):
+        return False
+    expected_status = {
+        "passes/opt/CMakeLists.txt", "techlibs/intel/synth_intel.cc",
+        ALGORITHM_SOURCE_PATH,
+    }
+    for side in ("baseline", "optimized"):
+        spec = entry.get(side) or {}
+        src = Path(spec.get("src_dir", ""))
+        if spec.get("src_commit") != cfg["builtin"].get("source_commit"):
+            return False
+        try:
+            if _git(src, "rev-parse", "HEAD") != spec["src_commit"]:
+                return False
+            driver = (src / "kernel/driver.cc").read_text(encoding="utf-8")
+            committed_driver = _git(src, "show", "HEAD:kernel/driver.cc")
+            # _git() strips surrounding whitespace from command output, including
+            # the source file's final newline. Compare source text without only
+            # that line terminator; retain all other content for the identity check.
+            if (driver.rstrip("\r\n") != committed_driver.rstrip("\r\n")
+                    or "--runtime-json" in driver or "WindowsRuntimeCpu" in driver):
+                return False
+            if side == "baseline":
+                if _git(src, "diff") or _git(src, "status", "--porcelain"):
+                    return False
+            else:
+                tracked = set(_git(src, "diff", "--name-only").splitlines())
+                status_rows = _git(src, "status", "--porcelain").splitlines()
+                # _git() strips the complete output, so the first porcelain row
+                # may lose its leading status-column space. The path starts after
+                # the two status characters in either representation.
+                status_paths = {row[2:].strip().replace("\\", "/")
+                                for row in status_rows if len(row) > 2}
+                if tracked != expected_status - {ALGORITHM_SOURCE_PATH}:
+                    return False
+                if status_paths != expected_status:
+                    return False
+                integration_diff = _git(src, "diff", "--", "passes/opt/CMakeLists.txt",
+                                         "techlibs/intel/synth_intel.cc")
+                if _check_integration_diff(integration_diff) != spec.get("integration_diff_sha256"):
+                    return False
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return False
+    return True
+
+
 def verify_entry_files(entry, sides=("baseline", "optimized")):
     """核对登记条目引用的产物（文件存在 + 哈希一致 + 源码树在）。返回 (ok, reasons)。"""
     reasons = []
@@ -229,12 +303,24 @@ def verify_entry_files(entry, sides=("baseline", "optimized")):
     return (not reasons), reasons
 
 
-def find_cached_optimized(cache_dir, key, *, current_abc_commit=None):
+def find_cached_optimized(cache_dir, key, *, current_abc_commit=None,
+                          reference_registries=(), cfg=None):
     """在缓存命名空间查找可复用的优化版构建（READY + 键匹配 + 产物核对）。"""
-    for e in _read_registry_entries(cache_dir):
+    entries = _read_registry_entries(cache_dir)
+    external = []
+    for path in reference_registries or ():
+        entry = _read_reference_registry(path)
+        if entry is not None:
+            external.append(entry)
+    for e in entries + external:
         if e.get("status") != "READY":
             continue
-        if e.get("key") != key:
+        if e in external:
+            if not reference_key_matches(e.get("key") or {}, key):
+                continue
+            if cfg is None or not _verify_unpatched_reference(e, cfg):
+                continue
+        elif e.get("key") != key:
             continue
         if current_abc_commit and e.get("abc_source_commit") and \
                 e["abc_source_commit"] != current_abc_commit:
@@ -362,8 +448,10 @@ def plan_builtin(cfg, source_sha256, cache_dir=None):
     else:
         out["baseline"] = {"action": "build", "reason": "；".join(breasons) or "无可用 baseline 登记"}
     key = cache_key(cfg, source_sha256)
+    references = cfg["builtin"].get("optimized_reference_registries", ())
     hit = find_cached_optimized(cache_dir, key,
-                                current_abc_commit=_current_abc_commit(cfg))
+                                current_abc_commit=_current_abc_commit(cfg),
+                                reference_registries=references, cfg=cfg)
     if hit:
         out["optimized"] = {"action": "reuse", "path": hit["optimized"]["binary"],
                             "reason": "缓存命中：%s" % hit.get("_file")}
@@ -706,8 +794,24 @@ def prepare_builtin(cfg, source_sha256, source_bytes=None, cache_dir=None):
     bspec, _ = resolve_baseline_reuse(cfg)
     key = cache_key(cfg, source_sha256)
     hit = find_cached_optimized(cache_dir, key,
-                                current_abc_commit=_current_abc_commit(cfg))
+                                current_abc_commit=_current_abc_commit(cfg),
+                                reference_registries=cfg["builtin"].get("optimized_reference_registries", ()),
+                                cfg=cfg)
     record = {"cache_dir": str(cache_dir), "integration_id": INTEGRATION_ID}
+    if hit is not None and hit.get("_reference_file"):
+        imported_name = "v7-reference-" + source_sha256[:12]
+        existing = next((e for e in _read_registry_entries(cache_dir)
+                         if e.get("name") == imported_name and e.get("status") == "READY"
+                         and e.get("key") == key), None)
+        if existing is None:
+            imported = {k: v for k, v in hit.items() if not k.startswith("_")}
+            imported["name"] = imported_name
+            imported["created_at"] = _now()
+            imported["key"] = key
+            imported["imported"] = True
+            imported["imported_from_registry"] = hit["_reference_file"]
+            _write_registry_entry(cache_dir, imported)
+        hit = dict(hit, _file=str(registry_dir(cache_dir) / (imported_name + ".json")))
     if hit is not None and not need_baseline:
         builtin = _assemble_builtin_cfg(cfg, bspec, hit["optimized"])
         record["baseline"] = {"action": "reuse", "path": bspec["binary"],

@@ -549,11 +549,31 @@ def main():
     )
 
     if args.selftest:
+        from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
+        if C.CONTEXT.get('performance_scheme') == SINGLE_WALL_SCHEME:
+            from selfcheck_v7 import run
+            return run(C.CONTEXT, C.ROUND_DIR / '09_时间内存开销_performance/selftest')
         from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
         if C.CONTEXT.get('performance_scheme') == SINGLE_CPU_SCHEME:
             from selfcheck_v6 import run
             return run(C.CONTEXT, C.ROUND_DIR / '09_时间内存开销_performance' / 'selftest')
         return selftest(C.ROUND_DIR / "09_时间内存开销_performance" / "selftest")
+
+    from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
+    if C.CONTEXT.get('performance_scheme') == SINGLE_WALL_SCHEME:
+        import measure_v7
+        if os.name != 'nt' or C.CONTEXT.get('mode') != 'builtin':
+            raise ValueError('v7 requires Windows builtin')
+        if args.pairs is not None or args.out is not None or args.cases != ['test1','test2','test3','test4']:
+            raise ValueError('v7 fixed four-case single-run policy cannot be overridden')
+        binaries = B.select_binaries(C.CONTEXT['builtin'])
+        flows = {}
+        for case in args.cases:
+            rtl = C.stage_to_ascii_bridge(
+                C.TREE / f'pmux_case/competition_case/{case}/{case}.v',
+                f'builtin_inputs/{case}.v')
+            flows[case] = C.gen_builtin_synth_ys(rtl, case)
+        return measure_v7.run(C.CONTEXT, C.ROUND_DIR, binaries, flows)
 
     from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
     if C.CONTEXT.get('performance_scheme') == SINGLE_CPU_SCHEME:

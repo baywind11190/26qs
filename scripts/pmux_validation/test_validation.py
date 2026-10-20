@@ -921,9 +921,11 @@ class BuiltinModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             base = Path(t)
             brepo = base / 'baseline-src'
-            self._git_init(brepo, {'kernel/x.cc': 'int x;\n'})
+            self._git_init(brepo, {'kernel/x.cc': 'int x;\n',
+                                  'kernel/driver.cc': 'int main() {}\n'})
             orepo = base / 'optimized-src'
-            self._git_init(orepo, {'kernel/x.cc': 'int x;\n'})
+            self._git_init(orepo, {'kernel/x.cc': 'int x;\n',
+                                  'kernel/driver.cc': 'int main() {}\n'})
             alg = "// pmux algorithm\nint pmux;\n"
             (orepo / 'passes/opt').mkdir(parents=True, exist_ok=True)
             (orepo / 'passes/opt/pmux_opt.cc').write_bytes(alg.encode('utf-8'))
@@ -948,7 +950,8 @@ class BuiltinModeTests(unittest.TestCase):
                 (bdir / 'share/intel/cycloneiv/cells_sim.v').write_text('// c\n')
                 (bdir / 'share/intel/common').mkdir(parents=True)
                 (bdir / 'share/intel/common/m9k_bb.v').write_text('// m\n')
-            cfg = {'builtin': {
+            cfg = {'performance_scheme': validate.SINGLE_WALL_SCHEME,
+                   'builtin': {
                 'baseline': {'path': str(base / 'baseline-build/yosys'),
                              'src_repo': str(brepo)},
                 'optimized': {'path': str(base / 'optimized-build/yosys'),
@@ -1211,6 +1214,52 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             Path(entry['optimized']['binary']).write_text('replaced-binary')
             self.assertIsNone(P.find_cached_optimized(cache, P.cache_key(cfg, alg_sha)))
 
+    def test_unpatched_reference_accepts_git_stripped_final_newline(self):
+        import prepare_builtin as P
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as t:
+            base = Path(t)
+            commit = 'a' * 40
+            roots = {side: base / side for side in ('baseline', 'optimized')}
+            for root in roots.values():
+                (root / 'kernel').mkdir(parents=True)
+                (root / 'kernel' / 'driver.cc').write_text('int main() {}\n')
+            tracked = {'passes/opt/CMakeLists.txt', 'techlibs/intel/synth_intel.cc'}
+            status = (' M passes/opt/CMakeLists.txt\n'
+                      ' M techlibs/intel/synth_intel.cc\n'
+                      '?? passes/opt/pmux_opt.cc')
+
+            def fake_git(repo, *args):
+                side = Path(repo).name
+                if args == ('rev-parse', 'HEAD'):
+                    return commit
+                if args == ('show', 'HEAD:kernel/driver.cc'):
+                    return 'int main() {}'  # prepare_builtin._git strips the final newline
+                if args == ('diff',):
+                    return ''
+                if args == ('status', '--porcelain'):
+                    # _git() strips the first row's leading status column.
+                    return '' if side == 'baseline' else status.strip()
+                if args == ('diff', '--name-only'):
+                    return '\n'.join(sorted(tracked))
+                if args == ('diff', '--', 'passes/opt/CMakeLists.txt',
+                            'techlibs/intel/synth_intel.cc'):
+                    return 'expected integration diff'
+                raise AssertionError((side, args))
+
+            entry = {
+                'status': 'READY',
+                'abc_source_commit': 'b' * 40,
+                'baseline': {'src_dir': str(roots['baseline']), 'src_commit': commit},
+                'optimized': {'src_dir': str(roots['optimized']), 'src_commit': commit,
+                              'integration_diff_sha256': 'f' * 64},
+            }
+            cfg = {'builtin': {'source_commit': commit}}
+            with mock.patch.object(P, '_git', side_effect=fake_git), \
+                 mock.patch.object(P, '_current_abc_commit', return_value='b' * 40), \
+                 mock.patch.object(P, '_check_integration_diff', return_value='f' * 64):
+                self.assertTrue(P._verify_unpatched_reference(entry, cfg))
+
     def test_build_failure_records_failed_entry_without_publishing(self):
         import prepare_builtin as P
         from unittest import mock
@@ -1325,6 +1374,10 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
             round_dir = base / 'round1'
             (round_dir / '01_来源与环境_meta').mkdir(parents=True)
             (round_dir / '03_脚本与插件_runner').mkdir()   # 指纹函数需要目录存在
+            fake_base_abc = base / 'baseline-yosys-abc.exe'
+            fake_opt_abc = base / 'optimized-yosys-abc.exe'
+            fake_base_abc.write_bytes(b'baseline abc fixture')
+            fake_opt_abc.write_bytes(b'optimized abc fixture')
             fake_builtin = {
                 'baseline': {'path': '/fake/base/yosys', 'src_repo': '/fake/base',
                              'src_commit': 'a' * 40, 'binary_sha256': '1' * 64},
@@ -1333,7 +1386,7 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
                               'algorithm_source_path': 'passes/opt/pmux_opt.cc',
                               'algorithm_source_sha256': 'e' * 64,
                               'integration_diff_sha256': 'f' * 64},
-                'abc': {'baseline': '/fake/base/yosys-abc', 'optimized': '/fake/opt/yosys-abc'},
+                'abc': {'baseline': str(fake_base_abc), 'optimized': str(fake_opt_abc)},
                 'expected_version': '0.69',
                 'integration_evidence': ['passes/opt/pmux_opt.cc'],
             }

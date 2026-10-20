@@ -16,6 +16,7 @@ from measure_format import sample_errors, finite_positive, EXIT_PEAK_SCHEME
 from cpu_statistics import SCHEME as MEAN_CPU_SCHEME, POLICY as CPU_POLICY
 from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME, METHOD as ETW_CPU_METHOD
 from runtime_patch import SCHEME as SINGLE_CPU_SCHEME, METHOD as SINGLE_CPU_METHOD
+from measure_v7 import SCHEME as SINGLE_WALL_SCHEME, METHOD as SINGLE_WALL_METHOD
 
 OVERHEAD_LIMIT_PCT = 5.0
 # 判定使用未舍入值；仅容忍 1e-9 个百分点量级的浮点表示误差（不等于四舍五入后的显示值比较）。
@@ -110,6 +111,9 @@ def sha_file(path):
 
 def judge_case_performance(summ, pairs=5, *, certificate_cache=None):
     """逐例性能判定。无效样本不判通过；5% 边界按不超过处理；不做跨例平均。"""
+    if summ.get('performance_scheme') == SINGLE_WALL_SCHEME:
+        from measure_v7 import judge_case
+        return judge_case(summ)
     if summ.get('performance_scheme') == SINGLE_CPU_SCHEME:
         from measure_v6 import judge_case
         return judge_case(summ)
@@ -442,7 +446,7 @@ def build_report(root, output_root=None, chain_attempt="run01", stages_override=
               "- `validation_context.json`：工具、提交、四例输入套件、代码指纹与隔离检查结果。",
               "- `01_来源与环境_meta/stages.json`：本阶段状态；自检阶段带 `REUSED` 标记时表示按指纹复用。",
               f"- 本报告清单：`{out / 'manifest.json'}`。",
-              f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（生成于运行收尾）。", "",
+              f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（与报告同轮生成或更新）。", "",
               "执行状态与缺证据/需复核一致；阶段完成不等于功能或性能通过；没有擅自补充官方分数。"]
     (output_root / "00_本轮验证结论.md").write_text("\n".join(lines) + "\n")
     return status
@@ -564,11 +568,13 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     prep = ctx.get("builtin_prepare") or {}
     scheme = ctx.get("performance_scheme") or ""
     p6_windows = ctx.get("flow_version") == "official4-p6-windows"
+    single_wall = p6_windows and scheme == SINGLE_WALL_SCHEME
     single_cpu = p6_windows and scheme == SINGLE_CPU_SCHEME
     etw_cpu = p6_windows and scheme == ETW_CPU_SCHEME
     mean_cpu = p6_windows and scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME)
     if mean_cpu:pairs=300
-    exit_peak = p6_windows and scheme in (EXIT_PEAK_SCHEME,MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME)
+    if single_wall:pairs=1
+    exit_peak = p6_windows and scheme in (EXIT_PEAK_SCHEME,MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME)
     area = judge_area(None)
     io_comparisons = {}
 
@@ -651,8 +657,9 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         gate("主进程内存口径", len(perf) == 4 and all(
             p.get("memory_metric") == expected_memory_metric for p in perf))
         if exit_peak:
-            gate('普通CPU与退出事件内存方案身份一致', len(perf) == 4 and all(
-                p.get('performance_scheme') == scheme for p in perf))
+            gate(('PowerShell墙钟与退出事件内存方案身份一致' if single_wall
+                  else '普通CPU与退出事件内存方案身份一致'), len(perf) == 4 and all(
+                      p.get('performance_scheme') == scheme for p in perf))
     expected_pairs = {(c, ch) for c in CASES for ch in BUILTIN_MAIN_CHAINS}
     have_pairs = {(r.get("case"), r.get("chain")) for r in chains}
     func_ok = expected_pairs <= have_pairs and all(
@@ -665,7 +672,15 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     certificate_cache={}
     judgments = [judge_case_performance(p, pairs=pairs,certificate_cache=certificate_cache) for p in perf]
     if mean_cpu or single_cpu:gate('四例性能完整性与绝对限值',v4_non_cpu_performance_ok(judgments))
-    if p6_windows:
+    if single_wall:
+        gate("墙钟与峰值内存完整且绝对限值有效", v4_non_cpu_performance_ok(judgments))
+        gate("PowerShell墙钟相对开销逐例不超过5%", len(judgments) == 4
+             and all(j.get("wall_valid") is True and j.get("wall_5pct") == "PASS"
+                     for j in judgments))
+        gate("Yosys峰值工作内存逐例不超过5%", len(judgments) == 4
+             and all(j.get("memory_valid") is True and j.get("mem_ok") is True
+                     for j in judgments))
+    elif p6_windows:
         gate("CPU相对开销逐例判定", len(judgments) == 4
              and all(j.get("cpu_ok") is True for j in judgments))
         gate("Yosys峰值工作内存逐例判定", len(judgments) == 4
@@ -687,7 +702,17 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         "memory": "PASS" if judgments and len(judgments) == 4
         and all(j.get("mem_ok") is True for j in judgments) else "FAIL",
     }
-    if mean_cpu or single_cpu:
+    if single_wall:
+        category_status.pop("cpu", None)
+        walls = [j.get("wall_5pct", "INVALID") for j in judgments]
+        category_status["wall_time"] = (
+            "NOT_RUN" if not perf else "INVALID" if len(judgments) != 4 or "INVALID" in walls
+            else "FAIL" if "FAIL" in walls else "PASS")
+        category_status["memory"] = (
+            "NOT_RUN" if not perf else "INVALID" if len(judgments) != 4
+            or any(not j.get("memory_valid") for j in judgments)
+            else "FAIL" if any(not j.get("mem_ok") for j in judgments) else "PASS")
+    elif mean_cpu or single_cpu:
         verdicts=[j.get('cpu_verdict','INVALID') for j in judgments]
         category_status['cpu']=('NOT_RUN' if not perf else 'INVALID' if len(verdicts)!=4 or 'INVALID' in verdicts else
                                 'FAIL' if 'FAIL' in verdicts else 'INCONCLUSIVE' if 'INCONCLUSIVE' in verdicts else 'PASS')
@@ -701,10 +726,18 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     alg_ev = ev_all.get("optimized_algorithm_source") or {}
     delivery = judge_delivery(output_root, ctx)
     verification_verdict = 'PASS' if complete else 'FAIL'
-    if mean_cpu or single_cpu:
+    if single_wall:
+        non_performance_gates = {k: v for k, v in gates.items()
+                                 if k not in ('墙钟与峰值内存完整且绝对限值有效',
+                                              'PowerShell墙钟相对开销逐例不超过5%',
+                                              'Yosys峰值工作内存逐例不超过5%',
+                                              '四例性能逐例判定')}
+        verification_verdict = verification_verdict_v4(
+            category_status, all(non_performance_gates.values()))
+    elif mean_cpu or single_cpu:
         non_cpu_gates={k:v for k,v in gates.items() if k not in ('CPU相对开销逐例判定','四例性能逐例判定')}
         verification_verdict=verification_verdict_v4(category_status,all(non_cpu_gates.values()))
-    readiness = 'READY' if complete and delivery['delivery_verdict'] == 'PASS' and not single_cpu else 'NOT_READY'
+    readiness = 'READY' if complete and delivery['delivery_verdict'] == 'PASS' and not (single_cpu or single_wall) else 'NOT_READY'
     manifest = {
         "run_status": status, "mode": "builtin",
         "overall_verdict": verification_verdict,
@@ -728,11 +761,15 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         "category_status": category_status,
         "builtin_prepare": prep,
         "performance_scheme": scheme,
-        'cpu_statistic':'single' if single_cpu else 'arithmetic_mean' if mean_cpu else 'median',
-        'stress_test_status':'WAITING_OFFICIAL_CASES' if single_cpu else 'NOT_IN_SCOPE',
+        'cpu_statistic':'NOT_APPLICABLE' if single_wall else 'single' if single_cpu else 'arithmetic_mean' if mean_cpu else 'median',
+        'wall_time_method':SINGLE_WALL_METHOD if single_wall else None,
+        'wall_time_statistic':'single' if single_wall else None,
+        'wall_time_unit':'milliseconds (TimeSpan.TotalMilliseconds)' if single_wall else None,
+        'wall_time_measurement':'Windows PowerShell 5.1 Microsoft.PowerShell.Utility\\Measure-Command elapsed wall time' if single_wall else None,
+        'stress_test_status':'WAITING_OFFICIAL_CASES' if single_cpu or single_wall else 'NOT_IN_SCOPE',
         'cpu_method_qualification':(_read_json(root/'10_验证工具自检_selfcheck/cpu_method_qualification/qualification_result.json',{})
                                    or _read_json(root/'01_来源与环境_meta/cpu_qualification.json',{})) if mean_cpu and not etw_cpu else None,
-        'cpu_primary_method':SINGLE_CPU_METHOD if single_cpu else ETW_CPU_METHOD if etw_cpu else None,
+        'cpu_primary_method':None if single_wall else SINGLE_CPU_METHOD if single_cpu else ETW_CPU_METHOD if etw_cpu else None,
         'cpu_etw_selfcheck':_read_json(root/'01_来源与环境_meta/cpu_etw_selfcheck.json',{}) if etw_cpu else None,
         "resource_metric": ("cycloneiv_lcell_comb + independent inverter bits"
                             if p6_windows else "cycloneiv_lcell_comb"),
@@ -752,7 +789,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         f"执行状态：**{status}**。",
         f"工程内四例验证：**{verification_verdict}**；交付：**{delivery['delivery_verdict']}**；当前流程就绪：**{readiness}**。",
         "兼容字段 overall_verdict 仅覆盖工程内四例验证；项目就绪另含 C55 与本地 EQY 包检查，不覆盖答辩材料或主办方认可。",
-        f"形态：**内置四例验收（本地，自动内置准备 + 每例 {pairs} 对性能）**——"
+        f"形态：**内置四例验收（本地，自动内置准备 + 每例 "
+        f"{'一次墙钟、一次独立内存' if single_wall else str(pairs) + ' 对性能'}）**——"
         "原版/优化版两份 Yosys 0.69 隔离构建（复用或按目标源码构建，见“工具准备”）；"
         "外部综合脚本两侧逐字节相同、直接调用 `synth_intel`；优化版由 "
         "`synth_intel.cc` 在 `fsm;opt` 之后、`wreduce` 之前自动调用 `pmux_opt`。"
@@ -782,8 +820,11 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
                      f"`{(op.get('logs') or {}).get('dir', '-')}`")
     lines += [
         f"- 缓存命名空间：`{prep.get('cache_dir', '-')}`；登记条目：`{prep.get('registry_entry', '-')}`",
-        f"- 性能方案：`{scheme or '未标记'}`（每例 {pairs} 对、两侧交错；pair 奇 baseline→optimized、"
-        "偶 optimized→baseline）",
+        (f"- 性能方案：`{scheme or '未标记'}`（墙钟按每例 `testN→baseline→optimized`，"
+         "用例顺序为 test1 至 test4；全部墙钟运行后再做独立内存运行）"
+         if single_wall else
+         f"- 性能方案：`{scheme or '未标记'}`（每例 {pairs} 对、两侧交错；pair 奇 baseline→optimized、"
+         "偶 optimized→baseline）"),
         "", "## 检查结果", "", "| 项目 | 结果 |", "|---|---|",
     ]
     lines += [f"| {name} | {'满足' if ok else '未满足或缺证据'} |" for name, ok in gates.items()]
@@ -799,7 +840,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
                   "| 项目 | 结论 |", "|---|---|",
                   f"| Formal（功能等价证明） | {category_status['formal']} |",
                   f"| 资源与逐例缩减率 | {category_status['resources']} |",
-                  f"| CPU 相对开销 | {category_status['cpu']} |",
+                  (f"| PowerShell Measure-Command 墙钟相对开销 | {category_status['wall_time']} |"
+                   if single_wall else f"| CPU 相对开销 | {category_status['cpu']} |"),
                   f"| Yosys 主进程峰值内存 | {category_status['memory']} |", ""]
     lines += ["", "## 四例资源与缩减率", ""]
     if p6_windows:
@@ -848,10 +890,38 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     memory_header = ("PeakWorkingSet 前→后(MiB)" if p6_windows else "RSS 前→后(KiB)")
     lines += ["- COUNTEREXAMPLE_REQUIRES_REVIEW 表示工具报告分区不等价，需复核配置、假设和反例，"
               "不自动断言算法错误；MODEL_UNSUPPORTED 表示映射模型适用条件不满足，保留条件、不强行证明。", "",
-              "## 四例性能（逐例判定）", "",
-              "| 用例 | CPU " + ("单次总时间" if single_cpu else "平均值" if mean_cpu else "中位数") + "前→后(s) | CPU 开销（点估计） | CPU 5% | " + memory_header + " | 内存开销 | 内存 5% | 60s/2GB | 样本有效 |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "## 四例性能（逐例判定）", ""]
+    if single_wall:
+        lines += ["计时类别：**PowerShell Measure-Command 墙钟时间**。时间单位为秒；原始证据同时保存 TimeSpan.Ticks 与 TotalMilliseconds。",
+                  "| 用例 | Measure-Command 墙钟前→后(s) | 墙钟开销 | 5%本地目标 | 15%门槛 | 官方评分状态 | " + memory_header + " | 内存开销 | 内存5% | 60s/2GB | 样本有效 |",
+                  "|---|---:|---:|---|---|---|---:|---:|---|---|---|"]
+    else:
+        lines += ["| 用例 | CPU " + ("单次总时间" if single_cpu else "平均值" if mean_cpu else "中位数") + "前→后(s) | CPU 开销（点估计） | CPU 5% | " + memory_header + " | 内存开销 | 内存 5% | 60s/2GB | 样本有效 |",
+                  "|---|---|---|---|---|---|---|---|---|"]
     for j in judgments:
+        if single_wall:
+            wall = (f"{j['wall_base_ms'] / 1000:.6f}→{j['wall_opt_ms'] / 1000:.6f}"
+                    if j.get('wall_base_ms') is not None and j.get('wall_opt_ms') is not None
+                    else "不可用")
+            midband = j.get("official_midband_score")
+            official_score = ("5%门槛内，官方认可未声明" if midband == "UP_TO_5_THRESHOLD"
+                              else "5%～15%规则尚未明确" if midband == "NOT_DETERMINED"
+                              else "超过15%门槛，无效率分" if midband == "ABOVE_15_THRESHOLD"
+                              else "不可判定")
+            memory = (f"{j['base_memory_mib']:.2f}→{j['opt_memory_mib']:.2f}"
+                      if j.get("base_memory_mib") is not None and j.get("opt_memory_mib") is not None
+                      else "不可用")
+            limit_disp = "不可判断" if not j['valid'] else "满足" if j["limit_ok"] else "超限"
+            if j["limit_bits"].get("wall_exempt_upstream_over_60s") or \
+               j["limit_bits"].get("memory_exempt_upstream_over_2gib"):
+                limit_disp += "（原版超限例外）"
+            lines.append(
+                f"| {j['case']} | {wall} | {_fmt_pct(j.get('wall_overhead_pct'))} | "
+                f"{j.get('wall_5pct')} | {j.get('wall_15pct')} | {official_score} | {memory} | "
+                f"{_fmt_pct(j.get('mem_overhead_pct'))} | "
+                f"{'满足' if j.get('mem_ok') else '未满足'} | {limit_disp} | {j['valid']} |")
+            lines += ['- ' + j['case'] + '：' + reason for reason in j['reasons']]
+            continue
         cpu = f"{j['base_cpu_s']}→{j['opt_cpu_s']}"
         rss = (f"{j['base_memory_mib']:.2f}→{j['opt_memory_mib']:.2f}"
                if p6_windows and j.get("base_memory_mib") is not None
@@ -867,9 +937,11 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
             f"{'满足' if j['mem_ok'] else '未满足'} | {limit_disp} | {j['valid']} |")
         lines += ['- ' + j['case'] + '：' + reason for reason in j['reasons']]
     lines += ["",
-              ("每例每侧一次普通CPU、一次独立内存，共16次；不预热、不平均、不取中位数、不自动补跑。原始整数逐例比较5%。" if single_cpu else "事件CPU每侧300次，原始整数计数取算术平均；平均开销≤5%为PASS，>5%为FAIL。统计区间和A/A差异仅提示，不叠加Job一致性裕量。内存每侧15次中位数。" if etw_cpu else "CPU每侧300次完整普通运行，20批×15对，全部原始整数计数取算术平均。每批5对原版A/A单独统计。配对整批Bootstrap 20000次、种子20261011、近似95%分位区间，加资格裕量为扩展区间；它不是严格95%总误差保证。均值≤5%的点估计与PASS/FAIL/INCONCLUSIVE分开；内存仍每侧15次取中位数。" if mean_cpu else
+              ("V7每例每侧一次 Measure-Command 墙钟运行，8次墙钟完成后另做8次独立内存运行；不预热、不平均、不取中位数、不自动补跑。墙钟相对开销按（优化版−原版）/原版，使用原始 TimeSpan.Ticks 对5%和15%门槛比较。墙钟是经过时间，不标记为CPU时间；Ticks是表示单位，不代表100ns实际精度。官方允许 Measure-Command，但墙钟与早期CPU术语的评分对应关系尚未明确。" if single_wall else
+               "每例每侧一次普通CPU、一次独立内存，共16次；不预热、不平均、不取中位数、不自动补跑。原始整数逐例比较5%。" if single_cpu else "事件CPU每侧300次，原始整数计数取算术平均；平均开销≤5%为PASS，>5%为FAIL。统计区间和A/A差异仅提示，不叠加Job一致性裕量。内存每侧15次中位数。" if etw_cpu else "CPU每侧300次完整普通运行，20批×15对，全部原始整数计数取算术平均。每批5对原版A/A单独统计。配对整批Bootstrap 20000次、种子20261011、近似95%分位区间，加资格裕量为扩展区间；它不是严格95%总误差保证。均值≤5%的点估计与PASS/FAIL/INCONCLUSIVE分开；内存仍每侧15次取中位数。" if mean_cpu else
                f"每侧 {pairs} 次交错运行、取中位数；相对开销 =（优化版-原版）/原版，逐例与 5% 比较（边界值按不超过处理；不跨例平均、不使用舍入后的显示值）。"),
-              ("CPU由Yosys主函数中的私有Job累计用户态与内核态时间，包含已退出ABC及其子进程。入口建立计量至退出前读取；不含计量文件写入和操作系统最后退出尾段。100ns是计数单位，不是精度保证。外部Job及墙钟仅诊断，调试运行CPU不评分。" if single_cpu else "CPU来自ETW线程切换事件，包含Yosys和全部子进程含ABC；扣除DPC/ISR，完整生命周期核验，无事件或资源证据不回退Job。每批独立采集，全部CPU分析后再测退出事件内存；调试CPU不计分。" if etw_cpu else "CPU与A/A全部完成后，再测根进程退出事件内存；两侧相同外部脚本，各次资源统计与对应正式综合一致。CPU来自未调试的Job Object，包含ABC；调试CPU不得评分。首轮、慢样本和原始计数保留，不预热、不扣启动，不追加采样。" if mean_cpu else
+              ("V7在 Windows PowerShell 5.1 中用 Microsoft.PowerShell.Utility\\Measure-Command 包裹直接启动 yosys.exe、并发收集 stdout/stderr、等待退出并排空输出流；PowerShell启动、工具构建、EQY、结果检查和报告生成不计入墙钟。" if single_wall else
+               "CPU由Yosys主函数中的私有Job累计用户态与内核态时间，包含已退出ABC及其子进程。入口建立计量至退出前读取；不含计量文件写入和操作系统最后退出尾段。100ns是计数单位，不是精度保证。外部Job及墙钟仅诊断，调试运行CPU不评分。" if single_cpu else "CPU来自ETW线程切换事件，包含Yosys和全部子进程含ABC；扣除DPC/ISR，完整生命周期核验，无事件或资源证据不回退Job。每批独立采集，全部CPU分析后再测退出事件内存；调试CPU不计分。" if etw_cpu else "CPU与A/A全部完成后，再测根进程退出事件内存；两侧相同外部脚本，各次资源统计与对应正式综合一致。CPU来自未调试的Job Object，包含ABC；调试CPU不得评分。首轮、慢样本和原始计数保留，不预热、不扣启动，不追加采样。" if mean_cpu else
                "CPU用独立的普通Job Object运行，包含ABC子进程；内存另用同输入同脚本的根进程退出调试事件运行，只计Yosys。每侧15个CPU样本和15个内存样本各取中位数，两次运行的日志、统计和退出状态全部保留。调试运行CPU不用于CPU评分。"
                if exit_peak else
                "CPU 使用 Windows Job Object 累计用户态与内核态时间，包含 ABC 子进程；内存每 5 ms 读取存活中的 Yosys 主进程 PeakWorkingSetSize 累计峰值字段，"
@@ -896,8 +968,12 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
               "其他硬件资源对照：" + json.dumps({p.get("case"): p.get("other_resources") for p in pub}, ensure_ascii=False),
               f"- `10_验证工具自检_selfcheck/chains/{chain_attempt}/`：功能证明（含支持配置预检与逐分区证据）。",
               f"- 本报告清单：`{out / 'manifest.json'}`。",
-              f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（生成于运行收尾）。", "",
+              f"- 全量证据哈希：`{out / 'ALL_SHA256.txt'}`（与报告同轮生成或更新）。", "",
               "阶段完成不等于功能或性能通过；缺失证据与需复核项保持原样记录；没有擅自补充官方分数。"]
+    if single_wall:
+        lines += ['', 'V7仅覆盖当前本地公开用例 test1～test4，不能代表全部官方效率测试；新增官方效率用例尚待提供。',
+                  '5%～15%之间的官方评分规则尚未明确；>15%按最新答疑“不计效率分”的门槛单列。官方允许PowerShell Measure-Command，不等于主办方已认可本地具体实现或墙钟与CPU术语的评分对应。',
+                  'V7复用退出事件内存法（只计Yosys主进程，不含ABC）；V7没有交付包复核证据，交付为NOT_RUN、当前就绪为NOT_READY。']
     if single_cpu:
         lines += ['', '千节点压力测试：WAITING_OFFICIAL_CASES，等待官方统一用例；四例结果不外推。',
                   '依据最新答疑C87，CPU和内存相对开销不得超过5%；不推算未明确的扣分公式。',

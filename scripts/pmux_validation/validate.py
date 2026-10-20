@@ -37,6 +37,7 @@ from cpu_statistics import SCHEME as MEAN_CPU_SCHEME, POLICY as CPU_POLICY
 from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
 import runtime_patch
 from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME
+from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
 
 # 插件预检的阶段计划（默认调度只含四例所需内容；不含回归/H2/规模/多驱动）。
 PLUGIN_PLAN = (
@@ -150,8 +151,8 @@ def verify_package_manifest(package):
             problems.append("内容与清单不符: " + rel)
     active = [package / n for n in ("validate.py", "report.py", "test_validation.py", "test_p5.py",
                                     'test_windows_hardening.py', 'test_cpu_v4.py', 'package_windows.py', 'package_qa.py',
-                                    "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
-                                    "validate_windows.cmd")]
+                                    'test_measure_v7.py', "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
+                                    "config.windows.v7.json", "validate_windows.cmd", "validate_windows_v7.cmd")]
     for sub in ("runner", "suite-official4"):
         active += [p for p in (package / sub).rglob("*")
                    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".so"]
@@ -207,11 +208,14 @@ def yosys_share_root(binary):
 def validate_performance_policy(cfg):
     scheme=cfg.get('performance_scheme')
     if scheme not in (None,'pmux-perf-15p-mainrss-v2','pmux-perf-5p-mainrss-v1',
-                       'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME):
+                       'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME):
         raise ValueError('Unknown performance scheme; cannot infer measurement policy')
     if scheme == SINGLE_CPU_SCHEME:
         from measure_v6 import POLICY
         if cfg.get('cpu_policy') != POLICY or cfg.get('performance_pairs') != 1: raise ValueError('v6 fixed policy mismatch')
+    if scheme == SINGLE_WALL_SCHEME:
+        from measure_v7 import POLICY
+        if cfg.get('wall_policy') != POLICY: raise ValueError('v7 fixed wall-time policy mismatch')
     if scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME):
         if cfg.get('cpu_policy')!=CPU_POLICY:raise ValueError('v4 fixed CPU policy mismatch')
         reference=cfg.get('cpu_reference_tools') or {}
@@ -219,8 +223,8 @@ def validate_performance_policy(cfg):
             raise ValueError('v4 independent reference dependency missing: configure existing WPR and xperf paths')
 
 
-def preflight(commit):
-    config_path = CONFIG_PATH
+def preflight(commit, config_path=None):
+    config_path = Path(config_path).resolve() if config_path else CONFIG_PATH
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     validate_performance_policy(cfg)
     if os.name == 'nt':
@@ -238,6 +242,24 @@ def preflight(commit):
             version = subprocess.check_output([str(path), '--version'], encoding='utf-8', errors='replace').splitlines()[0]
             runtime[name] = dict(spec, resolved=resolved, version=version)
         cfg['runtime_identity'] = runtime
+        if cfg.get('performance_scheme') == SINGLE_WALL_SCHEME:
+            spec = cfg.get('wall_time_tool') or {}
+            powershell = Path(spec.get('path', ''))
+            if not powershell.is_file() or digest(powershell) != spec.get('sha256'):
+                raise ValueError('Fixed Windows PowerShell missing or SHA-256 mismatch: ' + str(powershell))
+            ps_command = (
+                "$cmd=Get-Command -Name 'Microsoft.PowerShell.Utility\\Measure-Command' -CommandType Cmdlet;"
+                "if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 "
+                "-or $cmd.ModuleName -ne 'Microsoft.PowerShell.Utility') { exit 7 };"
+                "[Console]::WriteLine($PSVersionTable.PSVersion.ToString())"
+            )
+            ps_version = subprocess.check_output(
+                [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', ps_command],
+                encoding='utf-8', errors='replace', timeout=30).strip().splitlines()[-1]
+            if not ps_version.startswith('5.1.'):
+                raise ValueError('Windows PowerShell 5.1 required; got ' + ps_version)
+            cfg['wall_time_tool_identity'] = dict(spec, version=ps_version,
+                                                  cmdlet='Microsoft.PowerShell.Utility\\Measure-Command')
     repo = Path(cfg["repo"])
     if not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
         raise ValueError("Supply a Git commit hash (7-40 hex characters), not a branch or file SHA-256")
@@ -379,6 +401,19 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
                 missing.append("优化版源码 diff 与登记集成补丁不一致（改动被调整或未登记）")
             elif not want and diff_text:
                 missing.append("优化版源码存在未登记的未提交改动")
+        if cfg.get('performance_scheme') == SINGLE_WALL_SCHEME:
+            try:
+                committed_driver = git(src, 'show', 'HEAD:kernel/driver.cc')
+                current_driver = (src / 'kernel/driver.cc').read_text(encoding='utf-8')
+                # git() strips the command's surrounding whitespace; ignore only
+                # the committed file's final line terminator for the comparison.
+                if current_driver.rstrip('\r\n') != committed_driver.rstrip('\r\n'):
+                    raise ValueError(side + ' source includes a modified Yosys runtime driver')
+                if '--runtime-json' in current_driver or 'WindowsRuntimeCpu' in current_driver:
+                    raise ValueError(side + ' source contains the V6 internal CPU runtime patch')
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                missing.append(str(exc))
+        if side == "optimized":
             alg_rel = spec.get("algorithm_source_path", "passes/opt/pmux_opt.cc")
             alg = src / alg_rel
             if not alg.is_file():
@@ -572,6 +607,9 @@ def selfcheck_fingerprints(cfg, runner_dir):
         "compiler_sha256": cfg.get('tools',{}).get('compiler',{}).get('sha256'),
         "platform": cfg.get('platform'),
         "performance_scheme": cfg.get("performance_scheme"),
+        "config_sha256": cfg.get("config_sha256"),
+        "wall_time_tool_identity": cfg.get("wall_time_tool_identity"),
+        "wall_time_method": cfg.get("wall_time_method"),
         "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
         "flow_version": cfg["flow_version"],
         "model_version": cfg.get("model_version"),
@@ -602,6 +640,16 @@ def cache_entry_valid(cache, stage, fingerprints):
         evidence = entry.get('measurement_evidence') or {}
         path = Path(evidence.get('path',''))
         return path.is_file() and digest(path) == evidence.get('sha256')
+    if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_WALL_SCHEME:
+        evidence = entry.get('measurement_evidence') or {}
+        path = Path(evidence.get('path', ''))
+        if not path.is_file() or digest(path) != evidence.get('sha256'):
+            return False
+        try:
+            proof = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return False
+        return proof.get('selftest_ok') is True and proof.get('method') == 'powershell-measure-command-elapsed-wall-v1'
     return matched
 
 
@@ -614,6 +662,10 @@ def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
     if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_CPU_SCHEME and ok:
         proof = Path(evidence_root) / '09_时间内存开销_performance/selftest/selftest_results.json'
         if not proof.is_file(): raise ValueError('v6 selfcheck evidence missing')
+        entries[stage]['measurement_evidence'] = dict(path=str(proof),sha256=digest(proof))
+    if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_WALL_SCHEME and ok:
+        proof = Path(evidence_root) / '09_时间内存开销_performance/selftest/selftest_results.json'
+        if not proof.is_file(): raise ValueError('v7 selfcheck evidence missing')
         entries[stage]['measurement_evidence'] = dict(path=str(proof),sha256=digest(proof))
     # 首次运行时共享缓存目录可能尚不存在，写入前创建父目录。
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -673,7 +725,7 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
     save(meta / "stages.json", stages)
 
     runner = root / "03_脚本与插件_runner"
-    cache_path = Path(cfg["repo"]) / SELFCHECK_CACHE_REL
+    cache_path = Path(cfg["repo"]) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
     fingerprints = selfcheck_fingerprints(cfg, runner)
     cache = load_selfcheck_cache(cache_path)
     failed = set()
@@ -687,7 +739,7 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
             stage_plan.insert(3,('cpu_etw_selfcheck','cpu_selfcheck_v5.py',()))
         for name, script, args in stage_plan:
             if name == "performance":
-                args = () if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME) else ("--pairs", str(cfg["performance_pairs"]))
+                args = () if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME) else ("--pairs", str(cfg["performance_pairs"]))
             if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
                 stages.append({"name": name, "state": "NOT_RUN", "reason": "dependency failed"})
                 failed.add(name)
@@ -737,7 +789,7 @@ def run_plugin(cfg, source, label, chains, function_only=False, frozen_round=Non
     print("ROUND=" + str(root), flush=True)
     stages = []
     runner = root / "03_脚本与插件_runner"
-    cache_path = Path(cfg["repo"]) / SELFCHECK_CACHE_REL
+    cache_path = Path(cfg["repo"]) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
     from report import build_report
     status = "NEEDS_REVIEW"
     try:
@@ -819,7 +871,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("action", choices=["plan", "run"])
     ap.add_argument("commit")
-    ap.add_argument("--label", default=ROUND_LABEL_DEFAULT)
+    ap.add_argument("--label", default=None)
+    ap.add_argument("--config", default=None,
+                    help="指定独立流程配置；默认仍选择平台现行配置")
     ap.add_argument("--mode", choices=["builtin", "plugin"], default="builtin",
                     help="builtin=内置四例验收（默认；未就绪时阻断并记录）；plugin=显式四例插件预检")
     ap.add_argument("--chains", choices=["main", "full"], default="main",
@@ -832,13 +886,16 @@ def main():
                     help="内置构建缓存命名空间（默认 config.builtin.cache_dir；仅影响 builtin 模式；"
                          "用于复用检查与空缓存未命中构建验证）")
     args = ap.parse_args()
-    if not re.fullmatch(r"[\w\-]+", args.label):
+    if args.label is not None and not re.fullmatch(r"[\w\-]+", args.label):
         ap.error("Label may contain only letters, digits, Chinese, underscore and hyphen")
     if args.function_only and args.mode != "plugin":
         ap.error("--function-only 仅适用于 --mode plugin")
     if args.frozen_round and not args.function_only:
         ap.error("--frozen-round 需要与 --function-only 一起使用")
-    cfg, source = preflight(args.commit)
+    cfg, source = preflight(args.commit, args.config)
+    if args.label is None:
+        args.label = ("WindowsPowerShell墙钟计时_v7" if cfg.get('performance_scheme') == SINGLE_WALL_SCHEME
+                      else ROUND_LABEL_DEFAULT)
     if args.action == "plan":
         sys.path.insert(0, str(PACKAGE / "runner"))
         from prepare_builtin import plan_builtin
@@ -850,16 +907,19 @@ def main():
         elif cfg.get('performance_scheme')==ETW_CPU_SCHEME:
             from cpu_selfcheck_v5 import status as etw_status
             cpu_method=etw_status(cfg)
-        print(json.dumps({k: cfg[k] for k in ["target_commit", "source_sha256", "flow_version",
+        print(json.dumps({k: cfg.get(k) for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
               "performance_pairs", "performance_scheme", "tool_data_checked"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({"mode_default": "builtin", "builtin_plan": plan,
                           'cpu_policy':cfg.get('cpu_policy'),'cpu_method_qualification':cpu_method,
-                          'performance_expected_runs':16 if cfg.get('performance_scheme')==SINGLE_CPU_SCHEME else 2720 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else None,
+                          'performance_expected_runs':16 if cfg.get('performance_scheme') in (SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME) else 2720 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else None,
+                          'wall_policy':cfg.get('wall_policy'),'wall_time_tool_identity':cfg.get('wall_time_tool_identity'),
+                          'wall_runs_per_case':1 if cfg.get('performance_scheme')==SINGLE_WALL_SCHEME else None,
+                          'wall_runs_total':8 if cfg.get('performance_scheme')==SINGLE_WALL_SCHEME else None,
                           'cpu_pairs_per_case':300 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
                           'memory_pairs_per_case':15 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
-                          'performance_estimate_note':'16次目标性能运行，无预热/重采样/ETW；构建、自检、功能证明另计' if cfg.get('performance_scheme')==SINGLE_CPU_SCHEME else '2720次历史性能方案',
+                          'performance_estimate_note':'16次目标性能运行，无预热/重采样/ETW；构建、自检、功能证明另计' if cfg.get('performance_scheme') in (SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME) else '2720次历史性能方案',
                           "runtime_identity": cfg.get('runtime_identity'),
                           "note": "plan 只读：不创建轮次/构建目录、不编译、不登记。run 默认先自动准备"
                                   "（复用或构建）再执行内置四例验收；四例插件预检需 --mode plugin。"},
@@ -868,7 +928,7 @@ def main():
         return 0
     if args.mode == "builtin":
         return run_builtin(cfg, source, args.label, build_cache_dir=args.builtin_cache_dir)
-    if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME):
+    if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME):
         raise ValueError('mean CPU policy is Windows builtin-only; no plugin substitution')
     frozen = None
     if args.frozen_round:
