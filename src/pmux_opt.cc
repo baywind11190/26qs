@@ -440,7 +440,8 @@ struct PmuxOptPass : public Pass
              * 在 selector 已知 control == CONST 的前提下，
              * 对 branch 数据锥进行条件常量传播。
              *
-             * 其他未知输入统一视为 X。
+             * 其他未知输入保留为符号信号；不能用 X===X
+             * 推导两个独立未知输入恒等。
              */
             std::unique_ptr<ConstEval> branch_consteval;
 
@@ -1492,7 +1493,7 @@ if (pattern_d_candidates > 0)
                         }
 
                         if (!branch_consteval)
-                            branch_consteval.reset(new ConstEval(module, RTLIL::State::Sx));
+                            branch_consteval.reset(new ConstEval(module));
                         branch_consteval->clear();
 
                         branch_consteval->set(
@@ -1512,20 +1513,9 @@ if (pattern_d_candidates > 0)
                         /*
                          * eval 失败时完全保持原 branch。
                          *
-                         * eval 成功后不要求整个 branch
-                         * 都是常量：
-                         *
-                         *   0 / 1 -> 替换
-                         *   X / Z -> 保留原信号
-                         *
-                         * 这样可以处理：
-                         *
-                         *   { external_data,
-                         *     expression(control),
-                         *     external_data,
-                         *     expression(control) }
-                         *
-                         * 这种部分可折叠的 branch。
+                         * 未确定的外部输入保持为独立符号；若求值失败，
+                         * 整个分支保持原样，包括混合数据分支。
+                         * 成功时只替换可确定的 0/1 位，X/Z 位仍保留原信号。
                          */
                         if (!eval_ok)
                         {

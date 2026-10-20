@@ -27,10 +27,13 @@ log("BRANCH WORK builds=%d evals=%d\\n",test_builds,test_evals);
 });
 ''')
     eager = 'ConstEval branch_consteval(\n                module,\n                RTLIL::State::Sx);'
-    lazy = 'branch_consteval.reset(new ConstEval(module, RTLIL::State::Sx));'
-    assert (eager in source) != (lazy in source)
+    lazies = ['branch_consteval.reset(new ConstEval(module, RTLIL::State::Sx));',
+              'branch_consteval.reset(new ConstEval(module));']
+    assert int(eager in source) + sum(lazy in source for lazy in lazies) == 1
     if eager in source: source = source.replace(eager,'++test_builds;\n'+eager)
-    else: source = source.replace(lazy,'{ ++test_builds; '+lazy+' }')
+    else:
+        for lazy in lazies:
+            source = source.replace(lazy,'{ ++test_builds; '+lazy+' }')
     token = 'bool eval_ok ='
     assert source.count(token) == 1
     return source.replace(token,'++test_evals;\n'+token)
