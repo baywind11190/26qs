@@ -1,0 +1,32 @@
+{
+  "work": "D:\\codex\\02_嵌赛\\临时执行记录\\内部周期试验_20261013_233212",
+  "protected_files": 196,
+  "status": "STOPPED_TREE_GATE",
+  "result": "D:\\codex\\0000_26qs\\results\\官方口径评测\\2026-10-13_2335_内部周期CPU小规模试验_v1_b87e3ab_第01轮",
+  "probe": "D:\\codex\\0000_26qs\\.tools\\cache-cpu-internal-pilot-v1\\f395c193a3b1ce3e\\probe.exe",
+  "probe_sha256": "8ace01835bca3bd72120aa0c673ad439ba8017f998a084a5619cea16c10fd7e8",
+  "selected_hz": 2495277375.0,
+  "verdict": "仅部分计量可行",
+  "synthesis_runs": 0,
+  "stop_reasons": [
+    "exited_outside_bracket",
+    "handles_closed_outside_bracket"
+  ],
+  "executed_probe_source": "D:\\codex\\0000_26qs\\.tools\\cache-cpu-internal-pilot-v1\\f395c193a3b1ce3e\\probe_executed.cc",
+  "executed_probe_source_sha256": "adff0298f2d22a47a8d5a203e14bb4957a8c365545bd39bd4c9a75603f68745b",
+  "finalization": {
+    "result": "D:\\codex\\0000_26qs\\results\\官方口径评测\\2026-10-13_2335_内部周期CPU小规模试验_v1_b87e3ab_第01轮",
+    "files": 20,
+    "bytes": 71960,
+    "MiB": 0.06862640380859375,
+    "cache_bytes": 387536,
+    "cache_MiB": 0.3695831298828125,
+    "protected_files": 196,
+    "protected_changed": [],
+    "native_probe_runs": 3,
+    "explicit_children": 2,
+    "synthesis_runs": 0,
+    "tests": 6,
+    "verdict": "仅部分计量可行"
+  }
+}

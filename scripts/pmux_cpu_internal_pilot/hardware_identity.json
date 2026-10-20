@@ -1,0 +1,9 @@
+{
+  "os": "Microsoft Windows 11 家庭版 中文版",
+  "version": "10.0.26100",
+  "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics",
+  "manufacturer": "AuthenticAMD",
+  "cores": 16,
+  "logical_processors": 32,
+  "source": "Win32_OperatingSystem/Win32_Processor read-only CIM query on 2026-10-13"
+}
