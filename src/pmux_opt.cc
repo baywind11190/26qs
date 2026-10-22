@@ -49,6 +49,8 @@
 #include "kernel/celltypes.h"
 #include <functional>
 #include <set>
+#include <array>
+#include <cstdint>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -141,6 +143,50 @@ struct LocalLutChoice
     int saved() const { return GetSize(remove) - (bound.empty() ? 0 : 1); }
 };
 
+// Up to eight boundary variables: one bit per assignment, at most four words.
+struct LocalLutTruth
+{
+    std::array<uint64_t, 4> words{};
+    bool operator[](int address) const { return (words[address >> 6] >> (address & 63)) & 1; }
+
+    static LocalLutTruth constant(bool value)
+    {
+        LocalLutTruth result;
+        if (value) result.words.fill(~uint64_t(0));
+        return result;
+    }
+
+    static LocalLutTruth variable(int bit)
+    {
+        static const uint64_t patterns[] = {
+            UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0xcccccccccccccccc),
+            UINT64_C(0xf0f0f0f0f0f0f0f0), UINT64_C(0xff00ff00ff00ff00),
+            UINT64_C(0xffff0000ffff0000), UINT64_C(0xffffffff00000000)
+        };
+        LocalLutTruth result;
+        for (int w = 0; w < 4; w++)
+            result.words[w] = bit < 6 ? patterns[bit] : ((w >> (bit - 6)) & 1 ? ~uint64_t(0) : 0);
+        return result;
+    }
+
+    static LocalLutTruth evaluate(unsigned truth, const std::array<const LocalLutTruth *, 4> &inputs,
+                                  int width, int word_count)
+    {
+        LocalLutTruth result;
+        for (int w = 0; w < word_count; w++) {
+            uint64_t cofactors[16];
+            for (int k = 0; k < (1 << width); k++) cofactors[k] = (truth >> k) & 1 ? ~uint64_t(0) : 0;
+            for (int bit = 0; bit < width; bit++)
+                for (int k = 0; k < (1 << (width - bit - 1)); k++) {
+                    uint64_t a = cofactors[2*k], b = cofactors[2*k+1];
+                    cofactors[k] = a ^ ((a ^ b) & inputs[bit]->words[w]);
+                }
+            result.words[w] = cofactors[0];
+        }
+        return result;
+    }
+};
+
 static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
 {
     LocalLutChoice best;
@@ -179,37 +225,33 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
                 int size = 1 << GetSize(leaves);
                 // Compute each node's whole table once. Driver lookups and
                 // recursion must not repeat for every boundary assignment.
-                std::vector<std::vector<unsigned char>> leaf_values(GetSize(leaves));
-                for (int k = 0; k < GetSize(leaves); k++) {
-                    leaf_values[k].resize(size);
-                    for (int a = 0; a < size; a++) leaf_values[k][a] = (a >> k) & 1;
-                }
-                std::vector<unsigned char> zeros(size, 0), ones(size, 1);
-                std::map<int, std::vector<unsigned char>> memo;
+                std::vector<LocalLutTruth> leaf_values;
+                for (int k = 0; k < GetSize(leaves); k++) leaf_values.push_back(LocalLutTruth::variable(k));
+                auto zeros = LocalLutTruth::constant(false), ones = LocalLutTruth::constant(true);
+                std::map<int, LocalLutTruth> memo;
                 std::set<int> active;
                 std::function<bool(int)> eval = [&](int n) -> bool {
                     if (memo.count(n)) return true;
                     if (!active.insert(n).second) return false;
-                    std::vector<const std::vector<unsigned char> *> tables;
+                    std::array<const LocalLutTruth *, 4> tables{};
+                    int width = 0;
                     for (auto bit : g.inputs[n]) {
-                        if (bit.wire == nullptr) tables.push_back(bit == State::S1 ? &ones : &zeros);
+                        if (bit.wire == nullptr) tables[width++] = bit == State::S1 ? &ones : &zeros;
                         else {
                             auto leaf = std::find(leaves.begin(), leaves.end(), bit);
-                            if (leaf != leaves.end()) tables.push_back(&leaf_values[leaf - leaves.begin()]);
+                            if (leaf != leaves.end()) tables[width++] = &leaf_values[leaf - leaves.begin()];
                             else {
                                 int source = g.driver(bit);
                                 if (source < 0 || !inside(source) || !eval(source)) return false;
-                                tables.push_back(&memo.at(source));
+                                tables[width++] = &memo.at(source);
                             }
                         }
                     }
-                    std::vector<unsigned char> result(size);
-                    for (int a = 0; a < size; a++) {
-                        if (!budget.spend()) return false;
-                        int address = 0;
-                        for (int j = 0; j < GetSize(tables); j++) address |= (*tables[j])[a] << j;
-                        result[a] = (g.functions[n] >> address) & 1;
-                    }
+                    // Charge the original scalar work, including partial exhaustion.
+                    // Batching must not expand the search or change candidate order.
+                    if (budget.work < size) { budget.work = 0; return false; }
+                    budget.work -= size;
+                    auto result = LocalLutTruth::evaluate(g.functions[n], tables, width, (size + 63) / 64);
                     memo.emplace(n, std::move(result)); active.erase(n); return true;
                 };
                 bool valid = eval(root);
