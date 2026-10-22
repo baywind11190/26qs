@@ -11,7 +11,8 @@
     tee -o stat.json stat -json
 
 优化版由 synth_intel.cc 内部在 fsm;opt 之后、wreduce 之前自动调用
-pmux_opt（原版不含该调用）；两侧独立目录、独立进程运行同一脚本，
+pmux_opt（原版不含该调用）；p3-local-lut 还在 map_luts 末尾执行 pmux_opt -lut，
+post_abc.il 在局部 LUT 优化完成后导出。两侧独立目录、独立进程运行同一脚本，
 输出路径差异由各自工作目录处理（相对输出名）。
 
 输出：05_公开四例_public/round01/<case>/<side>/（flow.ys、run.log、
@@ -28,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import builtin_common as B
+import integration_profiles as I
 
 
 def run_case(top: str, out_root: Path) -> dict:
@@ -77,6 +79,15 @@ def run_case(top: str, out_root: Path) -> dict:
             raise RuntimeError("{} optimized 缺少内置 pmux_opt 执行证据".format(top))
         if side == "baseline" and "Executing PMUX_OPT" in log_text:
             raise RuntimeError("{} baseline 出现 PMUX_OPT 执行痕迹".format(top))
+        if side == 'optimized':
+            calls = I.check_calls(log_text, I.identity(C.CONTEXT), require_export=True)
+            if not calls['ok']:
+                raise RuntimeError(f'{top}: integration calls/export position invalid: {calls}')
+            result['optimized_integration_calls'] = calls
+        result[side + '_formal_netlist_description'] = (
+            'after ABC9 and 7.1 local LUT, before map_cells'
+            if side == 'optimized' and I.identity(C.CONTEXT) == I.LOCAL_ID
+            else 'after ABC9, before map_cells')
 
         result.update({
             "{}_split_full_resources_match".format(side): True,
@@ -156,8 +167,9 @@ def main():
 
     summary = {
         "round": C.ROUND_DIR.name,
+        'integration_id': I.identity(C.CONTEXT),
         "flow": ("builtin synth_intel (pmux_opt inside synth_intel.cc between fsm;opt "
-                 "and wreduce); external script identical for both sides"),
+                 "and wreduce; optional registered local LUT after ABC9); external script identical for both sides"),
         "cases": rows,
         "resource_metric": "cycloneiv_lcell_comb + independent inverter bits",
         "public_mean_logic_reduction_pct": mean_logic,

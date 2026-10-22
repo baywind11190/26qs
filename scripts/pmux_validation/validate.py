@@ -2,12 +2,12 @@
 """PMUX 官方四例验证入口；Windows 默认加载 official4-p6-windows 配置。
 
 内置验收先按平台和工具身份复用或构建 Yosys，再运行四例综合、ABC9 后网表
-功能证明、映射资源统计与逐例 CPU/内存测量。Windows p6 统计独立取反位并计入
-逻辑单元，CPU 使用 Job Object 累计子进程，内存读取 Yosys 主进程峰值工作集。
+功能证明、映射资源统计与逐例性能测量。当前 V7 使用 PowerShell 墙钟时间及
+独立退出事件内存，旧 V6 CPU 口径保留。p3-local-lut 集成覆盖 ABC9 后局部 LUT。
 准备或身份检查失败时保留阻断记录，不加载插件或静默切换流程。
 
-在 Windows 使用 `validate_windows.cmd plan <commit>` 只读检查，使用
-`validate_windows.cmd run <commit>` 执行。Linux 的 `config.json` 保留历史 p5
+在 Windows 使用 `validate_windows_v7.cmd plan <commit>` 只读检查，使用
+`validate_windows_v7.cmd run <commit>` 执行。Linux 的 `config.json` 保留历史 p5
 兼容入口；Windows 的 `config.windows.json` 与 p6 结果分开保存。
 
 范围与判定规则见同目录 POLICY.md；本入口固定官方公开四例（test1~test4），
@@ -38,6 +38,7 @@ from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
 import runtime_patch
 from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME
 from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
+import integration_profiles as I
 
 # 插件预检的阶段计划（默认调度只含四例所需内容；不含回归/H2/规模/多驱动）。
 PLUGIN_PLAN = (
@@ -151,7 +152,7 @@ def verify_package_manifest(package):
             problems.append("内容与清单不符: " + rel)
     active = [package / n for n in ("validate.py", "report.py", "test_validation.py", "test_p5.py",
                                     'test_windows_hardening.py', 'test_cpu_v4.py', 'package_windows.py', 'package_qa.py',
-                                    'test_measure_v7.py', "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
+                                    'test_measure_v7.py', 'test_local_lut_integration.py', "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
                                     "config.windows.v7.json", "validate_windows.cmd", "validate_windows_v7.cmd")]
     for sub in ("runner", "suite-official4"):
         active += [p for p in (package / sub).rglob("*")
@@ -223,7 +224,7 @@ def validate_performance_policy(cfg):
             raise ValueError('v4 independent reference dependency missing: configure existing WPR and xperf paths')
 
 
-def preflight(commit, config_path=None):
+def preflight(commit, config_path=None, integration_profile='p3'):
     config_path = Path(config_path).resolve() if config_path else CONFIG_PATH
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     validate_performance_policy(cfg)
@@ -267,6 +268,10 @@ def preflight(commit, config_path=None):
     source = subprocess.check_output(["git", "-C", str(repo), "show", sha + ":src/pmux_opt.cc"])
     if not source:
         raise ValueError("Empty algorithm source")
+    patch = None
+    if git(repo, 'ls-tree', '--name-only', sha, '--', I.PATCH_PATH):
+        patch = subprocess.check_output(['git', '-C', str(repo), 'show', sha + ':' + I.PATCH_PATH])
+    I.configure(cfg, integration_profile, patch)
     # 本流程构建单个独立翻译单元；新的本地源码依赖需要审核构建方式。
     includes = re.findall(rb'^\s*#\s*include\s*"([^"\n]+)"', source, re.M)
     for inc in includes:
@@ -309,6 +314,10 @@ def preflight(commit, config_path=None):
                tool_data_checked=len(selected_tool_data(cfg)),
                tool_data_total=len(cfg["tool_data"]))
     return cfg, source
+
+
+def performance_precondition(root, cfg):
+    return I.evidence_errors(Path(root), cfg)
 
 
 def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
@@ -363,6 +372,8 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
         opt["has_pmux_opt"] = ("No such command" not in out) and ("pmux_opt" in out)
         if rc != 0 or not opt["has_pmux_opt"]:
             missing.append("优化版 yosys 未包含内置 pmux_opt pass（help 检查失败）")
+        if I.identity(cfg) == I.LOCAL_ID and '-lut' not in out:
+            missing.append('优化版 yosys 缺少 pmux_opt -lut 支持')
     for side in ("baseline", "optimized"):
         spec = b.get(side) or {}
         src = Path(spec.get("src_repo", ""))
@@ -414,6 +425,16 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 missing.append(str(exc))
         if side == "optimized":
+            if I.identity(cfg) == I.LOCAL_ID:
+                from prepare_builtin import insert_integration
+                try:
+                    cmake = (src / 'passes/opt/CMakeLists.txt').read_text(encoding='utf-8')
+                    synth = (src / 'techlibs/intel/synth_intel.cc').read_text(encoding='utf-8')
+                    new_cmake, new_synth, already = insert_integration(cmake, synth, I.LOCAL_ID)
+                    if not already or (new_cmake, new_synth) != (cmake, synth):
+                        raise ValueError('7.1 integration source is incomplete')
+                except (OSError, ValueError, RuntimeError) as exc:
+                    missing.append(str(exc))
             alg_rel = spec.get("algorithm_source_path", "passes/opt/pmux_opt.cc")
             alg = src / alg_rel
             if not alg.is_file():
@@ -537,6 +558,12 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     normalized_inputs = normalize_text_tree(tree)
     (tree / "src").mkdir()
     (tree / "src/pmux_opt.cc").write_bytes(source)
+    if I.identity(cfg) == I.LOCAL_ID:
+        patch_path = tree / I.PATCH_PATH
+        patch_path.parent.mkdir(parents=True, exist_ok=True)
+        patch_path.write_bytes(cfg['integration_patch']['text'].encode('utf-8'))
+        if digest(patch_path) != cfg['integration_patch']['sha256']:
+            raise ValueError('Frozen integration patch hash mismatch')
     selfcheck_assets = root / "10_验证工具自检_selfcheck/assets"
     shutil.copytree(PACKAGE / "suite-official4/selfcheck", selfcheck_assets)
     normalized_selfcheck = normalize_text_tree(selfcheck_assets)
@@ -739,13 +766,21 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
             stage_plan.insert(3,('cpu_etw_selfcheck','cpu_selfcheck_v5.py',()))
         for name, script, args in stage_plan:
             if name == "performance":
+                errors = performance_precondition(root, cfg)
+                if errors:
+                    stages.append({'name': name, 'state': 'NOT_RUN', 'reason': 'integration/formal evidence gate failed', 'errors': errors})
+                    failed.add(name)
+                    save(meta / 'stages.json', stages)
+                    break
                 args = () if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME) else ("--pairs", str(cfg["performance_pairs"]))
             if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
                 stages.append({"name": name, "state": "NOT_RUN", "reason": "dependency failed"})
                 failed.add(name)
                 save(meta / "stages.json", stages)
                 continue
-            if name in BUILTIN_CACHED_STAGES and cache_entry_valid(cache, name, fingerprints):
+            if (name in BUILTIN_CACHED_STAGES
+                    and not (name == 'flowcheck' and I.identity(cfg) == I.LOCAL_ID)
+                    and cache_entry_valid(cache, name, fingerprints)):
                 entry = cache["entries"][name]
                 stages.append({"name": name, "state": "REUSED", "rc": 0,
                                "from_cache": str(cache_path),
@@ -874,6 +909,8 @@ def main():
     ap.add_argument("--label", default=None)
     ap.add_argument("--config", default=None,
                     help="指定独立流程配置；默认仍选择平台现行配置")
+    ap.add_argument('--integration-profile', choices=['p3', 'p3-local-lut'], default='p3',
+                    help='包含已登记7.1补丁的提交必须选择 p3-local-lut')
     ap.add_argument("--mode", choices=["builtin", "plugin"], default="builtin",
                     help="builtin=内置四例验收（默认；未就绪时阻断并记录）；plugin=显式四例插件预检")
     ap.add_argument("--chains", choices=["main", "full"], default="main",
@@ -892,7 +929,9 @@ def main():
         ap.error("--function-only 仅适用于 --mode plugin")
     if args.frozen_round and not args.function_only:
         ap.error("--frozen-round 需要与 --function-only 一起使用")
-    cfg, source = preflight(args.commit, args.config)
+    if args.integration_profile != 'p3' and args.mode != 'builtin':
+        ap.error('p3-local-lut requires builtin mode')
+    cfg, source = preflight(args.commit, args.config, args.integration_profile)
     if args.label is None:
         args.label = ("WindowsPowerShell墙钟计时_v7" if cfg.get('performance_scheme') == SINGLE_WALL_SCHEME
                       else ROUND_LABEL_DEFAULT)
@@ -909,7 +948,7 @@ def main():
             cpu_method=etw_status(cfg)
         print(json.dumps({k: cfg.get(k) for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
-              "performance_pairs", "performance_scheme", "tool_data_checked"]},
+              "performance_pairs", "performance_scheme", "tool_data_checked", "integration_profile", "integration_patch"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({"mode_default": "builtin", "builtin_plan": plan,
                           'cpu_policy':cfg.get('cpu_policy'),'cpu_method_qualification':cpu_method,

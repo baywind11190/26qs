@@ -27,6 +27,7 @@ pmux_opt）两份 Yosys 0.69 构建：
 """
 import hashlib
 import runtime_patch
+import integration_profiles as I
 import json
 import os
 import re
@@ -110,17 +111,23 @@ def compiler_identity(cfg):
 
 def cache_key(cfg, source_sha256):
     """optimized 缓存键：算法源码哈希、基础提交、集成模板/位置、构建参数、编译器。"""
-    return {
+    key = {
         "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
         "algorithm_source_sha256": source_sha256,
         "base_commit": cfg["builtin"]["source_commit"],
-        "integration_id": INTEGRATION_ID,
+        "integration_id": I.identity(cfg),
         "build_profile": build_profile(cfg),
         "compiler_sha256": cfg["tools"]["compiler"]["sha256"],
         "compiler_version": cfg["tools"]["compiler"].get("version"),
         "platform": cfg.get("platform", sys.platform),
         "toolchain_dependency_sha256": cfg["builtin"].get("toolchain_dependency_sha256"),
     }
+    if I.identity(cfg) == I.LOCAL_ID:
+        patch = cfg.get('integration_patch') or {}
+        if patch.get('sha256') != I.PATCH_SHA256:
+            raise BuildError('Missing verified local LUT integration patch identity')
+        key['integration_patch_sha256'] = patch['sha256']
+    return key
 
 
 def _current_abc_commit(cfg):
@@ -135,7 +142,7 @@ def _current_abc_commit(cfg):
 
 
 # ---------------------------------------------------------------- 集成（纯函数）
-def insert_integration(cmake_text, synth_text):
+def insert_integration(cmake_text, synth_text, integration_id=INTEGRATION_ID):
     """幂等集成：返回 (new_cmake, new_synth, already)。
 
     - 已含标准模板 → 不重复插入；
@@ -163,10 +170,22 @@ def insert_integration(cmake_text, synth_text):
             raise BuildError("techlibs/intel/synth_intel.cc 锚点上下文不符（匹配 %d 次，期望 1）" % n)
         synth_text = synth_text.replace(SYNTH_ANCHOR, SYNTH_BLOCK, 1)
         already = False
+    if integration_id == I.LOCAL_ID:
+        if I.LUT_BLOCK in synth_text and synth_text.count('run("pmux_opt -lut");') == 1:
+            pass
+        elif 'pmux_opt -lut' in synth_text or synth_text.count(I.LUT_ANCHOR) != 1:
+            raise BuildError('Local LUT integration anchor/position/count mismatch')
+        else:
+            synth_text = synth_text.replace(I.LUT_ANCHOR, I.LUT_BLOCK, 1)
+            already = False
+        if synth_text.count('run("pmux_opt");') != 1:
+            raise BuildError('Early PMUX integration count mismatch')
+    elif integration_id != INTEGRATION_ID or 'pmux_opt -lut' in synth_text:
+        raise BuildError('Unexpected integration profile or local LUT call')
     return cmake_text, synth_text, already
 
 
-def _check_integration_diff(diff_text):
+def _check_integration_diff(diff_text, integration_id=INTEGRATION_ID):
     """防错：集成 diff 必须恰好是两个文件的固定插入。返回 diff_sha256。"""
     files = sorted(re.findall(r"^diff --git a/(\S+) b/", diff_text, re.M))
     if files != ["passes/opt/CMakeLists.txt", "techlibs/intel/synth_intel.cc"]:
@@ -175,6 +194,9 @@ def _check_integration_diff(diff_text):
         raise BuildError("集成 diff 缺少 CMakeLists 插入内容")
     if '+\t\t\trun("pmux_opt");' not in diff_text:
         raise BuildError("集成 diff 缺少 synth_intel 插入内容")
+    late = diff_text.count('+\t\t\trun("pmux_opt -lut");')
+    if late != (1 if integration_id == I.LOCAL_ID else 0):
+        raise BuildError('Integration diff local LUT call mismatch')
     return hashlib.sha256(diff_text.encode()).hexdigest()
 
 
@@ -265,7 +287,7 @@ def _verify_unpatched_reference(entry, cfg):
                     return False
                 integration_diff = _git(src, "diff", "--", "passes/opt/CMakeLists.txt",
                                          "techlibs/intel/synth_intel.cc")
-                if _check_integration_diff(integration_diff) != spec.get("integration_diff_sha256"):
+                if _check_integration_diff(integration_diff, I.identity(cfg)) != spec.get("integration_diff_sha256"):
                     return False
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
@@ -439,7 +461,7 @@ def _tool_path(cfg, name):
 def plan_builtin(cfg, source_sha256, cache_dir=None):
     """只读解析“将复用哪些工具 / 是否需要构建及原因”。不写文件、不编译。"""
     cache_dir = Path(cache_dir) if cache_dir else Path(cfg["builtin"]["cache_dir"])
-    out = {"cache_dir": str(cache_dir), "integration_id": INTEGRATION_ID,
+    out = {"cache_dir": str(cache_dir), "integration_id": I.identity(cfg),
            "baseline": {}, "optimized": {}, "blocked": []}
     bspec, breasons = resolve_baseline_reuse(cfg)
     if bspec and not breasons:
@@ -585,7 +607,7 @@ def _cmake_build(src_tree, logs, side, cfg):
     (logs / ("build-%s.end" % side)).write_text(_now() + "\n")
 
 
-def _verify_binary(binary, need_pmux, expected_version, env=None):
+def _verify_binary(binary, need_pmux, expected_version, env=None, integration_id=INTEGRATION_ID):
     if not binary.is_file():
         raise BuildError("构建产物缺失：%s" % binary)
     p = subprocess.run([str(binary), "-V"], text=True, stdout=subprocess.PIPE,
@@ -602,6 +624,8 @@ def _verify_binary(binary, need_pmux, expected_version, env=None):
             and "pmux_opt" in p2.stdout
         if not help_ok:
             raise BuildError("优化版缺少内置 pmux_opt pass（help 检查失败）")
+        if integration_id == I.LOCAL_ID and '-lut' not in p2.stdout:
+            raise BuildError('Optimized binary lacks pmux_opt -lut support')
     return {"version": p.stdout.strip().splitlines()[0] if p.stdout.strip() else "",
             "version_ok": version_ok, "help_pmux_ok": help_ok}
 
@@ -621,10 +645,51 @@ def _smoke(build_dir, opt_binary, logs, cfg=None):
                      timeout=900, env=_build_env(cfg, [str(opt_binary.parent)]) if cfg else None)
     text = log.read_text(errors="replace")
     count = len(re.findall(r"\bExecuting\s+PMUX_OPT\b", text))
-    ok = rc == 0 and count == 1
+    calls = I.check_calls(text, I.identity(cfg)) if cfg and I.identity(cfg) == I.LOCAL_ID else None
+    ok = rc == 0 and (calls['ok'] if calls else count == 1)
     if not ok:
         raise BuildError("冒烟验证失败（rc=%d，PMUX_OPT 次数=%d），日志 %s" % (rc, count, log))
-    return {"smoke_ok": True, "smoke_log": str(log)}
+    result = {"smoke_ok": True, "smoke_log": str(log)}
+    if calls:
+        result['integration_calls'] = calls
+        result['local_lut_probe'] = _local_lut_probe(build_dir, opt_binary, cfg)
+    return result
+
+
+def _local_lut_probe(build_dir, binary, cfg):
+    """Two small non-scoring LUT probes, each with a complete equivalence check."""
+    results = {}
+    for name, keep, expected in (('merge', '', 1), ('keep', '(* keep *) ', 2)):
+        folder = build_dir / 'smoke' / ('local-lut-' + name)
+        folder.mkdir()
+        cells = ''
+        for cell, inputs, output in (('u0', '{ \\b \\a }', '\\n'), ('u1', '{ \\c \\n }', '\\y')):
+            cells += ('  attribute \\keep 1\n' if keep else '') + (
+                '  cell $lut \\' + cell + '\n    parameter \\WIDTH 2\n'
+                "    parameter \\LUT 4'1000\n    connect \\A " + inputs +
+                '\n    connect \\Y ' + output + '\n  end\n')
+        (folder / 'probe.il').write_text(
+            'module \\probe\n  wire input 1 \\a\n  wire input 2 \\b\n'
+            '  wire input 3 \\c\n  wire output 4 \\y\n  wire \\n\n' + cells + 'end\n')
+        script = ('read_rtlil probe.il\nhierarchy -top probe\ndesign -save gold\n'
+                  'pmux_opt -lut\ntee -o after.json stat -json\nwrite_rtlil after.il\n'
+                  'design -save gate\ndesign -reset\n'
+                  'design -copy-from gold -as gold probe\ndesign -copy-from gate -as gate probe\n'
+                  'equiv_make gold gate equiv\nprep -top equiv\nequiv_simple\nequiv_status -assert\n')
+        (folder / 'probe.ys').write_text(script)
+        rc = _run_logged([str(binary), '-s', 'probe.ys'], cwd=folder,
+                         log=folder / 'probe.log', timeout=60,
+                         env=_build_env(cfg, [str(binary.parent)]))
+        if rc:
+            raise BuildError('Local LUT ' + name + ' probe/equivalence failed: ' + str(folder))
+        data = json.loads((folder / 'after.json').read_text())
+        count = (data.get('design') or data['modules']['\\probe'])['num_cells_by_type'].get('$lut', 0)
+        text = (folder / 'probe.log').read_text(errors='replace')
+        if count != expected or ('1 rewrites' not in text if name == 'merge' else '0 rewrites' not in text):
+            raise BuildError('Local LUT ' + name + ' probe unexpected result: ' + str(folder))
+        results[name] = {'ok': True, 'lut_cells': count, 'equivalence': 'PASS',
+                         'log': str(folder / 'probe.log')}
+    return results
 
 
 def _write_registry_entry(cache_dir, entry):
@@ -642,6 +707,7 @@ def _specs_from_entry(entry):
 def _assemble_builtin_cfg(cfg, baseline_spec, opt_spec):
     """组装本轮有效 builtin 配置（用于 validation_context.json 与身份检查）。"""
     return {
+        "integration_id": I.identity(cfg),
         "baseline": {"path": baseline_spec["binary"], "src_repo": baseline_spec["src_dir"],
                      "src_commit": baseline_spec["src_commit"],
                      "binary_sha256": baseline_spec["binary_sha256"],
@@ -675,7 +741,7 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
             "schema": SCHEMA, "name": build_dir.name, "created_at": _now(),
             "status": "BUILDING", "imported": False, "build_dir": str(build_dir),
             "key": cache_key(cfg, source_sha256),
-            "integration_id": INTEGRATION_ID,
+            "integration_id": I.identity(cfg),
             "build_profile": build_profile(cfg),
             "compiler": compiler_identity(cfg),
             "abc_source_commit": _current_abc_commit(cfg),
@@ -705,11 +771,11 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                     cmake = tree / "passes/opt/CMakeLists.txt"
                     synth = tree / "techlibs/intel/synth_intel.cc"
                     c_new, s_new, _ = insert_integration(
-                        cmake.read_text(encoding="utf-8"), synth.read_text(encoding="utf-8"))
+                        cmake.read_text(encoding="utf-8"), synth.read_text(encoding="utf-8"), I.identity(cfg))
                     cmake.write_bytes(c_new.encode("utf-8"))
                     synth.write_bytes(s_new.encode("utf-8"))
                     diff_text = _git(tree, "diff")
-                    diff_sha = _check_integration_diff(diff_text)
+                    diff_sha = _check_integration_diff(diff_text, I.identity(cfg))
                     entry["optimized"] = {
                         "action": "built", "src_dir": str(tree), "src_commit": head,
                         "algorithm_source_path": ALGORITHM_SOURCE_PATH,
@@ -760,7 +826,7 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                     verification[side] = _verify_binary(
                         binary, side == "optimized",
                         cfg["builtin"]["expected_version"],
-                        env=_build_env(cfg, [str(binary.parent)]))
+                        env=_build_env(cfg, [str(binary.parent)]), integration_id=I.identity(cfg))
             if "optimized" in sides:
                 verification["smoke"] = _smoke(
                     build_dir, Path(entry["optimized"]["binary"]), logs, cfg=cfg)
@@ -797,7 +863,7 @@ def prepare_builtin(cfg, source_sha256, source_bytes=None, cache_dir=None):
                                 current_abc_commit=_current_abc_commit(cfg),
                                 reference_registries=cfg["builtin"].get("optimized_reference_registries", ()),
                                 cfg=cfg)
-    record = {"cache_dir": str(cache_dir), "integration_id": INTEGRATION_ID}
+    record = {"cache_dir": str(cache_dir), "integration_id": I.identity(cfg)}
     if hit is not None and hit.get("_reference_file"):
         imported_name = "v7-reference-" + source_sha256[:12]
         existing = next((e for e in _read_registry_entries(cache_dir)
@@ -868,7 +934,7 @@ def import_prebuilt(cfg, build_dir, name=None):
     src_commit = cfg["builtin"]["source_commit"]
     entry = {"schema": SCHEMA, "name": name, "created_at": _now(),
              "status": "BUILDING", "imported": True, "build_dir": str(build_dir),
-             "key": None, "integration_id": INTEGRATION_ID,
+             "key": None, "integration_id": I.identity(cfg),
              "build_profile": build_profile(cfg), "compiler": compiler_identity(cfg),
              "abc_source_commit": _current_abc_commit(cfg),
              "logs": {"dir": str(build_dir / "build-logs")}}
@@ -891,7 +957,7 @@ def import_prebuilt(cfg, build_dir, name=None):
                     raise BuildError("baseline 树存在未提交改动（影响来源证据）")
             else:
                 diff_text = _git(tree, "diff", "--", "passes/opt/CMakeLists.txt", "techlibs/intel/synth_intel.cc") if runtime_patch.enabled(cfg) else _git(tree, "diff")
-                spec["integration_diff_sha256"] = _check_integration_diff(diff_text)
+                spec["integration_diff_sha256"] = _check_integration_diff(diff_text, I.identity(cfg))
                 alg = tree / ALGORITHM_SOURCE_PATH
                 if not alg.is_file():
                     raise BuildError("优化版算法源码缺失：%s" % alg)
@@ -916,7 +982,8 @@ def import_prebuilt(cfg, build_dir, name=None):
                                                 side == "optimized",
                                                 cfg["builtin"]["expected_version"],
                                                 env=_build_env(
-                                                    cfg, [str(Path(entry[side]["binary"]).parent)]))
+                                                    cfg, [str(Path(entry[side]["binary"]).parent)]),
+                                                integration_id=I.identity(cfg))
         verification["smoke"] = _smoke(build_dir, Path(entry["optimized"]["binary"]),
                                        build_dir / "build-logs", cfg=cfg)
         entry["verification"] = verification

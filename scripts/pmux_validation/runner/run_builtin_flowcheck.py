@@ -7,8 +7,8 @@
 
 - 两侧综合 rc=0、check -assert 通过（CHECK 段 "Found and reported 0 problems."）；
 - 原版日志不含任何 PMUX_OPT 执行痕迹（其二进制不含该 pass）；
-- 优化版日志中 `Executing PMUX_OPT` 恰好一次，且位于 fsm;opt 的 OPT 之后、
-  WREDUCE 之前（按 Executing 序列相邻性核对，不能只看字符串出现）；
+- 优化版早期 PMUX_OPT 恰好一次，位于 fsm;opt 的 OPT 之后、WREDUCE 之前；
+  p3-local-lut 另需 ABC9 完成后、map_cells 前局部 LUT 调用恰好一次；
 - 不加载插件：命令行无 -m 参数、日志无插件加载痕迹；
 - 两侧脚本逐字节相同（记录脚本 SHA-256）。
 
@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import builtin_common as B
+import integration_profiles as I
 
 
 def norm_name(desc: str) -> str:
@@ -52,7 +53,8 @@ def run_side(side, binary, script, sdir, timeout=900):
         "abc9_ok": B.abc9_mapping_ok(log_text),
     }
     if side == "optimized":
-        info["pmux_position"] = check_pmux_position(entries)
+        info['integration_calls'] = I.check_calls(log_text, I.identity(C.CONTEXT))
+        info["pmux_position"] = info['integration_calls']['early_position']
     return info
 
 
@@ -73,6 +75,7 @@ def main():
         "check": "builtin_synth_intel_invocation",
         "round": C.ROUND_DIR.name,
         "command": "run_builtin_flowcheck.py",
+        'integration_id': I.identity(C.CONTEXT),
         "binaries": {side: {"path": str(p), "sha256": C.sha256_file(p)}
                      for side, p in binaries.items()},
         "cases": [],
@@ -108,7 +111,7 @@ def main():
                 case["fail"] = case.get("fail", []) + ["baseline 含 PMUX_OPT 执行"]
             if side == "optimized":
                 pos = info["pmux_position"]
-                if not (pos["count"] == 1 and pos["after_opt"] and pos["before_wreduce"]):
+                if not info['integration_calls']['ok']:
                     all_ok = False
                     case["fail"] = case.get("fail", []) + [
                         "optimized PMUX_OPT 位置/次数不符: {}".format(pos)]

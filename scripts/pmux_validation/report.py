@@ -569,6 +569,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     scheme = ctx.get("performance_scheme") or ""
     p6_windows = ctx.get("flow_version") == "official4-p6-windows"
     single_wall = p6_windows and scheme == SINGLE_WALL_SCHEME
+    import integration_profiles as I
+    local_lut = I.identity(ctx) == I.LOCAL_ID
     single_cpu = p6_windows and scheme == SINGLE_CPU_SCHEME
     etw_cpu = p6_windows and scheme == ETW_CPU_SCHEME
     mean_cpu = p6_windows and scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME)
@@ -597,6 +599,10 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     fc_ok = (evidence.get("ok") is True and fc.get("all_ok") is True
              and len(fc.get("cases") or []) == 4)
     gate("内置构建与调用证据", fc_ok)
+    integration_errors = I.evidence_errors(root, ctx) if local_lut else []
+    if local_lut:
+        gate('7.1调用与证明网表来源一致', not integration_errors)
+        reasons.extend(integration_errors)
     gate("四例综合与检查", len(pub) == 4 and {p.get("case") for p in pub} == set(CASES)
          and all(p.get("baseline_rc") == 0 and p.get("optimized_rc") == 0
                  and p.get("baseline_check_assert") and p.get("optimized_check_assert")
@@ -740,6 +746,10 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     readiness = 'READY' if complete and delivery['delivery_verdict'] == 'PASS' and not (single_cpu or single_wall) else 'NOT_READY'
     manifest = {
         "run_status": status, "mode": "builtin",
+        'integration_id': I.identity(ctx),
+        'integration_profile': ctx.get('integration_profile', 'p3'),
+        'integration_patch_sha256': (ctx.get('integration_patch') or {}).get('sha256'),
+        'integration_evidence_errors': integration_errors,
         "overall_verdict": verification_verdict,
         "overall_verdict_scope": "工程内四例验证；交付及整体就绪分别见独立字段",
         "verification_verdict": verification_verdict,
@@ -799,6 +809,8 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
         f"- 算法提交：`{ctx.get('target_commit')}`",
         f"- 项目 HEAD：`{ctx.get('project_head')}`",
         f"- 源码 SHA-256：`{ctx.get('source_sha256')}`",
+        f"- 集成身份：`{I.identity(ctx)}`；补丁 SHA-256：`{(ctx.get('integration_patch') or {}).get('sha256', '不适用')}`",
+        ('- 7.1：ABC9、清理及命名之后、map_cells 前再调用一次 `pmux_opt -lut`；优化侧 post_abc.il 在该调用之后导出，EQY 实际输入哈希单独核对。' if local_lut else '- P3：仅早期 pmux_opt 调用，保持历史集成。'),
         f"- 优化版构建绑定算法源码：`{alg_ev.get('sha256', 'NOT_RECORDED')}`",
         f"- 原版 Yosys：`{base_ev.get('path', '-')}`（sha256 `{(base_ev.get('sha256') or '')[:16]}…`）",
         f"- 优化版 Yosys：`{opt_ev.get('path', '-')}`（sha256 `{(opt_ev.get('sha256') or '')[:16]}…`）",

@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import function_common as F
+import integration_profiles as I
 
 CASES = ["test1", "test2", "test3", "test4"]
 MAIN_CHAINS = ("c1_local", "c2_stage", "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
@@ -512,6 +513,18 @@ def main():
             ensure_ascii=False, indent=2) + "\n")
         print("STOP：EQY 生成脚本转换核验失败（已停止本次 chains）：{}".format(exc))
         return 2
+
+    if args.input_mode == 'builtin':
+        for row in rows:
+            if row['chain'] in I.CHAINS:
+                side = 'optimized' if row['chain'] == I.CHAINS[0] else 'baseline'
+                actual = case_paths[row['case']]['sides'][(side, 'mapped')]
+                row['formal_netlist_sha256'] = C.sha256_file(actual)
+                row['formal_netlist_input'] = str(actual)
+                row['integration_id'] = I.identity(C.CONTEXT)
+                case_summary = out / row['case'] / row['chain'] / 'summary.json'
+                if case_summary.is_file():
+                    case_summary.write_text(json.dumps(row, ensure_ascii=False, indent=2) + '\n')
 
     with open(out / "chains_summary.csv", "w", newline="") as f:
         w = csv.writer(f)
