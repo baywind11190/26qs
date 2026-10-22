@@ -77,9 +77,8 @@ struct LocalLutGraph
     std::vector<RTLIL::SigBit> results;
     std::vector<unsigned> functions;
 
-    LocalLutGraph(RTLIL::Design *design, RTLIL::Module *mod) : module(mod), sigmap(mod)
+    LocalLutGraph(const CellTypes &types, RTLIL::Module *mod) : module(mod), sigmap(mod)
     {
-        CellTypes types(design);
         for (auto wire : mod->wires()) {
             for (auto bit : sigmap(wire)) {
                 if (wire->port_output) outputs.insert(bit);
@@ -153,19 +152,26 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
             if (!seen.insert(cone).second) continue;
             --budget.cuts;
             auto inside = [&](int n) { return std::binary_search(cone.begin(), cone.end(), n); };
-            std::set<RTLIL::SigBit> boundary;
+            // A cut has at most six LUT4 nodes: collect at most 24 bits in
+            // contiguous storage, then preserve the original sorted order.
+            std::vector<RTLIL::SigBit> leaves;
+            leaves.reserve(GetSize(cone) * 4);
             for (int n : cone) for (auto bit : g.inputs[n])
-                if (bit.wire != nullptr && !inside(g.driver(bit))) boundary.insert(bit);
-            if (GetSize(boundary) > 8) continue;
-            std::vector<RTLIL::SigBit> leaves(boundary.begin(), boundary.end());
-            std::set<int> removable(cone.begin(), cone.end()); removable.erase(root);
+                if (bit.wire != nullptr && !inside(g.driver(bit))) leaves.push_back(bit);
+            std::sort(leaves.begin(), leaves.end());
+            leaves.erase(std::unique(leaves.begin(), leaves.end()), leaves.end());
+            if (GetSize(leaves) > 8) continue;
+            std::vector<int> removable;
+            removable.reserve(GetSize(cone) - 1);
+            for (int n : cone) if (n != root) removable.push_back(n);
             bool changed = true;
             while (changed) {
                 changed = false;
                 for (auto it = removable.begin(); it != removable.end();) {
                     int n = *it; bool live = g.outputs.count(g.results[n]) || g.pinned.count(g.results[n]);
                     for (auto user : g.users[g.results[n]])
-                        if (user != g.cells[root] && (!g.index.count(user) || !removable.count(g.index.at(user)))) live = true;
+                        if (user != g.cells[root] && (!g.index.count(user) ||
+                            !std::binary_search(removable.begin(), removable.end(), g.index.at(user)))) live = true;
                     if (live) { it = removable.erase(it); changed = true; } else ++it;
                 }
             }
@@ -272,14 +278,18 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
 static void optimize_local_luts(RTLIL::Design *design)
 {
     LocalLutBudget budget;
+    // Only LUT cells/ports are rewritten; module interfaces and library types
+    // stay fixed throughout this invocation. Keep the no-LUT exit allocation-free.
+    std::unique_ptr<CellTypes> types;
     int saved = 0, rewrites = 0;
     for (auto module : design->selected_modules()) {
         if (module->get_bool_attribute(ID::keep)) continue;
         bool has_lut = false;
         for (auto cell : module->selected_cells()) if (cell->type == ID($lut)) { has_lut = true; break; }
         if (!has_lut) continue;
+        if (!types) types.reset(new CellTypes(design));
         while (budget.cuts && budget.work && budget.rewrites) {
-            LocalLutGraph graph(design, module);
+            LocalLutGraph graph(*types, module);
             if (GetSize(graph.cells) < 2) break;
             auto choice = find_local_lut(graph, budget);
             if (choice.root < 0 || choice.saved() <= 0) break;
