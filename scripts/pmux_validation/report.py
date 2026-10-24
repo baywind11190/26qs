@@ -110,6 +110,9 @@ def sha_file(path):
 
 
 def judge_case_performance(summ, pairs=5, *, certificate_cache=None):
+    if summ.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8':
+        from measure_v8 import evaluate_summary
+        return evaluate_summary(summ)
     """逐例性能判定。无效样本不判通过；5% 边界按不超过处理；不做跨例平均。"""
     if summ.get('performance_scheme') == SINGLE_WALL_SCHEME:
         from measure_v7 import judge_case
@@ -555,6 +558,10 @@ def build_builtin_report(root, output_root=None, chain_attempt="run01", stages_o
     output_root = Path(output_root) if output_root else root
     output_root.mkdir(parents=True, exist_ok=True)
     ctx = _read_json(root / "validation_context.json", {})
+    if ctx.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8':
+        from report_v8 import build_report
+        return build_report(root, output_root=output_root, chain_attempt=chain_attempt,
+                            stages_override=stages_override)
     stages = stages_override if stages_override is not None else _read_json(
         root / "01_来源与环境_meta/stages.json", [])
     evidence = _read_json(root / "01_来源与环境_meta/builtin_evidence.json", {})

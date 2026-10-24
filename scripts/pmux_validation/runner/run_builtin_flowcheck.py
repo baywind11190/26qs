@@ -34,15 +34,24 @@ def norm_name(desc: str) -> str:
 check_pmux_position = B.check_pmux_position
 
 
-def run_side(side, binary, script, sdir, timeout=900):
-    (sdir / "flow.ys").write_text(script)
-    rc = C.run_binary(binary, script, sdir / "run.log", cwd=sdir, timeout=timeout)
+def run_side(side, binary, script, sdir, timeout=900, analyze_only=False):
+    if analyze_only:
+        from measure_v8 import sample_errors
+        sample = json.loads((sdir / 'measure_result.json').read_text(encoding='utf-8'))
+        errors = sample_errors(sample, require_outputs=True)
+        if errors: raise RuntimeError('; '.join(errors))
+        rc = sample['rc']
+        if (sdir / 'flow.ys').read_text(encoding='utf-8') != script:
+            raise RuntimeError('same-run external script mismatch')
+    else:
+        (sdir / "flow.ys").write_text(script)
+        rc = C.run_binary(binary, script, sdir / "run.log", cwd=sdir, timeout=timeout)
     log_text = (sdir / "run.log").read_text(errors="replace")
     entries = [(num, norm_name(desc))
                for num, desc in B.extract_executing_entries(log_text)]
     names = [name for _, name in entries]
     info = {
-        "rc": rc,
+        "rc": rc, "source_evidence_dir": str(sdir), "analysis_only": analyze_only,
         "binary": str(binary),
         "binary_sha256": C.sha256_file(binary),
         "script_sha256": C.sha256_file(sdir / "flow.ys"),
@@ -53,7 +62,7 @@ def run_side(side, binary, script, sdir, timeout=900):
         "abc9_ok": B.abc9_mapping_ok(log_text),
     }
     if side == "optimized":
-        info['integration_calls'] = I.check_calls(log_text, I.identity(C.CONTEXT))
+        info['integration_calls'] = I.check_calls(log_text, I.identity(C.CONTEXT), require_export=analyze_only)
         info["pmux_position"] = info['integration_calls']['early_position']
     return info
 
@@ -80,19 +89,22 @@ def main():
                      for side, p in binaries.items()},
         "cases": [],
     }
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
+    summary['analysis_only'] = joint
+    summary['independent_full_split_check'] = 'NOT_RUN' if joint else 'NOT_APPLICABLE'
     all_ok = True
     for i in range(1, 5):
         top = "test{}".format(i)
         rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
         rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
         cdir = out / top
-        script = C.gen_builtin_synth_ys(rtl, top)
+        script = (B.gen_builtin_formal_ys(rtl, top) if joint else C.gen_builtin_synth_ys(rtl, top))
         script_sha = __import__("hashlib").sha256(script.encode()).hexdigest()
         case = {"case": top, "script_sha256": script_sha, "sides": {}}
         for side, binary in binaries.items():
-            sdir = cdir / side
-            sdir.mkdir(parents=True)
-            info = run_side(side, binary, script, sdir)
+            sdir = (C.ROUND_DIR / '05_公开四例_public/round01' / top / side) if joint else cdir / side
+            if not joint: sdir.mkdir(parents=True)
+            info = run_side(side, binary, script, sdir, analyze_only=joint)
             case["sides"][side] = info
             if not info["abc9_ok"]:
                 all_ok = False

@@ -32,8 +32,8 @@ def configure(cfg, profile, patch):
         cfg['integration_profile'] = 'p3'
         cfg['builtin']['integration_id'] = P3_ID
         return
-    if cfg.get('performance_scheme') != WALL_SCHEME:
-        raise ValueError('p3-local-lut requires the Windows V7 builtin flow')
+    if cfg.get('performance_scheme') not in (WALL_SCHEME, 'pmux-perf-single-powershell-same-run-exitpeak-v8'):
+        raise ValueError('p3-local-lut requires the Windows V7 or V8 builtin flow')
     if patch is None or hashlib.sha256(patch).hexdigest() != PATCH_SHA256:
         raise ValueError('Missing or unrecognized target local LUT integration patch')
     cfg['integration_profile'] = profile

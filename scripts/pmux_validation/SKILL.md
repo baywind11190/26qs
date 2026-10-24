@@ -1,7 +1,26 @@
 ---
 name: pmux-stable-validation
-description: 验证 PMUX 官方四例（test1~test4）。默认允许按固定方案自动准备内置工具（匹配时复用；未命中时在隔离源码树构建），随后运行四例十五对功能/资源/性能评测；可显式进入四例插件预检（--mode plugin），以及插件版功能补充复核（--mode plugin --function-only --frozen-round ）。用于用户明确要求评测并给出精确 Git 提交时；不用于算法开发或 Yosys 集成开发。
+description: Windows V8当前四例内置验证；默认validate_windows_v8.cmd，同次采集时间与峰值，正式综合8次。具体规则以同目录POLICY.md为准。旧WSL/十五对流程仅供历史复查；新增官方用例接入尚待适配。
 ---
+
+# Windows V8当前入口
+
+## 2026-10-23：1022答疑与V8核对
+
+最新来源为工程赛题目录的《FPGA创新大赛问题汇总 1022.xlsx》Sheet1，重点新增第114～117行。完整对照、整改清单及可直接询问老师的问题见[第18号说明](D:/codex/02_嵌赛/验证流程版本更新说明/18_1022答疑与V8符合性核对及待确认问题_20261023.md)。
+
+- 第114行：允许调整ABC脚本，但不得通过优化其他pass或依赖程序抵消PMUX增加的时间。当前7.1对一般LUT4网络做局部优化，其允许范围待老师确认，不凭pass名称认定。
+- 第115行：月底前提供3～5例；新增例也计入全部用例平均优化率，并要求逐例资源不增加；cells以输出网表统计。当前只有已获得四例，正式综合8次。新增N例接入后须覆盖全部用例，各原/优一次；现行固定四例代码尚待适配，不能把“8次”视为永久总数。
+- 第116～117行：推荐Windows exe；WSL方案须现场编译执行并自备时间/内存工具。当前项目仍选原生Windows；不把问题栏的“任意墙钟方法”当成官方已肯定。
+- 默认入口仍为`D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v8.cmd`，唯一规则正文仍为`D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md`。先plan核对规则来源、当前四例预计8次及blocked为空，再按授权run。
+- 同次调试峰值、计时请求/响应包装、证明网表导出边界为本地实现，具体接受性待确认；NOT计数细节、2GB单位和效率中间档见第18号提问。
+- 已登记代码缺口：新增用例接入，以及单例logic_units增加的独立门禁。本次仅文档同步，未整改代码。当前实测四例资源均未增加。
+- 本轮正式结果不变：功能/资源/内存通过，test3墙钟+15.021%、test4+13.284%，工程FAIL；四例平均逻辑缩减28.7583%。新增用例WAITING_OFFICIAL_CASES，交付包NOT_RUN，不能宣称全部官方验收通过。
+
+以下既有V8安排继续适用于当前四例；旧V7/V6/WSL和重复采样内容仅用于各自历史用途，不作为当前默认入口。本次未重新综合、运行EQY或追加测量。
+
+
+## 历史WSL及旧版本用法（非当前默认）
 
 # PMUX 官方四例验证（official4-p5）
 
@@ -12,7 +31,7 @@ description: 验证 PMUX 官方四例（test1~test4）。默认允许按固定�
 ## 唯一执行入口
 
 - WSL 发行版 Ubuntu-24.04、用户 fpga；工程 `/home/fpga/fpga/pmux-opt`。
-- 脚本：`scripts/pmux_validation/validate.py`；规则：同目录 `POLICY.md`。
+- 脚本：`scripts/pmux_validation/validate.py`；规则：同目录 `POLICY.md`，完整位置 `D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md`；当前默认入口 `validate_windows_v8.cmd`、正式综合共8次，同次采集墙钟与峰值内存。旧V7/V6只用于历史复查。
 - 结果：`results/官方口径评测/日期_时刻(HHMM)_版本名_提交短号_第NN轮`（拒绝覆盖、自动新编号）。
 
 ## 三种形态

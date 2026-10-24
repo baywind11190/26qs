@@ -549,6 +549,10 @@ def main():
     )
 
     if args.selftest:
+        from measure_v8 import SCHEME as SAME_RUN_SCHEME
+        if C.CONTEXT.get('performance_scheme') == SAME_RUN_SCHEME:
+            from selfcheck_v8 import run
+            return run(C.CONTEXT, C.ROUND_DIR / '09_时间内存开销_performance/selftest')
         from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
         if C.CONTEXT.get('performance_scheme') == SINGLE_WALL_SCHEME:
             from selfcheck_v7 import run

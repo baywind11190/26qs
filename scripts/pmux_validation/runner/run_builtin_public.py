@@ -35,8 +35,9 @@ import integration_profiles as I
 def run_case(top: str, out_root: Path) -> dict:
     rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
     rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
     case_dir = out_root / top
-    case_dir.mkdir(parents=True, exist_ok=False)
+    case_dir.mkdir(parents=True, exist_ok=joint)
     builtin = C.CONTEXT.get("builtin") or {}
     binaries = B.select_binaries(builtin)
 
@@ -49,12 +50,24 @@ def run_case(top: str, out_root: Path) -> dict:
 
     for side, binary in binaries.items():
         side_dir = case_dir / side
-        side_dir.mkdir()
-        (side_dir / "flow.ys").write_text(script)
+        side_dir.mkdir(exist_ok=joint)
+        if joint:
+            if (side_dir / 'flow.ys').read_text(encoding='utf-8') != script:
+                raise RuntimeError('same-run script mismatch')
+        else:
+            (side_dir / "flow.ys").write_text(script)
         (side_dir / "binary.txt").write_text(str(binary) + "\n" + C.sha256_file(binary) + "\n")
         t0 = time.perf_counter()
-        rc = C.run_binary(binary, script, side_dir / "run.log", cwd=side_dir)
-        wall = time.perf_counter() - t0
+        if joint:
+            from measure_v8 import sample_errors
+            sample = json.loads((side_dir / 'measure_result.json').read_text(encoding='utf-8'))
+            errors = sample_errors(sample, require_outputs=True)
+            if errors: raise RuntimeError('; '.join(errors))
+            rc = sample['rc']; wall = sample['total_milliseconds'] / 1000
+            result[side + '_sample_id'] = sample['sample_id']
+        else:
+            rc = C.run_binary(binary, script, side_dir / "run.log", cwd=side_dir)
+            wall = time.perf_counter() - t0
         if rc != 0:
             raise RuntimeError("{} {} synthesis rc={}; see run.log".format(top, side, rc))
         stat = C.parse_stat_json(side_dir / "stat.json")
@@ -66,8 +79,8 @@ def run_case(top: str, out_root: Path) -> dict:
         from formal_status import check_post_abc_model
         stage_info = check_post_abc_model(side_dir / "post_abc.il", top)
         full_stat_path = C.ROUND_DIR / "04_流程一致性_flowcheck" / "builtin_run01" / top / side / "stat.json"
-        full_stat = C.parse_stat_json(full_stat_path)
-        if stat["cell_types"] != full_stat["cell_types"]:
+        full_stat = C.parse_stat_json(full_stat_path) if not joint else None
+        if not joint and stat["cell_types"] != full_stat["cell_types"]:
             raise RuntimeError(f"{top} {side}: split/full synthesis resource mismatch")
         ca_ok = C.check_assert_ok(side_dir / "run.log")
         log_text = (side_dir / "run.log").read_text(errors="replace")
@@ -90,7 +103,9 @@ def run_case(top: str, out_root: Path) -> dict:
             else 'after ABC9, before map_cells')
 
         result.update({
-            "{}_split_full_resources_match".format(side): True,
+            "{}_split_full_resources_match".format(side): None if joint else True,
+            "{}_mapping_complete".format(side): bool(ca_ok and B.abc9_mapping_ok(log_text)),
+            "{}_independent_full_split_check".format(side): "NOT_RUN" if joint else "PASS",
             "{}_post_abc_lut".format(side): stage_info["lut_cells"],
             "{}_post_abc_sha256".format(side): C.sha256_file(side_dir / "post_abc.il"),
             "{}_formal_netlist_stage".format(side): "post_abc",
@@ -139,8 +154,9 @@ def run_case(top: str, out_root: Path) -> dict:
 
 def main():
     out = C.ROUND_DIR / "05_公开四例_public" / "round01"
-    C.refuse_overwrite(out)
-    out.mkdir(parents=True)
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
+    C.refuse_overwrite(out / 'summary.json' if joint else out)
+    out.mkdir(parents=True, exist_ok=joint)
 
     rows = []
     for i in range(1, 5):

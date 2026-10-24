@@ -1,3 +1,38 @@
+## 2026-10-23：1022答疑与V8核对
+
+最新来源为工程赛题目录的《FPGA创新大赛问题汇总 1022.xlsx》Sheet1，重点新增第114～117行。完整对照、整改清单及可直接询问老师的问题见[第18号说明](D:/codex/02_嵌赛/验证流程版本更新说明/18_1022答疑与V8符合性核对及待确认问题_20261023.md)。
+
+- 第114行：允许调整ABC脚本，但不得通过优化其他pass或依赖程序抵消PMUX增加的时间。当前7.1对一般LUT4网络做局部优化，其允许范围待老师确认，不凭pass名称认定。
+- 第115行：月底前提供3～5例；新增例也计入全部用例平均优化率，并要求逐例资源不增加；cells以输出网表统计。当前只有已获得四例，正式综合8次。新增N例接入后须覆盖全部用例，各原/优一次；现行固定四例代码尚待适配，不能把“8次”视为永久总数。
+- 第116～117行：推荐Windows exe；WSL方案须现场编译执行并自备时间/内存工具。当前项目仍选原生Windows；不把问题栏的“任意墙钟方法”当成官方已肯定。
+- 默认入口仍为`D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v8.cmd`，唯一规则正文仍为`D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md`。先plan核对规则来源、当前四例预计8次及blocked为空，再按授权run。
+- 同次调试峰值、计时请求/响应包装、证明网表导出边界为本地实现，具体接受性待确认；NOT计数细节、2GB单位和效率中间档见第18号提问。
+- 已登记代码缺口：新增用例接入，以及单例logic_units增加的独立门禁。本次仅文档同步，未整改代码。当前实测四例资源均未增加。
+- 本轮正式结果不变：功能/资源/内存通过，test3墙钟+15.021%、test4+13.284%，工程FAIL；四例平均逻辑缩减28.7583%。新增用例WAITING_OFFICIAL_CASES，交付包NOT_RUN，不能宣称全部官方验收通过。
+
+以下既有V8安排继续适用于当前四例；旧V7/V6/WSL和重复采样内容仅用于各自历史用途，不作为当前默认入口。本次未重新综合、运行EQY或追加测量。
+
+# 当前默认：V8 同次采集、正式综合共8次（2026-10-23）
+
+规则正文的唯一位置：`D:\codex\0000_26qs\scripts\pmux_validation\POLICY.md`。
+工程根目录不放另一份规则正文；各轮的 POLICY.md 是该文件的原文快照，来源路径及哈希记入 validation_context.json 的 policy_source。
+
+默认入口为 `scripts/pmux_validation/validate_windows_v8.cmd`，加载 `config.windows.v8.json`；使用完整40位算法提交，含7.1补丁的提交加 `--integration-profile p3-local-lut`。先只读 plan，核对 policy_source、formal_synthesis_expected_runs=8 及 builtin_plan.blocked 为空，再 run。
+
+- 方案：`pmux-perf-single-powershell-same-run-exitpeak-v8`。四个公开用例每例原版后优化版，各一次，整轮正式综合8次；不预热、不平均、不取中位数、不补跑、不默认追加80次诊断。
+- 同一进程同时提供 Measure-Command 墙钟、退出事件主进程峰值、7.1之后且厂商map_cells之前的 post_abc.il，以及完整映射的 mapped.il/stat；两侧同一脚本，只切换可执行程序。中间/最终输出均计入墙钟。
+- Measure-Command包含同次退出调试观测和本机请求/响应开销；PowerShell/worker初始化、工具构建、专用自检、EQY和事后分析不计入。保存Ticks与TotalMilliseconds，名称为墙钟时间，不是累计CPU时间。
+- 在根进程 EXIT_PROCESS_DEBUG_EVENT 中调用 GetProcessMemoryInfo，读取 PeakWorkingSetSize 后 ContinueDebugEvent；原始单位字节，仅看yosys.exe，不加ABC/EQY/编译过程。调试可能影响运行和内存布局。
+- 同次采集为用户确认的本地规则；官方第54行明确峰值工作内存只看yosys.exe，第91/92行答复单次计时，未指定必须同次或该调试采集实现。题目2GB的本地阈值仍按2GiB记录，原始字节保留。
+- 工具和计量自检先完成（不使用公开四例预热）；八次采集后，流程/资源只分析这些产物，EQY独立运行。原始指标先存为待验证，调用或证明失败不得给出验收PASS。取消的独立完整/分段资源对照标为NOT_RUN。
+- 任何正式样本失败、缺退出事件、PID不符、读取/放行失败或输出不完整，保留记录并停止，不补跑。性能保护上限30分钟。5%/15%逐例按原版为分母，面积按LUT+独立NOT输出位逐例缩减率算术平均；DFF、IO和其他类型逐项检查。
+- V8测量自检使用独立指纹和缓存；身份匹配的无V6计量补丁的Yosys 0.69可复用旧构建。V7/V6入口和原始结果保留；旧结果不改名、不重算、不混入V8。新增官方效率用例未获得前记WAITING_OFFICIAL_CASES。
+- 当前实施和实测进度见 `D:\codex\02_嵌赛\验证流程版本更新说明\17_V8同次采集八次正式综合_实施与实测记录_20261023.md`，不能将本说明视为新一轮已经通过。
+
+---
+
+以下保留旧版本规则、历史来源与历史实测；当前执行安排以本节V8为准。
+
 # Windows 本地公开四例验证规则：official4-p6-windows
 
 ## V7 接入 7.1 局部 LUT（2026-10-22）
@@ -21,7 +56,7 @@
 - v5/v6已有测量结果作为历史证据按原名、原数据、原判定保留；本次答疑同步不重命名、不改判、不删除，不改变v6计时实现、配置或脚本。
 
 
-## 当前默认：V7 PowerShell 单次墙钟计时（2026-10-20）
+## 历史默认：V7（已由V8接替） PowerShell 单次墙钟计时（2026-10-20）
 
 方案为 `pmux-perf-single-powershell-wall-exitpeak-v7`。入口为 `scripts/pmux_validation/validate_windows_v7.cmd`，固定加载 `config.windows.v7.json`。先执行只读 `plan` 并确认 `blocked` 为空，再运行一次 `run`。实施和当前结果见[第14号实施记录](D:/codex/02_嵌赛/验证流程版本更新说明/14_V7_PowerShell单次墙钟计时_实施与实测记录_20261020.md)、[第15号五轮记录](D:/codex/02_嵌赛/验证流程版本更新说明/15_V7_9d77e9ab五轮实测记录_20261020.md)和[日常验证说明](D:/codex/02_嵌赛/VSCode日常验证使用说明.md)。
 

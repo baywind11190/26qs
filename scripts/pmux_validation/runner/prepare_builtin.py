@@ -630,16 +630,24 @@ def _verify_binary(binary, need_pmux, expected_version, env=None, integration_id
             "version_ok": version_ok, "help_pmux_ok": help_ok}
 
 
+def _smoke_input(build_dir, cfg=None):
+    if cfg and cfg.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8':
+        rtl = Path(build_dir) / 'v8_tool_smoke.v'
+        rtl.write_text('module v8_tool_smoke(input [3:0] a,b,input s,output [3:0] y); assign y=s?a:b; endmodule\n', encoding='utf-8')
+        return rtl, 'v8_tool_smoke'
+    return (Path(__file__).resolve().parent.parent /
+            'suite-official4/tree/pmux_case/competition_case/test4/test4.v'), 'test4'
+
+
 def _smoke(build_dir, opt_binary, logs, cfg=None):
     """小型 synth_intel 调用冒烟（冻结 test4 输入；检查 rc=0 且 PMUX_OPT 恰一次）。"""
-    rtl = Path(__file__).resolve().parent.parent / \
-        "suite-official4/tree/pmux_case/competition_case/test4/test4.v"
+    rtl, top = _smoke_input(build_dir, cfg)
     if not rtl.is_file():
         raise BuildError("冒烟输入缺失：%s" % rtl)
     smoke_dir = build_dir / "smoke"
     smoke_dir.mkdir(exist_ok=True)
     ys = smoke_dir / "smoke.ys"
-    ys.write_text("read_verilog -sv %s\nsynth_intel -family cycloneiv -top test4\n" % rtl)
+    ys.write_text("read_verilog -sv %s\nsynth_intel -family cycloneiv -top %s\n" % (rtl, top))
     log = smoke_dir / "smoke.log"
     rc = _run_logged([str(opt_binary), "-s", str(ys)], cwd=smoke_dir, log=log,
                      timeout=900, env=_build_env(cfg, [str(opt_binary.parent)]) if cfg else None)
