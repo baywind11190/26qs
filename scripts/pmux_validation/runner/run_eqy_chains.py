@@ -21,10 +21,12 @@ import argparse
 import csv
 import io
 import json
+import shutil
 import sys
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import result_layout as L
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
@@ -286,7 +288,7 @@ def parse_all_sha256(path: Path):
 
 
 def verify_frozen(frozen: Path, used) -> (bool, list):
-    index_path = frozen / "11_汇总与证据_summary" / "ALL_SHA256.txt"
+    index_path = frozen / L.SUMMARY / "ALL_SHA256.txt"
     if not index_path.is_file():
         return False, [{"file": str(index_path), "status": "MANIFEST_MISSING"}]
     index = parse_all_sha256(index_path)
@@ -313,7 +315,7 @@ def main():
                     help="plugin=插件拆分流程网表（pre_p3/post_p3/coarse_done/mapped）；"
                          "builtin=内置流程网表（post_abc；链集合=c4a/c4b 主证明）")
     ap.add_argument("--frozen-round", default=None,
-                    help="功能复核：只读复用既有轮次 05_公开四例_public 产物（逐文件哈希核对）")
+                    help="功能复核：只读复用既有轮次 05_public 产物（逐文件哈希核对）")
     args = ap.parse_args()
     if not __import__("re").fullmatch(r"run[0-9]+", args.attempt):
         ap.error("attempt must be runNN")
@@ -326,34 +328,40 @@ def main():
                     if c in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")]
     else:
         selected = list(MAIN_CHAINS if args.chains == "main" else FULL_CHAINS)
-    out = C.ROUND_DIR / "10_验证工具自检_selfcheck" / "chains" / args.attempt
+    out = C.ROUND_DIR / L.SELFCHECK / "chains" / args.attempt
     C.refuse_overwrite(out)
     out.mkdir(parents=True)
 
-    pub = C.ROUND_DIR / "05_公开四例_public" / "round01"
+    pub = C.ROUND_DIR / L.PUBLIC / "round01"
     frozen = None
     if args.frozen_round:
         frozen = Path(args.frozen_round)
         if not frozen.is_absolute():
             frozen = C.REPO / frozen
-        pub = frozen / "05_公开四例_public" / "round01"
+        pub = frozen / L.PUBLIC / "round01"
         if not pub.is_dir():
-            print("STOP：冻结轮次缺少 05_公开四例_public/round01：{}".format(pub))
+            print("STOP：冻结轮次缺少 05_public/round01：{}".format(pub))
             return 2
 
-    bridge = C.ASCII_BRIDGE
+    inputs_dir = out / "inputs"
+    inputs_dir.mkdir()
     hash_map = {}
     used_frozen = []
 
     def stage(src: Path, rel: str, frozen_rel=None):
-        dst = C.stage_to_ascii_bridge(src, rel)
-        hash_map[str(dst)] = {"source": C.rel(src), "sha256": C.sha256_file(src)}
+        dst = L.contained_path(inputs_dir, Path(rel).name)
+        expected = C.sha256_file(src)
+        if dst.exists():
+            raise FileExistsError("Refusing to overwrite proof input: " + str(dst))
+        shutil.copyfile(src, dst)
+        if C.sha256_file(dst) != expected:
+            raise ValueError("Proof input copy hash mismatch: " + str(dst))
+        hash_map[str(dst)] = {"source": C.rel(src), "sha256": expected}
         if frozen_rel is not None:
             used_frozen.append((src, frozen_rel))
         return dst
 
     form_model = stage(C.SCRIPT_DIR / "form_cells_cycloneiv.v", "chains/form_cells_cycloneiv.v")
-    inputs_dir = form_model.parent
 
     case_paths = {}
     for top in CASES:
@@ -365,14 +373,14 @@ def main():
         for side in ("baseline", "optimized"):
             for kind in kinds:
                 if args.input_mode == "builtin":
-                    # 内置功能输入为 post_abc.il；桥接文件保留 mapped 后缀供旧预检和合并器识别（两侧脚本逐字节相同）。
+                    # 内置功能输入为 post_abc.il；阶段内输入保留 mapped 后缀供旧预检和合并器识别（两侧脚本逐字节相同）。
                     src = pub / top / side / "post_abc.il"
                     from formal_status import check_post_abc_model
                     check_post_abc_model(src, top)
-                    rel = "05_公开四例_public/round01/{}/{}/post_abc.il".format(top, side)
+                    rel = (L.PUBLIC + "/round01/{}/{}/post_abc.il").format(top, side)
                 else:
                     src = pub / top / side / "{}_{}.il".format(side, kind)
-                    rel = "05_公开四例_public/round01/{}/{}/{}_{}.il".format(top, side, side, kind)
+                    rel = (L.PUBLIC + "/round01/{}/{}/{}_{}.il").format(top, side, side, kind)
                 sides[(side, kind)] = stage(src, "chains/{}_{}_{}.il".format(top, side, kind),
                                             frozen_rel=(rel if frozen else None))
         case_paths[top] = {"rtl": rtl, "sides": sides}
@@ -380,7 +388,7 @@ def main():
     if frozen:
         ok, details = verify_frozen(frozen, used_frozen)
         (out / "frozen_input_verification.json").write_text(json.dumps({
-            "ok": ok, "frozen_round": str(frozen), "manifest": "11_汇总与证据_summary/ALL_SHA256.txt",
+            "ok": ok, "frozen_round": str(frozen), "manifest": (L.SUMMARY + "/ALL_SHA256.txt"),
             "files": details}, ensure_ascii=False, indent=2) + "\n")
         if not ok:
             print("STOP：冻结输入哈希核对失败（{} 个文件）；不运行任何证明，不回退全流程。".format(
@@ -438,75 +446,71 @@ def main():
                 else:
                     raise ValueError(cname)
                 (cdir / "config.eqy").write_text(cfg_text)
-                eqy_job = F.ascii_eqy_workdir(
-                    C.ASCII_BRIDGE, Path("chains") / args.attempt / top / cname)
-                work = eqy_job / "work"
+                eqy_job = cdir
+                work = F.eqy_workdir(cdir, "work")
                 work.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    rc = F.setup_eqy(cdir / "config.eqy", work, cdir / "setup.log",
-                                     yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
-                    if rc != 0:
-                        row = {"case": top, "chain": cname, "rc": 2,
-                               "state": "TOOL_OR_CONFIG_ERROR", "method": "partition",
-                               "error": "eqy -m rc={}".format(rc),
-                               "strategy_version": F.STRATEGY_VERSION,
-                               "model_version": F.MODEL_VERSION,
-                               "input_mode": args.input_mode,
-                           "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
-                               "partitions_total": 0, "partitions_pass": 0,
-                               "partition_states": {}, "probes_noDF_all_sat": False,
-                               "df_probes_unsat": 0, "merged": None, "verified": False,
-                               "frozen_round": (str(frozen) if frozen else None),
-                               "evidence": C.rel(cdir)}
-                        rows.append(row)
-                        (cdir / "summary.json").write_text(
-                            json.dumps(row, ensure_ascii=False, indent=2) + "\n")
-                        print("{} {}: setup FAILED rc={}".format(top, cname, rc))
-                        continue
-                    parts = run_partitions(work, yosys=C.TOOL_YOSYS)
-                    agg = aggregate_partitions(parts)
-                    merged = None
-                    if (top in MERGED and cname in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
-                            and agg["state"] != "PASS"):
-                        merged = run_merged(top, cdir, yosys=C.TOOL_YOSYS,
-                                            workdir=work, merged_dir=eqy_job / "merged")
-                        final_state = merged["state"]
-                        method = "merged_miter"
-                    else:
-                        final_state = agg["state"]
-                        method = "partition"
-                    row = {"case": top, "chain": cname,
-                           "rc": 0 if final_state == "PASS" else 2,
-                           "state": final_state, "method": method,
+                rc = F.setup_eqy(cdir / "config.eqy", work, cdir / "setup.log",
+                                 yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
+                if rc != 0:
+                    row = {"case": top, "chain": cname, "rc": 2,
+                           "state": "TOOL_OR_CONFIG_ERROR", "method": "partition",
+                           "error": "eqy -m rc={}".format(rc),
                            "strategy_version": F.STRATEGY_VERSION,
                            "model_version": F.MODEL_VERSION,
                            "input_mode": args.input_mode,
-                           "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
-                           "partitions_total": agg["partitions_total"],
-                           "partitions_pass": agg["partitions_pass"],
-                           "partition_states": agg["partition_states"],
-                           "probes_noDF_all_sat": agg["probes_noDF_all_sat"],
-                           "df_probes_unsat": agg["df_probes_unsat"],
-                           "merged": merged, "verified": final_state == "PASS",
+                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
+                           "partitions_total": 0, "partitions_pass": 0,
+                           "partition_states": {}, "probes_noDF_all_sat": False,
+                           "df_probes_unsat": 0, "merged": None, "verified": False,
                            "frozen_round": (str(frozen) if frozen else None),
                            "evidence": C.rel(cdir)}
                     rows.append(row)
                     (cdir / "summary.json").write_text(
                         json.dumps(row, ensure_ascii=False, indent=2) + "\n")
-                    extra = ""
-                    if merged:
-                        extra = " merged={}@k{} probe={}".format(
-                            merged["state"], merged.get("k"), merged.get("probe"))
-                    elif agg["partition_states"]:
-                        detail = ", ".join("{}={}".format(k, v) for k, v in
-                                           sorted(agg["partition_states"].items())[:6])
-                        extra = " partitions: " + detail
-                    print("{} {}: {} ({} / {}){}".format(
-                        top, cname, final_state, agg["partitions_pass"],
-                        agg["partitions_total"], extra), flush=True)
-                finally:
-                    F.copy_eqy_workdir(work, cdir / "work")
-                    F.copy_eqy_workdir(eqy_job / "merged", cdir / "merged")
+                    print("{} {}: setup FAILED rc={}".format(top, cname, rc))
+                    continue
+                parts = run_partitions(work, yosys=C.TOOL_YOSYS)
+                agg = aggregate_partitions(parts)
+                merged = None
+                if (top in MERGED and cname in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
+                        and agg["state"] != "PASS"):
+                    merged = run_merged(top, cdir, yosys=C.TOOL_YOSYS,
+                                        workdir=work, merged_dir=eqy_job / "merged")
+                    final_state = merged["state"]
+                    method = "merged_miter"
+                else:
+                    final_state = agg["state"]
+                    method = "partition"
+                row = {"case": top, "chain": cname,
+                       "rc": 0 if final_state == "PASS" else 2,
+                       "state": final_state, "method": method,
+                       "strategy_version": F.STRATEGY_VERSION,
+                       "model_version": F.MODEL_VERSION,
+                       "input_mode": args.input_mode,
+                       "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
+                       "partitions_total": agg["partitions_total"],
+                       "partitions_pass": agg["partitions_pass"],
+                       "partition_states": agg["partition_states"],
+                       "probes_noDF_all_sat": agg["probes_noDF_all_sat"],
+                       "df_probes_unsat": agg["df_probes_unsat"],
+                       "merged": merged, "verified": final_state == "PASS",
+                       "frozen_round": (str(frozen) if frozen else None),
+                       "evidence": C.rel(cdir)}
+                rows.append(row)
+                (cdir / "summary.json").write_text(
+                    json.dumps(row, ensure_ascii=False, indent=2) + "\n")
+                extra = ""
+                if merged:
+                    extra = " merged={}@k{} probe={}".format(
+                        merged["state"], merged.get("k"), merged.get("probe"))
+                elif agg["partition_states"]:
+                    detail = ", ".join("{}={}".format(k, v) for k, v in
+                                       sorted(agg["partition_states"].items())[:6])
+                    extra = " partitions: " + detail
+                print("{} {}: {} ({} / {}){}".format(
+                    top, cname, final_state, agg["partitions_pass"],
+                    agg["partitions_total"], extra), flush=True)
+
     except F.TransformError as exc:
         (out / "transform_blocked.json").write_text(json.dumps(
             {"strategy_version": F.STRATEGY_VERSION, "error": str(exc)},
@@ -548,8 +552,6 @@ def main():
          "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION},
         ensure_ascii=False, indent=2) + "\n")
     (out / "hash_manifest.json").write_text(json.dumps(hash_map, ensure_ascii=False, indent=2) + "\n")
-    (bridge / "chains" / "hash_manifest.json").write_text(
-        json.dumps(hash_map, ensure_ascii=False, indent=2) + "\n")
     print("结果目录: {}".format(C.rel(out)))
     return 0
 

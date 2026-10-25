@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
-"""PMUX 官方四例验证入口；Windows 默认加载 official4-p6-windows 配置。
+"""Windows 原生 V8 官方四例验证入口。
 
-内置验收先按平台和工具身份复用或构建 Yosys，再运行四例综合、ABC9 后网表
-功能证明、映射资源统计与逐例性能测量。当前 V8 在八次正式综合中同次采集墙钟与主进程峰值内存，
-并复用功能与资源产物；旧 V7/V6 口径保留。p3-local-lut 集成覆盖 ABC9 后局部 LUT。
-准备或身份检查失败时保留阻断记录，不加载插件或静默切换流程。
-
-在 Windows 使用 `validate_windows_v8.cmd plan <commit>` 只读检查，使用
-`validate_windows_v8.cmd run <commit>` 执行。Linux 的 `config.json` 保留历史 p5
-兼容入口；Windows 的 `config.windows.json` 与 p6 结果分开保存。
-
-范围与判定规则见同目录 POLICY.md；本入口固定官方公开四例（test1~test4），
-不默认运行回归、H2、规模或多驱动测试（相关模块与资产保留原位）。
+八次正式综合同次采集墙钟与主进程峰值内存，并复用功能与资源产物；
+EQY 随后独立证明。p3 与 p3-local-lut 为固定内置集成方式。
+使用 validate_windows_v8.cmd plan <commit> 只读检查，run <commit> 执行。
+范围与判定规则见同目录 POLICY.md；准备或身份检查失败时保留阻断记录。
 """
 import argparse
 from datetime import datetime
@@ -21,84 +14,41 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
 import subprocess
 import sys
-import uuid
 
 PACKAGE = Path(__file__).resolve().parent
-ROUND_LABEL_DEFAULT = "Windows单次内部计时_v6" if os.name == "nt" else "稳定版-四例"
-ROUND_PARENT_REL = "results/官方口径评测"
-SELFCHECK_CACHE_REL = "results/官方口径评测/_共享自检缓存_selfcheck/selfcheck_cache.json"
-CONFIG_PATH = PACKAGE / ("config.windows.json" if os.name == "nt" else "config.json")
+CONFIG_PATH = PACKAGE / "config.windows.v8.json"
 sys.path.insert(0, str(PACKAGE / "runner"))
+import result_layout as L
+ROUND_LABEL_DEFAULT = L.ROUND_LABEL_DEFAULT
+ROUND_PARENT_REL = L.ROUND_PARENT_REL
+SELFCHECK_CACHE_REL = L.SELFCHECK_CACHE_REL
 from process_utils import process_group_kwargs, terminate_process_tree
-from cpu_statistics import SCHEME as MEAN_CPU_SCHEME, POLICY as CPU_POLICY
-from runtime_patch import SCHEME as SINGLE_CPU_SCHEME
-import runtime_patch
-from cpu_statistics_v5 import SCHEME as ETW_CPU_SCHEME
-from measure_v7 import SCHEME as SINGLE_WALL_SCHEME
 from measure_v8 import SCHEME as SAME_RUN_SCHEME, METHOD as SAME_RUN_METHOD
 import integration_profiles as I
 
-# 插件预检的阶段计划（默认调度只含四例所需内容；不含回归/H2/规模/多驱动）。
-PLUGIN_PLAN = (
-    ("flowcheck", "run_flowcheck.py", ()),
-    ("formal_selfcheck", "run_selfcheck.py", ()),
-    ("measurement_selfcheck", "measure.py", ("--selftest",)),
-    ("public", "run_public.py", ()),
-    ("chains", "run_eqy_chains.py", ()),
-    ("performance", "measure.py", ()),
-)
-# 功能补充复核（--function-only）：只运行功能相关阶段；不重新综合、不测性能。
-FUNCTION_ONLY_PLAN = (
-    ("formal_selfcheck", "run_selfcheck.py", ()),
-    ("chains", "run_eqy_chains.py", ()),
-)
-FUNCTION_ONLY_SKIPPED = (
-    ("flowcheck", "功能复核：未重新综合（流程一致性引用既有轮次）"),
-    ("measurement_selfcheck", "功能复核：未测性能（测量自检引用既有轮次）"),
-    ("public", "功能复核：不重新综合四例（使用冻结映射网表）"),
-    ("performance", "功能复核：不重测性能（引用既有轮次）"),
-)
-PLUGIN_STAGE_DEPS = {"chains": ("public",)}
-SELFCHECK_STAGES = ("flowcheck", "formal_selfcheck", "measurement_selfcheck")
-PLUGIN_STAGES = ("build",) + tuple(name for name, _, _ in PLUGIN_PLAN)
-
-# 内置四例执行计划（工具自动准备后调度）。两侧内置二进制直接运行逐字节相同的
-# 外部脚本（gen_builtin_synth_ys）；flowcheck 核对优化版自动调用 pmux_opt
-# 的位置与次数；chains 使用内置产物 mapped 网表（链集合 c4a/c4b 主证明）；
-# performance 使用同一外部脚本按 performance_pairs（默认 15）对交错测量。
+# 唯一正式综合阶段先产生同次计量、功能网表和资源证据；后续阶段只分析产物。
 BUILTIN_PLAN = (
-    ("flowcheck", "run_builtin_flowcheck.py", ()),
-    ("formal_selfcheck", "run_selfcheck.py", ()),
-    ("measurement_selfcheck", "measure.py", ("--selftest",)),
-    ("public", "run_builtin_public.py", ()),
-    ("chains", "run_eqy_chains.py", ("--attempt", "run01", "--chains", "main",
-                                     "--input-mode", "builtin")),
-    ("performance", "measure.py", ()),
+    ('formal_selfcheck', 'run_selfcheck.py', ()),
+    ('measurement_selfcheck', 'measure.py', ('--selftest',)),
+    ('performance', 'measure_v8.py', ()),
+    ('flowcheck', 'run_builtin_flowcheck.py', ()),
+    ('public', 'run_builtin_public.py', ()),
+    ('chains', 'run_eqy_chains.py', ('--attempt', 'run01', '--chains', 'main',
+                                  '--input-mode', 'builtin')),
 )
-BUILTIN_STAGES = ("build",) + tuple(name for name, _, _ in BUILTIN_PLAN)
-# 内置模式与插件模式检查内容一致的自检阶段（可按指纹复用缓存）；
-# 内置 flowcheck 为专用检查（内置调用证据），不跨模式复用缓存。
-BUILTIN_CACHED_STAGES = ("formal_selfcheck", "measurement_selfcheck")
-
+BUILTIN_STAGES = ('build',) + tuple(name for name, _, _ in BUILTIN_PLAN)
+BUILTIN_CACHED_STAGES = ('formal_selfcheck', 'measurement_selfcheck')
 BUILTIN_MISSING_HINT = (
-    "内置证据未就绪：本次不启动验收进程、不加载插件、不退回插件方案；"
-    "补足缺项，或按绑定的算法源码重新构建并登记后再运行。"
+    '内置证据未就绪：本次不启动验收进程；'
+    '补足缺项，或按绑定的算法源码重新构建并登记后再运行。'
 )
 
 
 def builtin_stage_plan(cfg):
-    if cfg.get('performance_scheme') == SAME_RUN_SCHEME:
-        return [
-            ('formal_selfcheck', 'run_selfcheck.py', ()),
-            ('measurement_selfcheck', 'measure.py', ('--selftest',)),
-            ('performance', 'measure_v8.py', ()),
-            ('flowcheck', 'run_builtin_flowcheck.py', ()),
-            ('public', 'run_builtin_public.py', ()),
-            ('chains', 'run_eqy_chains.py', ('--attempt', 'run01', '--chains', 'main', '--input-mode', 'builtin')),
-        ]
+    if cfg.get("performance_scheme") != SAME_RUN_SCHEME:
+        raise ValueError("Only the Windows V8 stage plan is supported")
     return list(BUILTIN_PLAN)
 
 
@@ -171,13 +121,19 @@ def verify_package_manifest(package):
             problems.append("清单文件缺失: " + rel)
         elif digest_package_file(f) != want:
             problems.append("内容与清单不符: " + rel)
-    active = [package / n for n in ("validate.py", "report.py", "test_validation.py", "test_p5.py",
-                                    'test_windows_hardening.py', 'test_cpu_v4.py', 'package_windows.py', 'package_qa.py',
-                                    'test_measure_v7.py', 'test_measure_v8.py', 'report_v8.py', 'test_local_lut_integration.py', "POLICY.md", "SKILL.md", "config.json", "config.windows.json",
-                                    "config.windows.v7.json", "config.windows.v8.json", "validate_windows.cmd", "validate_windows_v7.cmd", "validate_windows_v8.cmd")]
+    # 必需入口独立于清单存在；同时覆盖过渡阶段尚未删除的根脚本。
+    active = [package / name for name in (
+        'validate.py', 'report.py', 'report_v8.py', 'config.windows.v8.json',
+        'validate_windows_v8.cmd', 'POLICY.md', 'README.md', 'SKILL.md',
+        'test_validation.py', 'test_windows_hardening.py', 'test_local_lut_integration.py',
+        'test_measure_v8.py', 'test_memory_exit.py',
+    )]
+    active += [p for p in package.iterdir()
+               if p.is_file() and p.suffix.lower() in ('.py', '.json', '.cmd', '.md')
+               and p.name != 'PACKAGE_SHA256.json' and p not in active]
     for sub in ("runner", "suite-official4"):
         active += [p for p in (package / sub).rglob("*")
-                   if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".so"]
+                   if p.is_file() and "__pycache__" not in p.parts]
     for p in active:
         rel = p.relative_to(package).as_posix()
         if rel not in manifest:
@@ -228,29 +184,23 @@ def yosys_share_root(binary):
 
 
 def validate_performance_policy(cfg):
-    scheme=cfg.get('performance_scheme')
-    if scheme not in (None,'pmux-perf-15p-mainrss-v2','pmux-perf-5p-mainrss-v1',
-                       'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME,SAME_RUN_SCHEME):
-        raise ValueError('Unknown performance scheme; cannot infer measurement policy')
-    if scheme == SINGLE_CPU_SCHEME:
-        from measure_v6 import POLICY
-        if cfg.get('cpu_policy') != POLICY or cfg.get('performance_pairs') != 1: raise ValueError('v6 fixed policy mismatch')
-    if scheme == SAME_RUN_SCHEME:
-        from measure_v8 import POLICY
-        if cfg.get('same_run_policy') != POLICY: raise ValueError('v8 fixed same-run policy mismatch')
-    if scheme == SINGLE_WALL_SCHEME:
-        from measure_v7 import POLICY
-        if cfg.get('wall_policy') != POLICY: raise ValueError('v7 fixed wall-time policy mismatch')
-    if scheme in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME):
-        if cfg.get('cpu_policy')!=CPU_POLICY:raise ValueError('v4 fixed CPU policy mismatch')
-        reference=cfg.get('cpu_reference_tools') or {}
-        if set(reference)!={'wpr','xperf'} or any(not Path(p).is_file() for p in reference.values()):
-            raise ValueError('v4 independent reference dependency missing: configure existing WPR and xperf paths')
+    """仅接受固定 Windows V8 同次计量配置，禁止猜测或回退旧方案。"""
+    from measure_v8 import POLICY
+    if os.name != 'nt' or cfg.get('platform') != 'win32-msys2-mingw64':
+        raise ValueError('V8 requires the native Windows configuration')
+    if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
+        raise ValueError('Only the Windows V8 same-run performance scheme is supported')
+    if cfg.get('same_run_policy') != POLICY:
+        raise ValueError('v8 fixed same-run policy mismatch')
 
 
 def preflight(commit, config_path=None, integration_profile='p3'):
     config_path = Path(config_path).resolve() if config_path else CONFIG_PATH
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    L.validate_output_root(Path(cfg['repo']) / ROUND_PARENT_REL)
+    if cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL) != SELFCHECK_CACHE_REL:
+        raise ValueError('V8 ASCII layout requires the current selfcheck cache path')
+    cfg['result_layout_version'] = L.LAYOUT_VERSION
     validate_performance_policy(cfg)
     cfg['policy_source'] = policy_identity()
     if os.name == 'nt':
@@ -261,14 +211,14 @@ def preflight(commit, config_path=None, integration_profile='p3'):
             if not path.is_file() or digest(path) != spec['sha256']:
                 raise ValueError('Fixed runtime tool missing or identity mismatch: ' + str(path))
             if name == 'python' and Path(sys.executable).resolve() != path.resolve():
-                raise ValueError('Use validate_windows.cmd with the fixed Python: ' + str(path))
+                raise ValueError('Use validate_windows_v8.cmd with the fixed Python: ' + str(path))
             resolved = shutil.which('python3' if name == 'python' else name)
             if not resolved or Path(resolved).resolve() != path.resolve():
                 raise ValueError('Runtime lookup mismatch for ' + name + ': ' + str(resolved))
             version = subprocess.check_output([str(path), '--version'], encoding='utf-8', errors='replace').splitlines()[0]
             runtime[name] = dict(spec, resolved=resolved, version=version)
         cfg['runtime_identity'] = runtime
-        if cfg.get('performance_scheme') in (SINGLE_WALL_SCHEME, SAME_RUN_SCHEME):
+        if cfg.get('performance_scheme') == SAME_RUN_SCHEME:
             spec = cfg.get('wall_time_tool') or {}
             powershell = Path(spec.get('path', ''))
             if not powershell.is_file() or digest(powershell) != spec.get('sha256'):
@@ -418,16 +368,8 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
         evidence[f"{side}_src"] = ev
         if spec.get("src_commit") and head != spec["src_commit"]:
             missing.append(f"{side} 源码提交与登记不符：{head} != {spec['src_commit']}")
-        if runtime_patch.enabled(cfg):
-            try:
-                if spec.get('runtime_patch') != runtime_patch.verify(src): raise ValueError('runtime patch identity mismatch')
-                if spec.get('full_diff_sha256') != ev['diff_sha256']: raise ValueError('full source diff mismatch')
-                allowed={'kernel/driver.cc'} | ({'passes/opt/CMakeLists.txt','techlibs/intel/synth_intel.cc'} if side=='optimized' else set())
-                files=set(git(src,'diff','--name-only').splitlines())
-                if files != allowed: raise ValueError('unexpected source changes: '+str(files))
-                diff_text=git(src,'diff','--','.',':(exclude)kernel/driver.cc')
-                ev['diff_sha256']=hashlib.sha256(diff_text.encode()).hexdigest()
-            except (ValueError,OSError,subprocess.SubprocessError) as exc: missing.append(str(exc))
+        if spec.get('runtime_patch') is not None:
+            missing.append(side + ' runtime_patch entries are unsupported by V8')
         if side == "baseline":
             if diff_text:
                 missing.append("baseline 源码仓库存在未提交改动（影响来源证据）")
@@ -437,7 +379,7 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
                 missing.append("优化版源码 diff 与登记集成补丁不一致（改动被调整或未登记）")
             elif not want and diff_text:
                 missing.append("优化版源码存在未登记的未提交改动")
-        if cfg.get('performance_scheme') in (SINGLE_WALL_SCHEME, SAME_RUN_SCHEME):
+        if cfg.get('performance_scheme') == SAME_RUN_SCHEME:
             try:
                 committed_driver = git(src, 'show', 'HEAD:kernel/driver.cc')
                 current_driver = (src / 'kernel/driver.cc').read_text(encoding='utf-8')
@@ -534,7 +476,7 @@ def configure_windows_runtime(cfg):
 def next_round_dir(parent, prefix):
     """创建新轮次目录（禁止覆盖：编号递增取下一个未用编号）。"""
     for number in range(1, 10000):
-        root = parent / f"{prefix}_第{number:02d}轮"
+        root = L.contained_path(parent, f"{prefix}_r{number:02d}")
         try:
             root.mkdir()
             return root
@@ -556,26 +498,27 @@ def snapshot_entrypoints(meta, cfg):
 
 
 def make_round(cfg, source, label, mode, *, collect_tools_env=True):
-    parent = Path(cfg["repo"]) / ROUND_PARENT_REL
+    L.validate_label(label)
+    parent = L.validate_output_root(Path(cfg["repo"]) / ROUND_PARENT_REL)
     parent.mkdir(parents=True, exist_ok=True)
     prefix = datetime.now().strftime("%Y-%m-%d_%H%M") + "_" + label + "_" + cfg["target_commit"][:7]
     root = next_round_dir(parent, prefix)
-    cfg["ascii_bridge"] = str(Path(cfg["repo"]) / "results" / ("_eval_ascii_" + uuid.uuid4().hex))
-    Path(cfg["ascii_bridge"]).mkdir()
+    cfg.pop('ascii_bridge', None)
+    cfg['result_layout_version'] = L.LAYOUT_VERSION
     cfg["mode"] = mode
-    meta = root / "01_来源与环境_meta"
+    meta = root / L.META
     meta.mkdir()
-    shutil.copytree(PACKAGE / "runner", root / "03_脚本与插件_runner",
+    shutil.copytree(PACKAGE / "runner", root / L.RUNNER,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     snapshot_entrypoints(meta, cfg)
     shutil.copyfile(PACKAGE / "POLICY.md", root / "POLICY.md")
-    shutil.copyfile(Path(cfg.get("config_path", PACKAGE / "config.json")), meta / "config.json")
+    shutil.copyfile(Path(cfg.get("config_path", CONFIG_PATH)), meta / "config.json")
     shutil.copyfile(PACKAGE / cfg["suite_manifest"], meta / "suite_manifest.json")
     normalize_text_file(meta / "suite_manifest.json")
     toolchain = cfg.get("builtin") or {}
     identity_path = toolchain.get("toolchain_identity_manifest")
     if identity_path:
-        evidence_dir = meta / "工具链与构建证据"
+        evidence_dir = meta / L.TOOLCHAIN_EVIDENCE
         evidence_dir.mkdir()
         shutil.copyfile(identity_path, evidence_dir / "toolchain_identity.json")
         dependency_path = toolchain.get("toolchain_dependency_manifest")
@@ -589,7 +532,7 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
                 raise ValueError("工具构建日志哈希变化：" + str(source_log))
             shutil.copyfile(source_log, log_dir / item["name"])
     # 冻结四例输入与自检素材（不含回归/H2/规模资产）。
-    tree = root / "02_冻结源码与输入_assets/tree"
+    tree = root / (L.ASSETS + "/tree")
     shutil.copytree(PACKAGE / "suite-official4/tree", tree)
     normalized_inputs = normalize_text_tree(tree)
     (tree / "src").mkdir()
@@ -600,7 +543,7 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
         patch_path.write_bytes(cfg['integration_patch']['text'].encode('utf-8'))
         if digest(patch_path) != cfg['integration_patch']['sha256']:
             raise ValueError('Frozen integration patch hash mismatch')
-    selfcheck_assets = root / "10_验证工具自检_selfcheck/assets"
+    selfcheck_assets = root / (L.SELFCHECK + "/assets")
     shutil.copytree(PACKAGE / "suite-official4/selfcheck", selfcheck_assets)
     normalized_selfcheck = normalize_text_tree(selfcheck_assets)
     normalized_files = normalized_inputs + normalized_selfcheck
@@ -610,7 +553,7 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
                   for p in normalized_files],
     })
     cfg["created_at"] = datetime.now().astimezone().isoformat()
-    cfg["runner_sha256"] = {p.name: digest(p) for p in (root / "03_脚本与插件_runner").iterdir()
+    cfg["runner_sha256"] = {p.name: digest(p) for p in (root / L.RUNNER).iterdir()
                             if p.is_file()}
     save(root / "validation_context.json", cfg)
     (meta / "project_status_before.txt").write_text(
@@ -637,7 +580,7 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
 
 
 def execute(root, name, cmd, stages, timeout=10800):
-    meta = root / "01_来源与环境_meta"
+    meta = root / L.META
     entry = {"name": name, "command": list(map(str, cmd)), "state": "RUNNING",
              "started_at": datetime.now().astimezone().isoformat()}
     stages.append(entry)
@@ -665,6 +608,7 @@ def execute(root, name, cmd, stages, timeout=10800):
 def selfcheck_fingerprints(cfg, runner_dir):
     """自检证据指纹：关键工具、四例输入、本轮代码/配置。任一变化即失效。"""
     return {
+        "result_layout_version": cfg.get('result_layout_version'),
         "optimized_yosys_sha256": cfg.get('builtin',{}).get('optimized',{}).get('binary_sha256'),
         "builtin_abc_sha256": {side:digest(path) for side,path in cfg.get('builtin',{}).get('abc',{}).items()},
         "compiler_sha256": cfg.get('tools',{}).get('compiler',{}).get('sha256'),
@@ -673,7 +617,7 @@ def selfcheck_fingerprints(cfg, runner_dir):
         "config_sha256": cfg.get("config_sha256"),
         "wall_time_tool_identity": cfg.get("wall_time_tool_identity"),
         "wall_time_method": cfg.get("wall_time_method"),
-        "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
+        "runtime_patch": None,
         "flow_version": cfg["flow_version"],
         "model_version": cfg.get("model_version"),
         "strategy_version": cfg.get("strategy_version"),
@@ -699,11 +643,7 @@ def cache_entry_valid(cache, stage, fingerprints):
     """指纹匹配且结果为真实通过时才允许复用；缺证据或指纹不一致不得假定已自检。"""
     entry = ((cache or {}).get("entries") or {}).get(stage)
     matched = bool(entry and entry.get("ok") and entry.get("fingerprint") == fingerprints)
-    if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_CPU_SCHEME:
-        evidence = entry.get('measurement_evidence') or {}
-        path = Path(evidence.get('path',''))
-        return path.is_file() and digest(path) == evidence.get('sha256')
-    if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') in (SINGLE_WALL_SCHEME, SAME_RUN_SCHEME):
+    if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SAME_RUN_SCHEME:
         evidence = entry.get('measurement_evidence') or {}
         path = Path(evidence.get('path', ''))
         if not path.is_file() or digest(path) != evidence.get('sha256'):
@@ -712,7 +652,7 @@ def cache_entry_valid(cache, stage, fingerprints):
             proof = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             return False
-        return proof.get('selftest_ok') is True and proof.get('method') == (SAME_RUN_METHOD if fingerprints.get('performance_scheme') == SAME_RUN_SCHEME else 'powershell-measure-command-elapsed-wall-v1')
+        return proof.get('selftest_ok') is True and proof.get('method') == SAME_RUN_METHOD
     return matched
 
 
@@ -722,14 +662,10 @@ def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
     entries[stage] = {"fingerprint": fingerprints, "ok": bool(ok),
                       "finished_at": datetime.now().astimezone().isoformat(),
                       "evidence_root": str(evidence_root)}
-    if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SINGLE_CPU_SCHEME and ok:
-        proof = Path(evidence_root) / '09_时间内存开销_performance/selftest/selftest_results.json'
-        if not proof.is_file(): raise ValueError('v6 selfcheck evidence missing')
-        entries[stage]['measurement_evidence'] = dict(path=str(proof),sha256=digest(proof))
-    if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') in (SINGLE_WALL_SCHEME, SAME_RUN_SCHEME) and ok:
-        proof = Path(evidence_root) / '09_时间内存开销_performance/selftest/selftest_results.json'
-        if not proof.is_file(): raise ValueError('v7 selfcheck evidence missing')
-        entries[stage]['measurement_evidence'] = dict(path=str(proof),sha256=digest(proof))
+    if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SAME_RUN_SCHEME and ok:
+        proof = Path(evidence_root) / (L.PERFORMANCE + '/selftest/selftest_results.json')
+        if not proof.is_file(): raise ValueError('v8 selfcheck evidence missing')
+        entries[stage]['measurement_evidence'] = dict(path=str(proof), sha256=digest(proof))
     # 首次运行时共享缓存目录可能尚不存在，写入前创建父目录。
     path.parent.mkdir(parents=True, exist_ok=True)
     save(path, cache)
@@ -740,7 +676,7 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
     """内置四例验收：自动准备工具（复用/构建）→ 身份检查 → 完整内置调度。"""
     root = make_round(cfg, source, label, mode="builtin", collect_tools_env=False)
     print("ROUND=" + str(root), flush=True)
-    meta = root / "01_来源与环境_meta"
+    meta = root / L.META
     stages = []
 
     # 第一步：工具准备——查找可复用构建；未命中则在缓存命名空间内真实构建
@@ -761,7 +697,7 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
         from report import build_builtin_build_failed_report
         status = build_builtin_build_failed_report(root, error=str(exc), cfg=cfg,
                                                    build_dir=exc.build_dir, logs=exc.logs)
-        print("RESULT=" + status + "\nREPORT=" + str(root / "00_本轮验证结论.md"), flush=True)
+        print("RESULT=" + status + "\nREPORT=" + str(root / L.REPORT), flush=True)
         return 3
     cfg["builtin"] = prep["builtin"]
     cfg["builtin_prepare"] = prep["record"]
@@ -780,42 +716,23 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
         build_builtin_block_report(root, status="BUILTIN_NOT_READY", missing=missing,
                                    evidence=evidence, cfg=cfg)
         print("RESULT=BUILTIN_NOT_READY")
-        print("REPORT=" + str(root / "00_本轮验证结论.md"))
+        print("REPORT=" + str(root / L.REPORT))
         return 3
 
     stages.append({"name": "build", "state": "COMPLETED", "rc": 0,
                    "detail": "工具准备完成：" + prep["record"]["summary"]})
     save(meta / "stages.json", stages)
 
-    runner = root / "03_脚本与插件_runner"
+    runner = root / L.RUNNER
     cache_path = Path(cfg["repo"]) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
     fingerprints = selfcheck_fingerprints(cfg, runner)
     cache = load_selfcheck_cache(cache_path)
-    failed = set()
     status = "NEEDS_REVIEW"
     from report import build_builtin_report
     try:
-        stage_plan=builtin_stage_plan(cfg)
-        if cfg.get('performance_scheme')==MEAN_CPU_SCHEME:
-            stage_plan.insert(3,('cpu_method_qualification','qualify_cpu_method.py',()))
-        elif cfg.get('performance_scheme')==ETW_CPU_SCHEME:
-            stage_plan.insert(3,('cpu_etw_selfcheck','cpu_selfcheck_v5.py',()))
+        stage_plan = builtin_stage_plan(cfg)
         for name, script, args in stage_plan:
-            if name == "performance" and cfg.get("performance_scheme") != SAME_RUN_SCHEME:
-                errors = performance_precondition(root, cfg)
-                if errors:
-                    stages.append({'name': name, 'state': 'NOT_RUN', 'reason': 'integration/formal evidence gate failed', 'errors': errors})
-                    failed.add(name)
-                    save(meta / 'stages.json', stages)
-                    break
-                args = () if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME,SAME_RUN_SCHEME) else ("--pairs", str(cfg["performance_pairs"]))
-            if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
-                stages.append({"name": name, "state": "NOT_RUN", "reason": "dependency failed"})
-                failed.add(name)
-                save(meta / "stages.json", stages)
-                continue
             if (name in BUILTIN_CACHED_STAGES
-                    and not (name == 'flowcheck' and I.identity(cfg) == I.LOCAL_ID)
                     and cache_entry_valid(cache, name, fingerprints)):
                 entry = cache["entries"][name]
                 stages.append({"name": name, "state": "REUSED", "rc": 0,
@@ -826,22 +743,16 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
                 continue
             rc = execute(root, name, [sys.executable, str(runner / script), *args], stages)
             if rc:
-                failed.add(name)
-                if cfg.get("performance_scheme") == SAME_RUN_SCHEME:
-                    raise RuntimeError(name + " failed; V8 preserves partial evidence and never resamples")
-                if name in ('cpu_method_qualification','cpu_etw_selfcheck'):
-                    raise RuntimeError('CPU method qualification failed; no reference/certificate substitution or performance resampling')
+                raise RuntimeError(name + ' failed; V8 preserves partial evidence and never resamples')
             if name in BUILTIN_CACHED_STAGES:
-                update_selfcheck_cache(cache_path, cache, fingerprints, name, rc == 0, root)
-                if rc:
-                    raise RuntimeError(name + " gate failed; dependent evaluation stopped")
+                update_selfcheck_cache(cache_path, cache, fingerprints, name, True, root)
     except Exception as exc:
         save(meta / "orchestrator_error.json", {"error": str(exc)})
         print("ERROR:", exc, flush=True)
     finally:
         save(meta / "stages.json", stages)
         status = build_builtin_report(root, chain_attempt="run01")
-        index = root / "11_汇总与证据_summary/ALL_SHA256.txt"
+        index = root / (L.SUMMARY + "/ALL_SHA256.txt")
         index.parent.mkdir(parents=True, exist_ok=True)
         print("Hashing evidence", flush=True)
         with index.open("x") as f:
@@ -851,93 +762,8 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
                     path = Path(directory) / name
                     if path != index:
                         f.write(digest(path) + "  " + str(path.relative_to(root)) + "\n")
-        print("RESULT=" + status + "\nREPORT=" + str(root / "00_本轮验证结论.md"), flush=True)
+        print("RESULT=" + status + "\nREPORT=" + str(root / L.REPORT), flush=True)
     return 0 if status == "BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE" else 2
-
-
-def run_plugin(cfg, source, label, chains, function_only=False, frozen_round=None):
-    cfg["function_only"] = bool(function_only)
-    cfg["frozen_round"] = str(frozen_round) if frozen_round else None
-    root = make_round(cfg, source, label, mode="plugin", collect_tools_env=True)
-    print("ROUND=" + str(root), flush=True)
-    stages = []
-    runner = root / "03_脚本与插件_runner"
-    cache_path = Path(cfg["repo"]) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
-    from report import build_report
-    status = "NEEDS_REVIEW"
-    try:
-        cmd = [cfg["tools"]["yosys_config"]["path"], "--build", str(runner / "pmux_opt.so"),
-               str(root / "02_冻结源码与输入_assets/tree/src/pmux_opt.cc")]
-        if execute(root, "build", cmd, stages, timeout=900):
-            raise RuntimeError("Plugin build failed")
-        cfg["plugin_sha256"] = digest(runner / "pmux_opt.so")
-        cfg["chains_mode"] = chains
-        save(root / "validation_context.json", cfg)
-        sys.path.insert(0, str(runner))
-        import p3_common as C
-        rc = C.run_yosys("help pmux_opt\n", root / "01_来源与环境_meta/baseline_help.log")
-        base = (root / "01_来源与环境_meta/baseline_help.log").read_text()
-        rc2 = C.run_yosys("help pmux_opt\n", root / "01_来源与环境_meta/plugin_help.log", plugin=True)
-        opt = (root / "01_来源与环境_meta/plugin_help.log").read_text()
-        cfg["isolation"] = {"baseline_rc": rc, "plugin_rc": rc2,
-                            "baseline_no_pmux": "No such command" in base,
-                            "plugin_has_pmux": rc2 == 0 and "No such command" not in opt and "pmux_opt" in opt}
-        save(root / "validation_context.json", cfg)
-        if not (cfg["isolation"]["baseline_no_pmux"] and cfg["isolation"]["plugin_has_pmux"]):
-            raise RuntimeError("Baseline/plugin pass isolation failed")
-
-        fingerprints = selfcheck_fingerprints(cfg, runner)
-        cache = load_selfcheck_cache(cache_path)
-        failed = set()
-        plan = FUNCTION_ONLY_PLAN if function_only else PLUGIN_PLAN
-        for name, script, args in plan:
-            if name == "performance":
-                args = ("--pairs", str(cfg["performance_pairs"]))
-            if any(d in failed for d in PLUGIN_STAGE_DEPS.get(name, ())):
-                stages.append({"name": name, "state": "NOT_RUN", "reason": "dependency failed"})
-                failed.add(name)
-                continue
-            if name in SELFCHECK_STAGES and cache_entry_valid(cache, name, fingerprints):
-                entry = cache["entries"][name]
-                stages.append({"name": name, "state": "REUSED", "rc": 0,
-                               "from_cache": str(cache_path),
-                               "source_round": entry.get("evidence_root")})
-                save(root / "01_来源与环境_meta/stages.json", stages)
-                print("REUSE", name, "from", entry.get("evidence_root"), flush=True)
-                continue
-            if name == "chains":
-                args = ("--attempt", "run01", "--chains", chains)
-                if function_only:
-                    args = (*args, "--frozen-round", cfg["frozen_round"])
-            rc = execute(root, name, [sys.executable, str(runner / script), *args], stages)
-            if rc:
-                failed.add(name)
-            if name in SELFCHECK_STAGES:
-                update_selfcheck_cache(cache_path, cache, fingerprints, name, rc == 0, root)
-                if rc:
-                    raise RuntimeError(name + " gate failed; dependent evaluation stopped")
-        if function_only:
-            for name, reason in FUNCTION_ONLY_SKIPPED:
-                stages.append({"name": name, "state": "NOT_RUN", "reason": reason})
-            save(root / "01_来源与环境_meta/stages.json", stages)
-    except Exception as exc:
-        save(root / "01_来源与环境_meta/orchestrator_error.json", {"error": str(exc)})
-        print("ERROR:", exc, flush=True)
-    finally:
-        save(root / "01_来源与环境_meta/stages.json", stages)
-        status = build_report(root, chain_attempt="run01", mode="plugin")
-        index = root / "11_汇总与证据_summary/ALL_SHA256.txt"
-        index.parent.mkdir(parents=True, exist_ok=True)
-        print("Hashing evidence", flush=True)
-        with index.open("x") as f:
-            for directory, dirs, files in os.walk(root):
-                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-                for name in sorted(files):
-                    path = Path(directory) / name
-                    if path != index:
-                        f.write(digest(path) + "  " + str(path.relative_to(root)) + "\n")
-        print("RESULT=" + status + "\nREPORT=" + str(root / "00_本轮验证结论.md"), flush=True)
-    return 0 if status in ("FOUR_CASE_PLUGIN_CHECKS_COMPLETE", "FUNCTION_RECHECK_COMPLETE") else 2
 
 
 def main():
@@ -946,79 +772,49 @@ def main():
     ap.add_argument("commit")
     ap.add_argument("--label", default=None)
     ap.add_argument("--config", default=None,
-                    help="指定独立流程配置；默认仍选择平台现行配置")
+                    help="指定 Windows V8 配置；默认 config.windows.v8.json")
     ap.add_argument('--integration-profile', choices=['p3', 'p3-local-lut'], default='p3',
                     help='包含已登记7.1补丁的提交必须选择 p3-local-lut')
-    ap.add_argument("--mode", choices=["builtin", "plugin"], default="builtin",
-                    help="builtin=内置四例验收（默认；未就绪时阻断并记录）；plugin=显式四例插件预检")
-    ap.add_argument("--chains", choices=["main", "full"], default="main",
-                    help="插件预检功能证明链集合（main=主路径+对照+定位；full=全部链）")
-    ap.add_argument("--function-only", action="store_true",
-                    help="功能补充复核：只运行 build + formal_selfcheck + chains（冻结输入；不综合/不测性能）")
-    ap.add_argument("--frozen-round", default=None,
-                    help="功能补充复核的冻结来源轮次目录（需含 05_公开四例_public 与 11_汇总与证据_summary/ALL_SHA256.txt）")
+    ap.add_argument('--mode', choices=['builtin'], default='builtin',
+                    help='Windows V8 内置四例验收')
     ap.add_argument("--builtin-cache-dir", default=None,
                     help="内置构建缓存命名空间（默认 config.builtin.cache_dir；仅影响 builtin 模式；"
                          "用于复用检查与空缓存未命中构建验证）")
     args = ap.parse_args()
-    if args.label is not None and not re.fullmatch(r"[\w\-]+", args.label):
-        ap.error("Label may contain only letters, digits, Chinese, underscore and hyphen")
-    if args.function_only and args.mode != "plugin":
-        ap.error("--function-only 仅适用于 --mode plugin")
-    if args.frozen_round and not args.function_only:
-        ap.error("--frozen-round 需要与 --function-only 一起使用")
-    if args.integration_profile != 'p3' and args.mode != 'builtin':
-        ap.error('p3-local-lut requires builtin mode')
+    if args.label is not None:
+        try:
+            L.validate_label(args.label)
+        except ValueError as exc:
+            ap.error(str(exc))
     cfg, source = preflight(args.commit, args.config, args.integration_profile)
     if args.label is None:
-        args.label = ("Windows同次墙钟与峰值内存_v8" if cfg.get("performance_scheme") == SAME_RUN_SCHEME else "WindowsPowerShell墙钟计时_v7" if cfg.get('performance_scheme') == SINGLE_WALL_SCHEME
-                      else ROUND_LABEL_DEFAULT)
+        args.label = ROUND_LABEL_DEFAULT
     if args.action == "plan":
         sys.path.insert(0, str(PACKAGE / "runner"))
         from prepare_builtin import plan_builtin
         plan = plan_builtin(cfg, cfg["source_sha256"], cache_dir=args.builtin_cache_dir)
-        cpu_method=None
-        if cfg.get('performance_scheme')==MEAN_CPU_SCHEME:
-            from cpu_qualification import qualification_status
-            cpu_method=qualification_status(cfg)
-        elif cfg.get('performance_scheme')==ETW_CPU_SCHEME:
-            from cpu_selfcheck_v5 import status as etw_status
-            cpu_method=etw_status(cfg)
         print(json.dumps({k: cfg.get(k) for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
               "performance_pairs", "performance_scheme", "tool_data_checked", "integration_profile", "integration_patch"]},
               ensure_ascii=False, indent=2))
-        print(json.dumps({"mode_default": "builtin", "builtin_plan": plan,
-                          'cpu_policy':cfg.get('cpu_policy'),'cpu_method_qualification':cpu_method,
-                          'policy_source':cfg.get('policy_source'),
-                          'formal_synthesis_expected_runs':8 if cfg.get('performance_scheme') == SAME_RUN_SCHEME else None,
-                          'performance_expected_runs':8 if cfg.get('performance_scheme') == SAME_RUN_SCHEME else 16 if cfg.get('performance_scheme') in (SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME,SAME_RUN_SCHEME) else 2720 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else None,
-                          'same_run_policy':cfg.get('same_run_policy'), 'wall_policy':cfg.get('wall_policy'),'wall_time_tool_identity':cfg.get('wall_time_tool_identity'),
-                          'wall_runs_per_case':1 if cfg.get('performance_scheme') in (SINGLE_WALL_SCHEME,SAME_RUN_SCHEME) else None,
-                          'wall_runs_total':8 if cfg.get('performance_scheme') in (SINGLE_WALL_SCHEME,SAME_RUN_SCHEME) else None,
-                          'cpu_pairs_per_case':300 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
-                          'memory_pairs_per_case':15 if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME) else cfg.get('performance_pairs'),
-                          'performance_estimate_note':'8次正式综合，同次墙钟/峰值内存/功能网表/资源；EQY和专用自检另计，无预热或补跑' if cfg.get('performance_scheme') == SAME_RUN_SCHEME else '16次目标性能运行，无预热/重采样/ETW；构建、自检、功能证明另计' if cfg.get('performance_scheme') in (SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME,SAME_RUN_SCHEME) else '2720次历史性能方案',
-                          "runtime_identity": cfg.get('runtime_identity'),
-                          "note": "plan 只读：不创建轮次/构建目录、不编译、不登记。run 默认先自动准备"
-                                  "（复用或构建）再执行内置四例验收；四例插件预检需 --mode plugin。"},
+        print(json.dumps({'mode_default': 'builtin', 'builtin_plan': plan,
+                          'result_layout_version': L.LAYOUT_VERSION,
+                          'round_parent': str(Path(cfg['repo']) / ROUND_PARENT_REL),
+                          'round_label': args.label,
+                          'selfcheck_cache': str(Path(cfg['repo']) / SELFCHECK_CACHE_REL),
+                          'policy_source': cfg.get('policy_source'),
+                          'formal_synthesis_expected_runs': 8,
+                          'performance_expected_runs': 8,
+                          'same_run_policy': cfg.get('same_run_policy'),
+                          'wall_time_tool_identity': cfg.get('wall_time_tool_identity'),
+                          'wall_runs_per_case': 1, 'wall_runs_total': 8,
+                          'performance_estimate_note': '8次正式综合，同次墙钟/峰值内存/功能网表/资源；EQY和专用自检另计，无预热或补跑',
+                          'runtime_identity': cfg.get('runtime_identity'),
+                          'note': 'plan 只读：不创建轮次/构建目录、不编译、不登记。run 先自动准备（复用或构建）再执行内置四例验收。'},
                          ensure_ascii=False, indent=2))
         print("只读预检完成。")
         return 0
-    if args.mode == "builtin":
-        return run_builtin(cfg, source, args.label, build_cache_dir=args.builtin_cache_dir)
-    if cfg.get('performance_scheme') in (MEAN_CPU_SCHEME,ETW_CPU_SCHEME,SINGLE_CPU_SCHEME,SINGLE_WALL_SCHEME,SAME_RUN_SCHEME):
-        raise ValueError('mean CPU policy is Windows builtin-only; no plugin substitution')
-    frozen = None
-    if args.frozen_round:
-        p = Path(args.frozen_round)
-        if not p.is_absolute():
-            p = Path(cfg["repo"]) / p
-        if not p.is_dir():
-            raise SystemExit("冻结轮次目录不存在: " + str(p))
-        frozen = p.resolve()
-    return run_plugin(cfg, source, args.label, args.chains,
-                      function_only=args.function_only, frozen_round=frozen)
+    return run_builtin(cfg, source, args.label, build_cache_dir=args.builtin_cache_dir)
 
 
 if __name__ == "__main__":

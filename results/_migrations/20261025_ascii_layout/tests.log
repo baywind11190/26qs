@@ -1,0 +1,39 @@
+test1 baseline VALID
+test1 optimized VALID
+test2 baseline VALID
+test2 optimized VALID
+test3 baseline VALID
+test3 optimized VALID
+test4 baseline VALID
+test4 optimized VALID
+test1 baseline VALID
+test1 optimized INVALID
+test1 baseline VALID
+test1 optimized VALID
+test2 baseline VALID
+test2 optimized VALID
+test3 baseline VALID
+test3 optimized VALID
+test4 baseline VALID
+test4 optimized VALID
+test1 baseline VALID
+test1 optimized VALID
+test2 baseline VALID
+test2 optimized VALID
+test3 baseline VALID
+test3 optimized VALID
+test4 baseline VALID
+test4 optimized VALID
+ROUND=C:\Users\21915\AppData\Local\Temp\tmpnqa_yuj2\round1
+ERROR: 内置工具准备失败：模拟构建失败
+RESULT=BUILTIN_BUILD_FAILED
+REPORT=C:\Users\21915\AppData\Local\Temp\tmpnqa_yuj2\round1\00_report.md
+ROUND=C:\Users\21915\AppData\Local\Temp\tmpu29dtomt\round1
+Hashing evidence
+RESULT=NEEDS_REVIEW
+REPORT=C:\Users\21915\AppData\Local\Temp\tmpu29dtomt\round1\00_report.md
+........................................................................................................................
+----------------------------------------------------------------------
+Ran 120 tests in 13.023s
+
+OK

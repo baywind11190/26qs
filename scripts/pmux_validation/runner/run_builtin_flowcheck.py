@@ -12,12 +12,13 @@
 - 不加载插件：命令行无 -m 参数、日志无插件加载痕迹；
 - 两侧脚本逐字节相同（记录脚本 SHA-256）。
 
-输出：04_流程一致性_flowcheck/builtin_run01/（脚本、日志、builtin_flowcheck.json）
+输出：04_flowcheck/builtin_run01/（脚本、日志、builtin_flowcheck.json）
 退出码：0 全部通过；1 存在不符合项。
 """
 import json
 import sys
 from pathlib import Path
+import result_layout as L
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
@@ -68,7 +69,7 @@ def run_side(side, binary, script, sdir, timeout=900, analyze_only=False):
 
 
 def main():
-    out = C.ROUND_DIR / "04_流程一致性_flowcheck" / "builtin_run01"
+    out = C.ROUND_DIR / L.FLOWCHECK / "builtin_run01"
     C.refuse_overwrite(out)
     out.mkdir(parents=True)
     builtin = C.CONTEXT.get("builtin") or {}
@@ -96,13 +97,13 @@ def main():
     for i in range(1, 5):
         top = "test{}".format(i)
         rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
-        rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
+        rtl = L.validate_output_root(rtl_source)
         cdir = out / top
         script = (B.gen_builtin_formal_ys(rtl, top) if joint else C.gen_builtin_synth_ys(rtl, top))
         script_sha = __import__("hashlib").sha256(script.encode()).hexdigest()
         case = {"case": top, "script_sha256": script_sha, "sides": {}}
         for side, binary in binaries.items():
-            sdir = (C.ROUND_DIR / '05_公开四例_public/round01' / top / side) if joint else cdir / side
+            sdir = (C.ROUND_DIR / (L.PUBLIC + '/round01') / top / side) if joint else cdir / side
             if not joint: sdir.mkdir(parents=True)
             info = run_side(side, binary, script, sdir, analyze_only=joint)
             case["sides"][side] = info

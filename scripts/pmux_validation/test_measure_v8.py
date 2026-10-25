@@ -1,11 +1,15 @@
 """V8: exactly eight joint samples and immutable, shared synthesis evidence."""
 import copy
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / 'runner'))
 try:
@@ -38,6 +42,82 @@ class V8Tests(unittest.TestCase):
                          [(f'test{i}', s) for i in range(1, 5)
                           for s in ('baseline', 'optimized')])
         self.assertEqual(len({(r['case'], r['side']) for r in rows}), 8)
+
+    def test_compare_is_independent_of_removed_v7_module(self):
+        spec = importlib.util.spec_from_file_location('isolated_v8', Path(v8.__file__))
+        independent = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'measure_v7': None}):
+            try:
+                spec.loader.exec_module(independent)
+            except ImportError as exc:
+                self.fail('V8 comparison still requires the removed V7 module: ' + str(exc))
+        self.assertEqual(independent.compare(100, 105)['wall_5pct'], 'PASS')
+
+    def test_compare_rejects_invalid_ticks_and_preserves_integer_boundaries(self):
+        invalid = {'wall_overhead_pct': None, 'wall_5pct': 'INVALID',
+                   'wall_15pct': 'INVALID', 'wall_verdict': 'INVALID',
+                   'official_midband_score': 'NOT_DETERMINED'}
+        for base, opt in ((0, 1), (1, 0), (-1, 1), (1, -1), (True, 1),
+                          (1, False), (1.0, 1), (1, '1'), (None, 1)):
+            with self.subTest(base=base, opt=opt):
+                self.assertEqual(v8.compare(base, opt), invalid)
+        for opt, five, fifteen, score in (
+                (105, 'PASS', 'PASS', 'UP_TO_5_THRESHOLD'),
+                (106, 'FAIL', 'PASS', 'NOT_DETERMINED'),
+                (115, 'FAIL', 'PASS', 'NOT_DETERMINED'),
+                (116, 'FAIL', 'FAIL', 'ABOVE_15_THRESHOLD')):
+            result = v8.compare(100, opt)
+            self.assertEqual((result['wall_5pct'], result['wall_15pct'],
+                              result['wall_verdict'], result['official_midband_score']),
+                             (five, fifteen, five, score))
+
+    def test_default_preflight_reads_v8_configuration(self):
+        import validate
+        class StopBeforeToolChecks(Exception):
+            pass
+        seen = []
+        def capture(cfg):
+            seen.append(cfg)
+            raise StopBeforeToolChecks
+        with patch.object(validate, 'validate_performance_policy', side_effect=capture):
+            with self.assertRaises(StopBeforeToolChecks):
+                validate.preflight('not-a-real-commit')
+        self.assertEqual(seen[0]['performance_scheme'], v8.SCHEME)
+        self.assertEqual(seen[0]['same_run_policy'], v8.POLICY)
+
+    def test_policy_rejects_retired_schemes_and_nonwindows_configuration(self):
+        import validate
+        cfg = dict(platform='win32-msys2-mingw64', performance_scheme=v8.SCHEME,
+                   same_run_policy=v8.POLICY)
+        validate.validate_performance_policy(cfg)
+        for scheme in (None, 'pmux-perf-15p-mainrss-v2', 'pmux-perf-5p-mainrss-v1',
+                       'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',
+                       'pmux-perf-single-windows-internalcpu-exitpeak-v6',
+                       'pmux-perf-single-powershell-wall-exitpeak-v7'):
+            with self.subTest(scheme=scheme), self.assertRaises(ValueError):
+                validate.validate_performance_policy(dict(cfg, performance_scheme=scheme))
+        with self.assertRaises(ValueError):
+            validate.validate_performance_policy(dict(cfg, platform='linux'))
+        with self.assertRaises(ValueError):
+            validate.validate_performance_policy(dict(cfg, same_run_policy={}))
+
+    def test_cli_rejects_plugin_before_preflight(self):
+        import prepare_builtin
+        import validate
+        calls = []
+        def preflight(*args):
+            calls.append(args)
+            return dict(performance_scheme=v8.SCHEME, source_sha256='source'), b'algorithm'
+        with patch.object(sys, 'argv', ['validate.py', 'plan', 'commit', '--mode', 'plugin']), \
+             patch.object(validate, 'preflight', side_effect=preflight), \
+             patch.object(prepare_builtin, 'plan_builtin', return_value={}), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                rc = validate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        self.assertEqual(rc, 2)
+        self.assertEqual(calls, [])
 
     def test_joint_counter_identity_and_positive_peak_are_required(self):
         self.assertEqual(v8.sample_errors(raw()), [])
@@ -123,10 +203,12 @@ class V8Tests(unittest.TestCase):
             self.assertEqual(len(samples), 8)
             ids = {json.loads(p.read_text(encoding='utf-8'))['sample_id'] for p in samples}
             self.assertEqual(len(ids), 8)
-            ledger = json.loads((root / '09_时间内存开销_performance/round01/synthesis_ledger.json').read_text(encoding='utf-8'))
+            ledger = json.loads((root / '09_performance/round01/synthesis_ledger.json').read_text(encoding='utf-8'))
             self.assertEqual(ledger['attempted_runs'], 8)
             self.assertEqual(ledger['started_runs'], 8)
             self.assertTrue(ledger['execution_complete'])
+            self.assertTrue(all(str(p.relative_to(root)).isascii() for p in root.rglob('*')))
+            self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
 
     def test_failure_preserves_raw_and_stops_without_replacement(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -134,15 +216,16 @@ class V8Tests(unittest.TestCase):
             rc, calls = self.invoke_fake(root, fail_at=2)
             self.assertNotEqual(rc, 0)
             self.assertEqual(len(calls), 2)
-            result = json.loads((root / '05_公开四例_public/round01/test1/optimized/measure_result.json').read_text(encoding='utf-8'))
+            result = json.loads((root / '05_public/round01/test1/optimized/measure_result.json').read_text(encoding='utf-8'))
             self.assertFalse(result['memory_capture_complete'])
-            summaries = json.loads((root / '09_时间内存开销_performance/round01/performance_summary.json').read_text(encoding='utf-8'))
+            summaries = json.loads((root / '09_performance/round01/performance_summary.json').read_text(encoding='utf-8'))
             self.assertTrue(all(not s['execution_complete'] for s in summaries))
+            self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
 
     def test_saved_artifact_change_is_detected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.invoke_fake(root)
-            folder = root / '05_公开四例_public/round01/test1/baseline'
+            folder = root / '05_public/round01/test1/baseline'
             row = json.loads((folder / 'measure_result.json').read_text(encoding='utf-8'))
             self.assertEqual(v8.sample_errors(row, require_outputs=True), [])
             (folder / 'post_abc.il').write_text('changed')
@@ -171,7 +254,7 @@ class V8Tests(unittest.TestCase):
                 'suite_verified': True, 'builtin': {'integration_id': 'pmux-opt-inline-p3-v1'}}), encoding='utf-8')
             result = report_v8.build_report(root)
             self.assertEqual(result, 'NEEDS_REVIEW')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text(encoding='utf-8'))
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['formal_synthesis_attempted_runs'], 8)
             self.assertEqual(manifest['category_status']['formal'], 'NOT_RUN')
             self.assertNotEqual(manifest['verification_verdict'], 'PASS')

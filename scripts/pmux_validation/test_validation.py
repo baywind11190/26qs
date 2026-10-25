@@ -1,7 +1,7 @@
 """Evidence classification and reporting regression tests (no EDA execution).
 
-official4-p2：覆盖 noDF 严格转换、联合判定、支持配置预检边界、双侧报告、
-功能补充复核模式与新指纹字段（模型/策略版本）。
+覆盖 noDF 严格转换、联合判定、支持配置预检边界、双侧报告、
+V8同次原始证据、构建缓存和新指纹字段（模型/策略版本）。
 """
 import io
 import json
@@ -17,9 +17,19 @@ import unittest
 sys.path.insert(0, str(Path(__file__).parent / 'runner'))
 from formal_status import summarize_eqy, check_mapped_model
 from function_common import (transform_run_ys, make_probe_ys, classify_proof_text,
-                             classify_probe_text, verify_expected_asserts, TransformError,
-                             ascii_eqy_workdir, copy_eqy_workdir)
+                             classify_probe_text, verify_expected_asserts, TransformError)
+import function_common as F
 from report import build_report, row_functional_ok
+import measure_v8 as V8
+from test_measure_v8 import raw as v8_raw
+
+
+def _v8_context():
+    return dict(mode='builtin', performance_scheme=V8.SCHEME, same_run_policy=V8.POLICY,
+                result_layout_version='ascii-v1',
+                flow_version='official4-v8', suite_verified=True,
+                target_commit='a' * 40, source_sha256='b' * 64,
+                policy_source={'path': str(Path(__file__).with_name('POLICY.md'))})
 
 
 def _dffeas_il(conns=None, params=None, top='top'):
@@ -43,40 +53,21 @@ def _lcell_il(missing=None):
 
 
 class EvidenceTests(unittest.TestCase):
-    def test_measure_progress_line_handles_platform_specific_metrics(self):
-        from measure_format import collect_metric_values, format_run_progress
 
-        windows_line = format_run_progress(
-            'test1', 1, 'B→O', 'baseline', {
-                'rc': 0, 'cpu_total_s': 1.25, 'wall_s': 1.4,
-                'memory_metric': 'yosys_peak_working_set_bytes',
-                'yosys_peak_working_set_bytes': 16 * 1024 * 1024,
-            })
-        self.assertIn('yosys_main_peak=16777216 B (16.00 MiB)', windows_line)
-        self.assertNotIn('gn_rss=', windows_line)
-
-        linux_line = format_run_progress(
-            'test1', 1, 'B→O', 'baseline', {
-                'rc': 0, 'cpu_total_s': 1.25, 'wall_s': 1.4,
-                'memory_metric': 'yosys_main_rss_peak_kb',
-                'yosys_main_rss_peak_kb': 16384,
-                'gn_time_maxrss_kb': 32768,
-            })
-        self.assertIn('yosys_main_peak=16384 kB', linux_line)
-        self.assertIn('gn_rss=32768kB', linux_line)
-
-        windows_runs = [
-            {'side': 'baseline', 'rc': 0, 'timed_out': False,
-             'cpu_total_s': 0.5,
-             'yosys_peak_working_set_bytes': 16 * 1024 * 1024},
-            {'side': 'baseline', 'rc': 0, 'timed_out': False,
-             'cpu_total_s': 0.6,
-             'yosys_peak_working_set_bytes': 17 * 1024 * 1024},
-        ]
-        self.assertEqual(collect_metric_values(windows_runs, 'baseline', 'cpu_total_s'),
-                         [0.5, 0.6])
-        self.assertEqual(collect_metric_values(windows_runs, 'baseline', 'tree_rss_peak_kb'),
-                         [])
+    def test_missing_joint_fields_and_bad_merged_probes_cannot_pass(self):
+        row = _pass_row('test1', 'c4a_rtl_opt_mapped')
+        self.assertTrue(row_functional_ok(row))
+        for field in ('verified', 'probes_noDF_all_sat'):
+            changed = dict(row)
+            changed.pop(field)
+            self.assertFalse(row_functional_ok(changed))
+        for field, value in (('state', 'FAIL'), ('rc', 1), ('verified', False)):
+            self.assertFalse(row_functional_ok(dict(row, **{field: value})))
+        merged = _pass_row('test3', 'c4b_rtl_base_mapped')
+        self.assertTrue(row_functional_ok(merged))
+        for field, value in (('probe', 'PREMISES_UNSAT'), ('assert_cover_ok', False)):
+            changed = dict(merged, merged=dict(merged['merged'], **{field: value}))
+            self.assertFalse(row_functional_ok(changed))
 
     def test_status_requires_successful_completion(self):
         with tempfile.TemporaryDirectory() as t:
@@ -142,19 +133,24 @@ class EvidenceTests(unittest.TestCase):
     def test_empty_evidence_cannot_pass(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
+            (root / 'validation_context.json').write_text(json.dumps(_v8_context()))
             self.assertEqual(build_report(root), 'NEEDS_REVIEW')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertFalse(any(manifest['gates'].values()))
-            self.assertEqual(manifest['full_rtl_mapping_proof'], 'NOT_CLOSED')
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+            self.assertTrue(manifest['gates']['V8身份与规则位置'])
+            self.assertFalse(any(passed for name, passed in manifest['gates'].items()
+                                 if name != 'V8身份与规则位置'))
+            self.assertEqual(manifest['verification_verdict'], 'FAIL')
+            self.assertEqual(manifest['category_status']['formal'], 'NOT_RUN')
 
     def test_review_preserves_original_report(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            (root / '00_本轮验证结论.md').write_text('original evidence')
+            (root / '00_report.md').write_text('original evidence')
+            (root / 'validation_context.json').write_text(json.dumps(_v8_context()))
             output = root / 'supplement'
             build_report(root, output_root=output, chain_attempt='run02')
-            self.assertEqual((root / '00_本轮验证结论.md').read_text(), 'original evidence')
-            self.assertTrue((output / '00_本轮验证结论.md').exists())
+            self.assertEqual((root / '00_report.md').read_text(encoding='utf-8'), 'original evidence')
+            self.assertTrue((output / '00_report.md').exists())
 
 
 class TransformAndVerdictTests(unittest.TestCase):
@@ -189,21 +185,17 @@ class TransformAndVerdictTests(unittest.TestCase):
         self.assertIn('sat -seq 1 -set-init-undef -set-def-formal -set-def-inputs '
                       '-set-assumes miter', DF)
 
-    def test_eqy_work_runs_in_ascii_path_and_copies_evidence_back(self):
+    def test_eqy_work_is_final_contained_ascii_path(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            ascii_root = root / 'ascii_scratch'
-            evidence_root = root / '轮次' / 'case'
-            work = ascii_eqy_workdir(ascii_root, 'chains/run01/test1/c4a')
+            work = F.eqy_workdir(root, '10_selfcheck/chains/run01/test1/c4a/work')
+            self.assertEqual(work, root / '10_selfcheck/chains/run01/test1/c4a/work')
             self.assertTrue(str(work).isascii())
-            work.mkdir(parents=True)
-            (work / 'setup.log').write_text('ASCII workspace')
-            destination = evidence_root / 'work'
-            self.assertTrue(copy_eqy_workdir(work, destination))
-            self.assertEqual((destination / 'setup.log').read_text(), 'ASCII workspace')
-            self.assertFalse(copy_eqy_workdir(root / 'missing', evidence_root / 'missing'))
+            self.assertFalse(work.exists(), 'path validation must not create evidence')
             with self.assertRaises(ValueError):
-                ascii_eqy_workdir(ascii_root, '../../escape')
+                F.eqy_workdir(root, '../../escape')
+            with self.assertRaises(ValueError):
+                F.eqy_workdir(root, '中文/work')
 
     def test_classify_proof_joint_verdict(self):
         real_pass = ("** Trying induction with length 1 **\n"
@@ -278,36 +270,6 @@ class PrecheckBoundaryTests(unittest.TestCase):
             self.assertIn("缺少模型文件", out)
 
 
-class FourCaseRestrictionTests(unittest.TestCase):
-    """默认调度收敛为官方四例；其余运行器不被调用、不依赖其资产。"""
-
-    def test_default_plan_is_four_case_only(self):
-        import validate
-        names = [n for n, _, _ in validate.PLUGIN_PLAN]
-        self.assertEqual(names, ['flowcheck', 'formal_selfcheck', 'measurement_selfcheck',
-                                 'public', 'chains', 'performance'])
-        for banned in ('regression', 'regression_eqy', 'h2', 'multidriver', 'scale'):
-            self.assertNotIn(banned, names)
-        fnames = [n for n, _, _ in validate.FUNCTION_ONLY_PLAN]
-        self.assertEqual(fnames, ['formal_selfcheck', 'chains'])
-        skipped = [n for n, _ in validate.FUNCTION_ONLY_SKIPPED]
-        self.assertEqual(set(fnames) | set(skipped) | {'build'}, set(validate.PLUGIN_STAGES))
-
-    def test_expected_stage_sets_match(self):
-        import validate
-        from report import EXPECTED_PLUGIN_STAGES, FUNCTION_ONLY_EXEC, FUNCTION_ONLY_SKIPPED
-        self.assertEqual(set(validate.PLUGIN_STAGES), EXPECTED_PLUGIN_STAGES)
-        self.assertEqual(tuple(n for n, _, _ in validate.FUNCTION_ONLY_PLAN), FUNCTION_ONLY_EXEC[1:])
-        self.assertEqual(set(FUNCTION_ONLY_EXEC) | set(FUNCTION_ONLY_SKIPPED),
-                         set(validate.PLUGIN_STAGES))
-
-    def test_default_code_does_not_reference_removed_runners(self):
-        import validate
-        src = Path(validate.__file__).read_text()
-        for banned in ('run_regression', 'run_h2_cases', 'run_scale', 'gen_multidriver',
-                       'h2_cases_run01', 'scale_run01'):
-            self.assertNotIn(banned, src)
-        self.assertIn('suite-official4', src)
 
 
 class BuiltinBlockTests(unittest.TestCase):
@@ -356,46 +318,46 @@ class BuiltinBlockTests(unittest.TestCase):
                      'target_commit': '0' * 40, 'source_sha256': 'a' * 64,
                      'project_head': 'b' * 40, 'suite_verified': True})
             self.assertEqual(status, 'BUILTIN_NOT_READY')
-            text = (root / '00_本轮验证结论.md').read_text()
+            text = (root / '00_report.md').read_text()
             self.assertIn('BUILTIN_NOT_READY', text)
             self.assertIn('缺项清单', text)
             self.assertIn('后续动作', text)
             self.assertNotIn('FOUR_CASE_PLUGIN_CHECKS_COMPLETE', text)
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
+            manifest = json.loads((root / '11_summary/manifest.json').read_text())
             self.assertEqual(manifest['builtin_execution'], 'NOT_READY')
             self.assertEqual(manifest['official_acceptance'], 'NOT_CLAIMED')
 
 
 class PerformanceJudgementTests(unittest.TestCase):
-    def _summary(self, base_cpu, opt_cpu, base_rss, opt_rss, *, pairs=5, bad_run=False, case='test1'):
-        runs = []
-        for side, cpu, rss in (('baseline', base_cpu, base_rss), ('optimized', opt_cpu, opt_rss)):
-            for i in range(pairs):
-                rc = 1 if (bad_run and side == 'optimized' and i == 0) else 0
-                runs.append({'side': side, 'seq': i + 1, 'rc': rc, 'timed_out': False,
-                             'stat_exists': True, 'cpu_total_s': cpu, 'tree_rss_peak_kb': rss})
-        return {'case': case, 'pairs': pairs, 'runs': runs,
-                'baseline_cpu_total_median': base_cpu, 'optimized_cpu_total_median': opt_cpu,
-                'baseline_tree_rss_peak_median': base_rss, 'optimized_tree_rss_peak_median': opt_rss}
+    def _summary(self, base_s, opt_s, base_rss, opt_rss, *, bad_run=False, case='test1'):
+        rows = [v8_raw('baseline', round(base_s * 10_000_000), int(base_rss)),
+                v8_raw('optimized', round(opt_s * 10_000_000), int(opt_rss))]
+        for row in rows:
+            row['case'] = case
+        if bad_run:
+            rows[1]['rc'] = 1
+        return dict(case=case, performance_scheme=V8.SCHEME, same_run_policy=V8.POLICY,
+                    memory_metric='yosys_peak_working_set_bytes',
+                    execution_complete=True, samples=rows)
 
     def test_five_percent_boundary_is_allowed(self):
         from report import judge_case_performance
-        j = judge_case_performance(self._summary(1.0, 1.05, 1000, 1050.0))
+        j = judge_case_performance(self._summary(1.0, 1.05, 1000, 1050))
         self.assertTrue(j['valid'])
-        self.assertAlmostEqual(j['cpu_overhead_pct'], 5.0, places=9)
-        self.assertTrue(j['cpu_ok'])
+        self.assertAlmostEqual(j['wall_overhead_pct'], 5.0, places=9)
+        self.assertEqual(j['wall_5pct'], 'PASS')
         self.assertTrue(j['mem_ok'])
         self.assertTrue(j['pass'])
 
     def test_above_five_percent_case_fails_even_if_others_pass(self):
         from report import judge_case_performance
-        j_bad = judge_case_performance(self._summary(1.0, 1.0501, 1000, 1050.0, case='test1'))
-        j_good = judge_case_performance(self._summary(1.0, 1.0, 1000, 1000.0, case='test2'))
-        self.assertFalse(j_bad['cpu_ok'])
+        j_bad = judge_case_performance(self._summary(1.0, 1.0501, 10000, 10500, case='test1'))
+        j_good = judge_case_performance(self._summary(1.0, 1.0, 10000, 10000, case='test2'))
+        self.assertEqual(j_bad['wall_5pct'], 'FAIL')
         self.assertFalse(j_bad['pass'])
         self.assertTrue(j_good['pass'])
         self.assertFalse(all(j['pass'] for j in (j_bad, j_good)))
-        j_mem = judge_case_performance(self._summary(1.0, 1.0, 1000.0, 1050.1, case='test4'))
+        j_mem = judge_case_performance(self._summary(1.0, 1.0, 10000, 10501, case='test4'))
         self.assertFalse(j_mem['mem_ok'])
 
     def test_invalid_samples_never_pass(self):
@@ -411,26 +373,18 @@ class PerformanceJudgementTests(unittest.TestCase):
         j2 = judge_case_performance(self._summary(50.0, 61.0, 1000, 1000))
         self.assertFalse(j2['limit_ok'])
 
+    def test_two_gib_limit_uses_upstream_exception(self):
+        from report import judge_case_performance
+        limit = 2 * 1024**3
+        self.assertTrue(judge_case_performance(self._summary(1, 1, limit + 1, limit + 2))['limit_ok'])
+        self.assertFalse(judge_case_performance(self._summary(1, 1, limit, limit + 1))['limit_ok'])
+
     def test_windows_peak_working_set_bytes_are_the_memory_metric(self):
         from report import judge_case_performance
-
-        runs = [
-            {'side': side, 'rc': 0, 'timed_out': False, 'stat_exists': True,
-             'cpu_total_s': 1.0,
-             'metrics_valid': True, 'measurement_error': None,
-             'yosys_peak_working_set_bytes': 1000 if side == 'baseline' else 1040}
-            for side in ('baseline', 'optimized')
-        ]
-        summary = {
-            'case': 'test1', 'pairs': 1, 'runs': runs,
-            'memory_metric': 'yosys_peak_working_set_bytes',
-            'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': 1.0,
-            'baseline_yosys_peak_working_set_bytes_median': 1000,
-            'optimized_yosys_peak_working_set_bytes_median': 1040,
-        }
-
-        result = judge_case_performance(summary, pairs=1)
-
+        summary = self._summary(1.0, 1.0, 1000, 1040)
+        for row in summary['samples']:
+            row['tree_rss_peak_kb'] = 999999999
+        result = judge_case_performance(summary)
         self.assertTrue(result['valid'])
         self.assertEqual(result['base_memory_bytes'], 1000)
         self.assertAlmostEqual(result['mem_overhead_pct'], 4.0)
@@ -493,6 +447,30 @@ class WindowsMeasurementTests(unittest.TestCase):
 
 
 class SelfcheckCacheTests(unittest.TestCase):
+
+    def test_v8_measurement_cache_requires_bound_unchanged_evidence(self):
+        import validate
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fp = dict(self._fp(), performance_scheme=V8.SCHEME)
+            path = root / 'cache.json'
+            cache = validate.load_selfcheck_cache(path)
+            with self.assertRaisesRegex(ValueError, 'evidence missing'):
+                validate.update_selfcheck_cache(path, cache, fp, 'measurement_selfcheck', True, root)
+            proof = root / '09_performance/selftest/selftest_results.json'
+            proof.parent.mkdir(parents=True)
+            proof.write_text(json.dumps({'selftest_ok': True, 'method': V8.METHOD}), encoding='utf-8')
+            validate.update_selfcheck_cache(path, cache, fp, 'measurement_selfcheck', True, root)
+            saved = validate.load_selfcheck_cache(path)
+            self.assertTrue(validate.cache_entry_valid(saved, 'measurement_selfcheck', fp))
+            self.assertFalse(validate.cache_entry_valid(saved, 'measurement_selfcheck',
+                                                       dict(fp, runner_sha256={'x': 'changed'})))
+            original = proof.read_bytes()
+            proof.write_bytes(b'changed evidence')
+            self.assertFalse(validate.cache_entry_valid(saved, 'measurement_selfcheck', fp))
+            proof.write_bytes(original)
+            proof.unlink()
+            self.assertFalse(validate.cache_entry_valid(saved, 'measurement_selfcheck', fp))
     def _fp(self):
         return {'flow_version': 'official4-p2', 'model_version': 'dffeas-v3',
                 'strategy_version': 'noDF-local-r1', 'baseline_yosys_sha256': 'a',
@@ -541,11 +519,11 @@ class RoundDirTests(unittest.TestCase):
         import validate
         with tempfile.TemporaryDirectory() as t:
             parent = Path(t)
-            prefix = '2026-09-24_稳定版-四例_abc1234'
+            prefix = '2026-09-24_v8_same_run_abc1234'
             r1 = validate.next_round_dir(parent, prefix)
             r2 = validate.next_round_dir(parent, prefix)
-            self.assertEqual(r1.name, prefix + '_第01轮')
-            self.assertEqual(r2.name, prefix + '_第02轮')
+            self.assertEqual(r1.name, prefix + '_r01')
+            self.assertEqual(r2.name, prefix + '_r02')
 
 
 def _pass_row(case, chain):
@@ -561,158 +539,8 @@ def _pass_row(case, chain):
             'partitions_total': 1, 'partitions_pass': 1, 'partition_states': {'x': 'PASS'}}
 
 
-class PluginGateIntegrationTests(unittest.TestCase):
-    """完整假轮次（p2 行结构）：唯一缺陷是 test3 性能存在无效样本 → NEEDS_REVIEW。"""
-
-    def _write(self, root):
-        from report import MAIN_CHAINS, CASES
-        (root / '01_来源与环境_meta').mkdir(parents=True)
-        ctx = {'flow_version': 'official4-p2', 'suite_version': 'official4-v1',
-               'target_commit': '1dceb17' + '0' * 33, 'source_sha256': 'a' * 64,
-               'project_head': 'b' * 40, 'suite_verified': True, 'mode': 'plugin',
-               'chains_mode': 'main', 'performance_pairs': 5,
-               'isolation': {'baseline_no_pmux': True, 'plugin_has_pmux': True},
-               'plugin_sha256': 'c' * 64}
-        (root / 'validation_context.json').write_text(json.dumps(ctx) + '\n')
-        stages = [{'name': n, 'state': 'COMPLETED', 'rc': 0} for n in
-                  ('build', 'flowcheck', 'formal_selfcheck', 'measurement_selfcheck',
-                   'public', 'chains', 'performance')]
-        (root / '01_来源与环境_meta/stages.json').write_text(json.dumps(stages) + '\n')
-        pub_dir = root / '05_公开四例_public/round01'
-        pub_dir.mkdir(parents=True)
-        pub = [{'case': case, 'baseline_rc': 0, 'optimized_rc': 0,
-                'baseline_check_assert': True, 'optimized_check_assert': True,
-                'baseline_comb': 100, 'optimized_comb': 80,
-                'baseline_dff': 10, 'optimized_dff': 10, 'dff_nonincrease': True}
-               for case in CASES]
-        (pub_dir / 'summary.json').write_text(json.dumps({'cases': pub}) + '\n')
-        chain_dir = root / '10_验证工具自检_selfcheck/chains/run01'
-        chain_dir.mkdir(parents=True)
-        rows = [_pass_row(c, ch) for c in CASES for ch in MAIN_CHAINS]
-        (chain_dir / 'chains_summary.json').write_text(json.dumps(rows) + '\n')
-        perf_dir = root / '09_时间内存开销_performance/round01'
-        perf_dir.mkdir(parents=True)
-        summaries = []
-        for case in CASES:
-            bad = case == 'test3'
-            runs = []
-            for side, cpu, rss in (('baseline', 1.0, 1000), ('optimized', 1.0, 1000)):
-                for i in range(5):
-                    rc = 1 if (bad and side == 'optimized' and i == 0) else 0
-                    runs.append({'side': side, 'seq': i + 1, 'rc': rc, 'timed_out': False,
-                                 'stat_exists': True, 'cpu_total_s': cpu, 'tree_rss_peak_kb': rss})
-            summaries.append({'case': case, 'pairs': 5, 'runs': runs,
-                              'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': 1.0,
-                              'baseline_tree_rss_peak_median': 1000, 'optimized_tree_rss_peak_median': 1000})
-        (perf_dir / 'performance_summary.json').write_text(json.dumps(summaries) + '\n')
-
-    def test_invalid_perf_sample_blocks_complete_status(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write(root)
-            status = build_report(root, chain_attempt='run01', mode='plugin')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertEqual(status, 'NEEDS_REVIEW')
-            self.assertFalse(manifest['gates']['四例性能逐例判定'])
-            self.assertTrue(manifest['gates']['功能证明（默认链集合）'])
-            self.assertEqual(manifest['final_builtin_acceptance'], 'NOT_RUN')
-            self.assertEqual(manifest['marking'], '四例插件预检')
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertIn('NOT_RUN', text)
-            self.assertIn('NEEDS_REVIEW', text)
-            # 每例两侧分别报告（不再“两链同结果”）
-            self.assertIn('每例两侧功能状态', text)
-            self.assertIn('test3：c4a 合并证明', text)
-            self.assertIn('不使用“两链同结果”推断', text)
-
-    def test_missing_joint_fields_block_functional_gate(self):
-        """不能只看 state=PASS：缺少 verified/探针字段时功能门必须不通过。"""
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write(root)
-            chain_file = root / '10_验证工具自检_selfcheck/chains/run01/chains_summary.json'
-            rows = json.loads(chain_file.read_text())
-            rows[0] = dict(rows[0], state='PASS', rc=0)
-            rows[0].pop('verified', None)
-            rows[0].pop('probes_noDF_all_sat', None)
-            chain_file.write_text(json.dumps(rows) + '\n')
-            build_report(root, chain_attempt='run01', mode='plugin')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertFalse(manifest['gates']['功能证明（默认链集合）'])
-
-    def test_merged_row_with_bad_probe_blocks_gate(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write(root)
-            chain_file = root / '10_验证工具自检_selfcheck/chains/run01/chains_summary.json'
-            rows = json.loads(chain_file.read_text())
-            for r in rows:
-                if r['case'] == 'test3' and r['chain'] == 'c4b_rtl_base_mapped':
-                    r['merged'] = dict(r['merged'], probe='PREMISES_UNSAT')
-            chain_file.write_text(json.dumps(rows) + '\n')
-            build_report(root, chain_attempt='run01', mode='plugin')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertFalse(manifest['gates']['功能证明（默认链集合）'])
-            bad = next(r for r in rows if r['case'] == 'test3'
-                       and r['chain'] == 'c4b_rtl_base_mapped')
-            self.assertFalse(row_functional_ok(bad))
 
 
-class FunctionRecheckReportTests(unittest.TestCase):
-    """功能补充复核模式：冻结输入、只功能阶段、报告标注与完成状态。"""
-
-    def _write(self, root, *, frozen_ok=True):
-        from report import MAIN_CHAINS, CASES, FUNCTION_ONLY_EXEC, FUNCTION_ONLY_SKIPPED
-        (root / '01_来源与环境_meta').mkdir(parents=True)
-        ctx = {'flow_version': 'official4-p2', 'suite_version': 'official4-v1',
-               'model_version': 'dffeas-v3', 'strategy_version': 'noDF-local-r1',
-               'target_commit': '5c44e87' + '0' * 33, 'source_sha256': 'a' * 64,
-               'project_head': '8' * 40, 'suite_verified': True, 'mode': 'plugin',
-               'function_only': True, 'frozen_round': '/frozen/round',
-               'chains_mode': 'main', 'performance_pairs': 5,
-               'isolation': {'baseline_no_pmux': True, 'plugin_has_pmux': True},
-               'plugin_sha256': 'c' * 64}
-        (root / 'validation_context.json').write_text(json.dumps(ctx) + '\n')
-        stages = [{'name': n, 'state': 'COMPLETED', 'rc': 0} for n in FUNCTION_ONLY_EXEC]
-        stages += [{'name': n, 'state': 'NOT_RUN', 'reason': '功能复核：未重新综合/未测性能'}
-                   for n in FUNCTION_ONLY_SKIPPED]
-        (root / '01_来源与环境_meta/stages.json').write_text(json.dumps(stages) + '\n')
-        chain_dir = root / '10_验证工具自检_selfcheck/chains/run01'
-        chain_dir.mkdir(parents=True)
-        rows = [_pass_row(c, ch) for c in CASES for ch in MAIN_CHAINS]
-        (chain_dir / 'chains_summary.json').write_text(json.dumps(rows) + '\n')
-        (chain_dir / 'frozen_input_verification.json').write_text(json.dumps(
-            {'ok': frozen_ok, 'frozen_round': '/frozen/round',
-             'files': [{'file': '05_公开四例_public/round01/test1/baseline/baseline_mapped.il',
-                        'match': frozen_ok}]}) + '\n')
-        (chain_dir / 'precheck_report.txt').write_text('[通过] 支持配置预检：8 个输入文件全部在受支持集内\n')
-
-    def test_complete_status_and_marking(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write(root)
-            status = build_report(root, chain_attempt='run01', mode='plugin')
-            self.assertEqual(status, 'FUNCTION_RECHECK_COMPLETE')
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertIn('插件版功能补充复核', text)
-            self.assertIn('未重新综合、未重测性能', text)
-            self.assertIn('NOT_RUN', text)
-            self.assertIn('每例两侧功能状态', text)
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertTrue(manifest['function_only'])
-            self.assertEqual(manifest['marking'], '插件版功能补充复核')
-            self.assertEqual(manifest['final_builtin_acceptance'], 'NOT_RUN')
-            self.assertTrue(all(manifest['gates'].values()))
-
-    def test_frozen_hash_mismatch_blocks(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write(root, frozen_ok=False)
-            status = build_report(root, chain_attempt='run01', mode='plugin')
-            self.assertEqual(status, 'NEEDS_REVIEW')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertFalse(manifest['gates']['冻结输入来源核验'])
-            self.assertFalse(manifest['official_acceptance'] == 'PASSED')
 
 
 class BuiltinModeTests(unittest.TestCase):
@@ -720,19 +548,22 @@ class BuiltinModeTests(unittest.TestCase):
 
     def test_builtin_stage_sets_match_and_no_plugin_flags(self):
         import validate
-        from report import BUILTIN_EXPECTED_STAGES, BUILTIN_MAIN_CHAINS
-        self.assertEqual(set(validate.BUILTIN_STAGES), BUILTIN_EXPECTED_STAGES)
-        self.assertEqual(tuple(n for n, _, _ in validate.BUILTIN_PLAN),
-                         validate.BUILTIN_STAGES[1:])
-        self.assertEqual(BUILTIN_MAIN_CHAINS,
-                         ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped"))
-        for name, script, args in validate.BUILTIN_PLAN:
-            self.assertNotIn("-m", args)
-        chains_args = dict((n, a) for n, _, a in validate.BUILTIN_PLAN)["chains"]
-        self.assertIn("--input-mode", chains_args)
-        self.assertIn("builtin", chains_args)
+        import integration_profiles as I
+        plan = validate.builtin_stage_plan({'performance_scheme': V8.SCHEME})
+        self.assertEqual(tuple(n for n, _, _ in plan),
+                         ('formal_selfcheck', 'measurement_selfcheck', 'performance',
+                          'flowcheck', 'public', 'chains'))
+        self.assertEqual(set(validate.BUILTIN_STAGES), {'build'} | {n for n, _, _ in plan})
+        self.assertEqual(I.CHAINS, ('c4a_rtl_opt_mapped', 'c4b_rtl_base_mapped'))
+        for name, script, args in plan:
+            self.assertNotIn('-m', args)
+        chains_args = dict((n, a) for n, _, a in plan)['chains']
+        self.assertIn('--input-mode', chains_args)
+        self.assertIn('builtin', chains_args)
         self.assertEqual(validate.BUILTIN_CACHED_STAGES,
-                         ("formal_selfcheck", "measurement_selfcheck"))
+                         ('formal_selfcheck', 'measurement_selfcheck'))
+        for banned in ('regression', 'regression_eqy', 'h2', 'multidriver', 'scale'):
+            self.assertNotIn(banned, [n for n, _, _ in plan])
 
     def test_builtin_common_routing_and_position(self):
         sys.path.insert(0, str(Path(__file__).parent / 'runner'))
@@ -827,6 +658,30 @@ class BuiltinModeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unclassified"):
             B.parse_resource_counts(stat, "module \\top\nend\n", "top")
 
+    def test_abc9_required(self):
+        import builtin_common as B
+        self.assertTrue(B.abc9_mapping_ok('2. Executing ABC9 pass.\n2.1. Executing ABC9.'))
+        self.assertFalse(B.abc9_mapping_ok('2. Executing ABC pass.'))
+
+    def test_other_resources(self):
+        import builtin_common as B
+        result = B.compare_other_resources({'dffeas': 2, 'foo': 1}, {'dffeas': 2, 'foo': 2})
+        self.assertFalse(result['ok'])
+        self.assertIn('foo', result['increases'])
+
+    def test_post_abc_rejects_final_netlist(self):
+        from formal_status import check_post_abc_model
+        with tempfile.TemporaryDirectory() as temp:
+            netlist = Path(temp) / 'a.il'
+            netlist.write_text(_lcell_il())
+            with self.assertRaises(ValueError):
+                check_post_abc_model(netlist, 'top')
+
+    def test_new_resource_type_detected(self):
+        import builtin_common as B
+        self.assertFalse(B.compare_other_resources({}, {'io_cell': 1})['ok'])
+        self.assertTrue(B.compare_other_resources({'dffeas': 2}, {'dffeas': 1})['ok'])
+
     def test_resource_comparison_uses_logic_units_and_checks_all_other_resources(self):
         import builtin_common as B
 
@@ -845,58 +700,26 @@ class BuiltinModeTests(unittest.TestCase):
         optimized["other_cell_types"]["VCC"] = 2
         self.assertFalse(B.compare_resource_counts(base, optimized)["resource_checks_ok"])
 
-    def test_p6_report_uses_inverter_adjusted_average_and_requires_full_resources(self):
+    def test_v8_report_uses_inverter_adjusted_average_and_requires_full_resources(self):
         import report as R
-
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
-            self._write_builtin_round(root, include_chains=True)
-            ctx_path = root / "validation_context.json"
-            ctx = json.loads(ctx_path.read_text())
-            ctx["flow_version"] = "official4-p6-windows"
-            ctx["performance_pairs"] = 15
-            ctx_path.write_text(json.dumps(ctx) + "\n")
-            chain_path = root / "10_验证工具自检_selfcheck/chains/run01/chains_summary.json"
-            chain_rows = json.loads(chain_path.read_text())
-            for chain_row in chain_rows:
-                chain_row["formal_netlist_stage"] = "post_abc"
-            chain_path.write_text(json.dumps(chain_rows) + "\n")
-            summary_path = root / "05_公开四例_public/round01/summary.json"
-            summary = json.loads(summary_path.read_text())
-            for row in summary["cases"]:
-                row.update({
-                    "baseline_comb": 20, "optimized_comb": 15,
-                    "baseline_lut_count": 20, "optimized_lut_count": 15,
-                    "baseline_inverter_count": 1, "optimized_inverter_count": 2,
-                    "baseline_logic_units": 21, "optimized_logic_units": 17,
-                    "logic_reduction_pct": (21 - 17) / 21 * 100,
-                    "baseline_dff": 10, "optimized_dff": 10,
-                    "baseline_io_ports": 4, "optimized_io_ports": 4,
-                    "baseline_io_bits": 8, "optimized_io_bits": 8,
-                    "dff_nonincrease": True, "io_nonincrease": True,
-                    "other_resources_nonincrease": True, "resource_checks_ok": True,
-                })
-            summary["public_mean_logic_reduction_pct"] = 4 / 21 * 100
-            for row in summary['cases']:
-                for side in ('baseline', 'optimized'):
-                    row[side + '_resources'] = dict(
-                        logic_units=row[side + '_logic_units'], dff_count=10,
-                        io_ports=4, io_bits=8, io_cell_types={}, other_cell_types={})
-            summary_path.write_text(json.dumps(summary) + "\n")
-
-            status = R.build_builtin_report(root, chain_attempt="run01")
-
-            manifest = json.loads((root / "11_汇总与证据_summary/manifest.json").read_text())
-            self.assertEqual(status, "NEEDS_REVIEW")
-            self.assertTrue(manifest["gates"]["资源统计完整且取反位计入逻辑单元"])
-            self.assertTrue(manifest["gates"]["DFF、IO及其他硬件资源逐例不增加"])
-            self.assertAlmostEqual(manifest["mean_logic_reduction_pct"], 4 / 21 * 100)
-            text = (root / "00_本轮验证结论.md").read_text()
-            self.assertIn("取反位 前→后", text)
-            self.assertIn("逻辑单元 前→后", text)
-            self.assertIn("IO 端口 前→后", text)
-            self.assertEqual(manifest["category_status"]["formal"], "PASS")
-            self.assertEqual(manifest["overall_verdict"], "FAIL")
+            self._write_builtin_round(root, base_luts=20, opt_luts=15,
+                                      base_not_bits=1, opt_not_bits=2)
+            status = R.build_builtin_report(root, chain_attempt='run01')
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(status, 'BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE')
+            self.assertTrue(manifest['gates']['最终资源统计与同次来源完整'])
+            self.assertAlmostEqual(manifest['mean_logic_reduction_pct'], 4 / 21 * 100)
+            self.assertEqual(manifest['resources']['test1']['baseline']['logic_units'], 21)
+            self.assertEqual(manifest['resources']['test1']['optimized']['logic_units'], 17)
+            self.assertEqual(manifest['category_status']['formal'], 'PASS')
+            stat = root / '05_public/round01/test1/optimized/stat.json'
+            stat.unlink()
+            self.assertEqual(R.build_builtin_report(root), 'NEEDS_REVIEW')
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+            self.assertFalse(manifest['gates']['最终资源统计与同次来源完整'])
+            self.assertEqual(manifest['overall_verdict'], 'FAIL')
 
     @staticmethod
     def _git_init(repo: Path, files):
@@ -950,7 +773,7 @@ class BuiltinModeTests(unittest.TestCase):
                 (bdir / 'share/intel/cycloneiv/cells_sim.v').write_text('// c\n')
                 (bdir / 'share/intel/common').mkdir(parents=True)
                 (bdir / 'share/intel/common/m9k_bb.v').write_text('// m\n')
-            cfg = {'performance_scheme': validate.SINGLE_WALL_SCHEME,
+            cfg = {'performance_scheme': V8.SCHEME,
                    'builtin': {
                 'baseline': {'path': str(base / 'baseline-build/yosys'),
                              'src_repo': str(brepo)},
@@ -990,55 +813,79 @@ class BuiltinModeTests(unittest.TestCase):
             self.assertFalse(ok4)
             self.assertTrue(any('登记集成补丁不一致' in m for m in missing4))
 
-    def _write_builtin_round(self, root: Path, *, include_chains=True):
-        from report import CASES
-        (root / '01_来源与环境_meta').mkdir(parents=True)
-        ctx = {'flow_version': 'official4-p3', 'suite_version': 'official4-v1',
-               'target_commit': '5c44e87' + '0' * 33, 'source_sha256': 'a' * 64,
-               'project_head': 'b' * 40, 'suite_verified': True, 'mode': 'builtin',
-               'performance_pairs': 5}
-        (root / 'validation_context.json').write_text(json.dumps(ctx) + '\n')
-        stages = [{'name': n, 'state': 'COMPLETED', 'rc': 0} for n in
-                  ('build', 'flowcheck', 'formal_selfcheck', 'measurement_selfcheck',
-                   'public', 'chains', 'performance')]
-        (root / '01_来源与环境_meta/stages.json').write_text(json.dumps(stages) + '\n')
-        (root / '01_来源与环境_meta/builtin_evidence.json').write_text(json.dumps(
-            {'ok': True, 'missing': [],
-             'evidence': {'optimized': {'path': '/x/yosys', 'sha256': 'c' * 64}}}) + '\n')
-        fc_dir = root / '04_流程一致性_flowcheck/builtin_run01'
-        fc_dir.mkdir(parents=True)
-        (fc_dir / 'builtin_flowcheck.json').write_text(json.dumps(
-            {'all_ok': True, 'cases': [{'case': f'test{i}', 'sides': {}}
-                                       for i in range(1, 5)]}) + '\n')
-        pub = [{'case': case, 'baseline_rc': 0, 'optimized_rc': 0,
-                'baseline_check_assert': True, 'optimized_check_assert': True,
-                'baseline_comb': 100, 'optimized_comb': 80,
-                'baseline_dff': 10, 'optimized_dff': 10, 'dff_nonincrease': True}
-               for case in CASES]
-        pub_dir = root / '05_公开四例_public/round01'
-        pub_dir.mkdir(parents=True)
-        (pub_dir / 'summary.json').write_text(json.dumps({'cases': pub}) + '\n')
+    def _write_builtin_round(self, root: Path, *, include_chains=True,
+                             base_luts=100, opt_luts=80, base_not_bits=0, opt_not_bits=0):
+        ctx = _v8_context()
+        def save(rel, value):
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(value), encoding='utf-8')
+        ctx['builtin'] = {'integration_id': 'pmux-opt-inline-p3-v1'}
+        for side in ('baseline', 'optimized'):
+            ctx['builtin'][side] = {'binary_sha256': V8.sha(sys.executable)}
+        save('validation_context.json', ctx)
+        save('01_meta/stages.json', [dict(name=n, state='COMPLETED', rc=0) for n in
+             ('build', 'formal_selfcheck', 'measurement_selfcheck', 'performance', 'flowcheck', 'public', 'chains')])
+        save('01_meta/builtin_evidence.json', {'ok': True, 'missing': []})
+        flows = {}
+        for case in V8.CASES:
+            rtl = root / f'02_assets/tree/pmux_case/competition_case/{case}/{case}.v'
+            rtl.parent.mkdir(parents=True, exist_ok=True)
+            rtl.write_text('module ' + case + '; endmodule', encoding='utf-8')
+            flows[case] = f'read_verilog -sv "{rtl.as_posix()}"\n'
+        def execute(command, *, cwd, log_path, **kwargs):
+            folder = Path(cwd); case = folder.parent.name; side = folder.name
+            luts = base_luts if side == 'baseline' else opt_luts
+            inv = base_not_bits if side == 'baseline' else opt_not_bits
+            cells = {'cycloneiv_lcell_comb': luts, 'dffeas': 10}
+            mapped = 'module \\' + case + '\n'
+            if inv:
+                cells['$not'] = 1
+                mapped += '  cell $not inverter\n    parameter \\Y_WIDTH ' + str(inv) + '\n  end\n'
+            mapped += 'end\n'
+            stat = {'design': {'num_ports': 4, 'num_port_bits': 8,
+                              'num_cells': luts + 10 + bool(inv), 'num_cells_by_type': cells}}
+            (folder / 'mapped.il').write_text(mapped, encoding='utf-8')
+            (folder / 'post_abc.il').write_text('module \\' + case + '\nend\n', encoding='utf-8')
+            for name in ('stat.json', 'post_abc_stat.json'):
+                (folder / name).write_text(json.dumps(stat), encoding='utf-8')
+            log = ('2.15. Executing OPT pass.\n' +
+                   ('2.16. Executing PMUX_OPT pair-swap optimization.\n' if side == 'optimized' else '') +
+                   '2.17. Executing WREDUCE pass.\n2.37. Executing ABC9 pass.\n3. Executing RTLIL backend.\n')
+            Path(log_path).write_text(log, encoding='utf-8')
+            return dict(v8_raw(side), powershell_path=sys.executable,
+                        powershell_sha256=V8.sha(sys.executable))
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = V8.run(dict(ctx, wall_time_tool={'path': sys.executable}), root,
+                        {'baseline': Path(sys.executable), 'optimized': Path(sys.executable)},
+                        flows, execute=execute)
+        self.assertEqual(rc, 0)
+        save('04_flowcheck/builtin_run01/builtin_flowcheck.json',
+             {'all_ok': True, 'analysis_only': True})
+        public = []
+        proofs = []
+        for case in V8.CASES:
+            row = {'case': case}
+            for side, chain in (('optimized', 'c4a_rtl_opt_mapped'), ('baseline', 'c4b_rtl_base_mapped')):
+                folder = root / '05_public/round01' / case / side
+                sample = json.loads((folder / 'measure_result.json').read_text(encoding='utf-8'))
+                luts = base_luts if side == 'baseline' else opt_luts
+                inv = base_not_bits if side == 'baseline' else opt_not_bits
+                cells = {'cycloneiv_lcell_comb': luts, 'dffeas': 10}
+                if inv:
+                    cells['$not'] = 1
+                row[side + '_sample_id'] = sample['sample_id']
+                row[side + '_resources'] = dict(lut_count=luts, comb=luts, inverter_count=inv,
+                    logic_units=luts + inv, dff_count=10, dff_cell_types={'dffeas': 10},
+                    io_ports=4, io_bits=8, io_cell_types={}, other_cell_types={}, cell_types=cells)
+                proof = _pass_row(case, chain)
+                proof.update(formal_netlist_stage='post_abc',
+                    formal_netlist_sha256=sample['artifacts']['post_abc.il']['sha256'])
+                proofs.append(proof)
+            public.append(row)
+        save('05_public/round01/summary.json', {'cases': public})
         if include_chains:
-            chain_dir = root / '10_验证工具自检_selfcheck/chains/run01'
-            chain_dir.mkdir(parents=True)
-            rows = [_pass_row(c, ch) for c in CASES
-                    for ch in ('c4a_rtl_opt_mapped', 'c4b_rtl_base_mapped')]
-            (chain_dir / 'chains_summary.json').write_text(json.dumps(rows) + '\n')
-        perf = []
-        for case in CASES:
-            runs = []
-            for side in ('baseline', 'optimized'):
-                for i in range(5):
-                    runs.append({'side': side, 'seq': i + 1, 'rc': 0, 'timed_out': False,
-                                 'stat_exists': True, 'cpu_total_s': 1.0,
-                                 'tree_rss_peak_kb': 1000})
-            perf.append({'case': case, 'pairs': 5, 'runs': runs,
-                         'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': 1.0,
-                         'baseline_tree_rss_peak_median': 1000,
-                         'optimized_tree_rss_peak_median': 1000})
-        perf_dir = root / '09_时间内存开销_performance/round01'
-        perf_dir.mkdir(parents=True)
-        (perf_dir / 'performance_summary.json').write_text(json.dumps(perf) + '\n')
+            save('10_selfcheck/chains/run01/chains_summary.json', proofs)
 
     def test_builtin_report_blocks_without_chains_and_completes(self):
         import report as R
@@ -1047,36 +894,121 @@ class BuiltinModeTests(unittest.TestCase):
             self._write_builtin_round(root, include_chains=False)
             status = R.build_builtin_report(root, chain_attempt='run01')
             self.assertEqual(status, 'NEEDS_REVIEW')
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertFalse(manifest['gates']['功能证明（内置主链 c4a/c4b）'])
-            self.assertEqual(manifest['builtin_local_acceptance'], 'NOT_CLOSED')
-            self.assertNotEqual(manifest['builtin_execution'], 'COMPLETE')
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+            self.assertFalse(manifest['gates']['原始RTL功能证明与同次postABC哈希绑定'])
+            self.assertEqual(manifest['category_status']['formal'], 'NOT_RUN')
+            self.assertNotEqual(manifest['verification_verdict'], 'PASS')
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             self._write_builtin_round(root, include_chains=True)
             status = R.build_builtin_report(root, chain_attempt='run01')
-            self.assertEqual(status, R.BUILTIN_COMPLETE_STATUS)
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertTrue(all(manifest['gates'].values()))
-            self.assertEqual(manifest['builtin_execution'], 'COMPLETE')
+            self.assertEqual(status, 'BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE')
+            manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+            self.assertTrue(all(manifest['gates'].values()), manifest['reasons'])
+            self.assertEqual(manifest['verification_verdict'], 'PASS')
             self.assertEqual(manifest['official_acceptance'], 'NOT_CLAIMED')
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertIn('官方四例内置验收（本地）', text)
-            self.assertIn('c4a', text)
+            text = (root / '00_report.md').read_text(encoding='utf-8')
+            self.assertIn('V8', text)
+            self.assertIn('工程四例验证', text)
 
-    def test_plugin_report_never_claims_builtin_status(self):
+    def test_report_rejects_missing_ledger_and_unbound_proof(self):
         import report as R
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            status = R.build_report(root)
-            self.assertEqual(status, 'NEEDS_REVIEW')
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertNotIn(R.BUILTIN_COMPLETE_STATUS, text)
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertEqual(manifest['final_builtin_acceptance'], 'NOT_RUN')
+        for fault in ('missing_ledger', 'unverified_proof', 'bad_merged_probe', 'wrong_netlist_hash'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self._write_builtin_round(root)
+                if fault == 'missing_ledger':
+                    (root / '09_performance/round01/synthesis_ledger.json').unlink()
+                else:
+                    chain_file = root / '10_selfcheck/chains/run01/chains_summary.json'
+                    rows = json.loads(chain_file.read_text(encoding='utf-8'))
+                    if fault == 'unverified_proof':
+                        rows[0].pop('verified')
+                    elif fault == 'bad_merged_probe':
+                        next(r for r in rows if r['case'] == 'test3')['merged']['probe'] = 'PREMISES_UNSAT'
+                    else:
+                        rows[0]['formal_netlist_sha256'] = '0' * 64
+                    chain_file.write_text(json.dumps(rows), encoding='utf-8')
+                self.assertEqual(R.build_builtin_report(root), 'NEEDS_REVIEW')
+                manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
+                self.assertNotEqual(manifest['verification_verdict'], 'PASS')
+                gate = ('八次正式综合无补跑' if fault == 'missing_ledger'
+                        else '原始RTL功能证明与同次postABC哈希绑定')
+                self.assertFalse(manifest['gates'][gate])
+
 
 
 class PrepareBuiltinCacheTests(unittest.TestCase):
+
+    def test_v8_cache_key_retains_null_runtime_patch_identity(self):
+        import prepare_builtin as P
+        with tempfile.TemporaryDirectory() as temp:
+            cfg = self._cfg(Path(temp))
+            cfg.update(performance_scheme=V8.SCHEME, same_run_policy=V8.POLICY)
+            key = P.cache_key(cfg, '1' * 64)
+            self.assertIn('runtime_patch', key)
+            self.assertIsNone(key['runtime_patch'])
+            without_field = dict(key)
+            without_field.pop('runtime_patch')
+            self.assertTrue(P.reference_key_matches(without_field, key))
+            patched = dict(key, runtime_patch={'sha256': 'old'})
+            self.assertFalse(P.reference_key_matches(patched, key))
+            self.assertFalse(P.reference_key_matches(patched, patched))
+
+    def test_nonnull_runtime_patch_entry_is_never_reused(self):
+        import prepare_builtin as P
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = self._cfg(root)
+            entry = self._entry(root)
+            entry['key'] = P.cache_key(cfg, entry['optimized']['algorithm_source_sha256'])
+            self.assertTrue(P.verify_entry_files(entry)[0])
+            for location in ('key', 'baseline', 'optimized'):
+                with self.subTest(location=location):
+                    changed = json.loads(json.dumps(entry))
+                    changed[location]['runtime_patch'] = {'sha256': 'old'}
+                    valid, reasons = P.verify_entry_files(changed)
+                    self.assertFalse(valid)
+                    self.assertTrue(reasons)
+
+    def test_import_prebuilt_rejects_existing_patched_ready_entry(self):
+        import prepare_builtin as P
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = self._cfg(root)
+            entry = self._entry(root)
+            entry['key'] = P.cache_key(cfg, entry['optimized']['algorithm_source_sha256'])
+            registry = Path(cfg['builtin']['cache_dir']) / 'registry'
+            registry.mkdir(parents=True)
+            for location in ('key', 'baseline', 'optimized'):
+                with self.subTest(location=location):
+                    changed = json.loads(json.dumps(entry))
+                    changed[location]['runtime_patch'] = {'sha256': 'old'}
+                    (registry / 'existing.json').write_text(json.dumps(changed), encoding='utf-8')
+                    with mock.patch.object(P.subprocess, 'run',
+                                           side_effect=AssertionError('rejected entry must not run a tool')), \
+                         mock.patch.object(P.subprocess, 'Popen',
+                                           side_effect=AssertionError('rejected entry must not start a process')):
+                        with self.assertRaises(P.BuildError):
+                            P.import_prebuilt(cfg, root, name=entry['name'])
+    def test_insert_integration_idempotent_and_reports_mismatch(self):
+        import prepare_builtin as P
+        cmake = 'yosys_pass(muxpack\n\tmuxpack.cc\n)\nyosys_pass(opt_balance_tree\n\topt_balance_tree.cc\n)\n'
+        synth = ('\t\t\trun("opt -nodffe -nosdff");\n\t\t\trun("fsm");\n'
+                 '\t\t\trun("opt");\n\t\t\trun("wreduce");\n')
+        c1, s1, already = P.insert_integration(cmake, synth)
+        self.assertFalse(already)
+        self.assertIn(P.CMAKE_BLOCK, c1)
+        self.assertIn(P.SYNTH_BLOCK, s1)
+        c2, s2, already2 = P.insert_integration(c1, s1)
+        self.assertTrue(already2)
+        self.assertEqual((c2, s2), (c1, s1))
+        with self.assertRaises(P.BuildError):
+            P.insert_integration('no anchor\n', s1)
+        with self.assertRaises(P.BuildError):
+            P.insert_integration(cmake + '#ifdef pmux_opt\n', s1)
+
     """自动内置准备：缓存键绑定、命中核验、失败不发布、plan 只读（不编译、不写文件）。"""
 
     def test_windows_source_copy_ignores_only_root_build_directory(self):
@@ -1092,8 +1024,8 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             copied = Path(t) / 'copy'
             P.shutil.copytree(root, copied, ignore=P._ignore_root_build(root))
             self.assertFalse((copied / 'build').exists())
-            self.assertEqual((copied / 'pyosys/build/local_backend.py').read_text(), 'tracked source')
-            self.assertEqual((copied / 'submodule/build/tracked.txt').read_text(),
+            self.assertEqual((copied / 'pyosys/build/local_backend.py').read_text(encoding='utf-8'), 'tracked source')
+            self.assertEqual((copied / 'submodule/build/tracked.txt').read_text(encoding='utf-8'),
                              'tracked submodule source')
 
     def _cfg(self, base: Path):
@@ -1282,7 +1214,7 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
             reg = cache / 'registry'
             files = list(reg.glob('*.json'))
             self.assertEqual(len(files), 1)
-            failed = json.loads(files[0].read_text())
+            failed = json.loads(files[0].read_text(encoding='utf-8'))
             self.assertEqual(failed['status'], 'FAILED')
             # 失败条目不被复用（评审判定不会拿到半成品；旧缓存不受影响）
             self.assertIsNone(P.find_cached_optimized(cache, P.cache_key(cfg, alg_sha)))
@@ -1309,6 +1241,62 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
 
 
 class WindowsConfigTests(unittest.TestCase):
+
+    def _package_fixture(self, root):
+        names = ('validate.py', 'report.py', 'report_v8.py', 'validate_windows_v8.cmd',
+                 'config.windows.v8.json', 'POLICY.md', 'README.md', 'SKILL.md',
+                 'test_measure_v8.py', 'test_local_lut_integration.py', 'test_memory_exit.py',
+                 'test_validation.py', 'test_windows_hardening.py')
+        package = Path(__file__).parent
+        files = {}
+        for name in names:
+            files[name] = (package / name).read_bytes()
+        files['runner/probe.py'] = b'pass\n'
+        files['suite-official4/probe.json'] = b'{}\n'
+        manifest = {}
+        for name, contents in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+            manifest[name] = hashlib.sha256(contents.replace(b'\r\n', b'\n')).hexdigest()
+        (root / 'PACKAGE_SHA256.json').write_text(json.dumps(manifest), encoding='utf-8')
+        return manifest
+
+    def test_package_manifest_rejects_missing_required_root_even_if_unregistered(self):
+        import validate as V
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = self._package_fixture(root)
+            V.verify_package_manifest(root)
+            (root / 'validate.py').unlink()
+            manifest.pop('validate.py')
+            (root / 'PACKAGE_SHA256.json').write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                V.verify_package_manifest(root)
+
+    def test_package_manifest_rejects_unregistered_root_and_runner_shared_object(self):
+        import validate as V
+        for relative in ('unregistered.md', 'runner/unregistered.so'):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self._package_fixture(root)
+                (root / relative).write_bytes(b'unregistered')
+                with self.assertRaises(ValueError):
+                    V.verify_package_manifest(root)
+
+    def test_package_manifest_rejects_missing_or_changed_registered_file(self):
+        import validate as V
+        for missing in (True, False):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self._package_fixture(root)
+                target = root / 'runner/probe.py'
+                if missing:
+                    target.unlink()
+                else:
+                    target.write_bytes(b'changed\n')
+                with self.assertRaises(ValueError):
+                    V.verify_package_manifest(root)
     def test_crlf_checkout_is_verified_and_frozen_as_lf(self):
         import validate as V
         with tempfile.TemporaryDirectory() as t:
@@ -1353,18 +1341,190 @@ class WindowsConfigTests(unittest.TestCase):
             self.assertEqual(V.yosys_share_root(build / 'yosys.exe'), build / 'share')
 
 
+class InPlaceEqyEvidenceTests(unittest.TestCase):
+    """Proof setup writes only to the final case directory, including failures."""
+
+    def _load_selfcheck(self, root):
+        import importlib.util
+        from types import SimpleNamespace
+        from unittest import mock
+        context = SimpleNamespace(ASCII_BRIDGE=root / '_eval_ascii_forbidden',
+                                  TOOL_YOSYS='fixture-yosys', EQY_ABC='fixture-abc',
+                                  TOOL_EQY='fixture-eqy')
+        spec = importlib.util.spec_from_file_location(
+            '_selfcheck_inplace_fixture', Path(__file__).parent / 'runner/run_selfcheck.py')
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {'p3_common': context}):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_setup_fail_timeout_and_interrupt_preserve_partial_work_in_place(self):
+        from unittest import mock
+        for outcome in (2, 124, 'interrupt'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as t:
+                root = Path(t)
+                module = self._load_selfcheck(root)
+                case = root / '10_selfcheck/attempt01/rtl_positive'
+                case.mkdir(parents=True)
+                observed = []
+
+                def setup(config, work, log, **kwargs):
+                    observed.append(work)
+                    work.mkdir(parents=True)
+                    (work / 'partial.log').write_text('partial proof evidence')
+                    log.write_text('partial setup evidence')
+                    if outcome == 'interrupt':
+                        raise KeyboardInterrupt()
+                    return outcome
+
+                with mock.patch.object(module.F, 'setup_eqy', side_effect=setup):
+                    if outcome == 'interrupt':
+                        with self.assertRaises(KeyboardInterrupt):
+                            module.run_check({'kind': 'rtl', 'top': 'top'},
+                                             root / 'gold.v', root / 'gate.v', root / 'model.v', case)
+                    else:
+                        result = module.run_check({'kind': 'rtl', 'top': 'top'},
+                                                  root / 'gold.v', root / 'gate.v', root / 'model.v', case)
+                        self.assertEqual(result['state'], 'TOOL_OR_CONFIG_ERROR')
+                self.assertEqual(observed, [case / 'work'])
+                self.assertEqual((case / 'work/partial.log').read_text(), 'partial proof evidence')
+                self.assertTrue((case / 'setup.log').exists())
+                self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
+
+    def test_successful_proof_keeps_transforms_and_probes_in_final_work(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            module = self._load_selfcheck(root)
+            case = root / '10_selfcheck/attempt01/rtl_positive'
+            case.mkdir(parents=True)
+            observed = []
+
+            def setup(config, work, log, **kwargs):
+                observed.append(work)
+                strategy = work / 'strategies/top/simple'
+                strategy.mkdir(parents=True)
+                (strategy / 'run.ys').write_text(TransformAndVerdictTests.SAMPLE)
+                log.write_text('setup complete')
+                return 0
+
+            def yosys(script, log, cwd, **kwargs):
+                text = ('Trying induction with length 1\nBase case for induction length 1 proven\n'
+                        'Induction step proven: SUCCESS!\nImport proof for assert: \\top.ok\n'
+                        if script.name == 'run.ys' else 'SAT solving finished - model found:\n')
+                log.write_text(text)
+                return 0
+
+            with mock.patch.object(module.F, 'setup_eqy', side_effect=setup), \
+                 mock.patch.object(module.F, 'run_yosys_script', side_effect=yosys):
+                result = module.run_check({'kind': 'rtl', 'top': 'top'},
+                                          root / 'gold.v', root / 'gate.v', root / 'model.v', case)
+            self.assertEqual(observed, [case / 'work'])
+            self.assertEqual(result['partitions']['top']['proof']['state'], 'PASS')
+            strategy = case / 'work/strategies/top/simple'
+            self.assertEqual((strategy / 'run.ys.eqy-generated').read_text(), TransformAndVerdictTests.SAMPLE)
+            self.assertNotIn(' -set-def-formal', (strategy / 'run.ys').read_text())
+            self.assertTrue((strategy / 'status_noDF.json').is_file())
+            self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
+
+    def test_chains_keeps_eight_bound_inputs_and_merged_work_in_place(self):
+        import importlib.util
+        import shutil
+        from types import SimpleNamespace
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            runner = Path(__file__).parent / 'runner'
+            tree = root / '02_assets/tree'
+            for case in ('test1', 'test2', 'test3', 'test4'):
+                rtl = tree / f'pmux_case/competition_case/{case}/{case}.v'
+                rtl.parent.mkdir(parents=True)
+                rtl.write_text(f'module {case}; endmodule\n')
+                for side in ('baseline', 'optimized'):
+                    il = root / '05_public/round01' / case / side / 'post_abc.il'
+                    il.parent.mkdir(parents=True)
+                    il.write_text(_dffeas_il(top=case))
+            bridge = root / '_eval_ascii_forbidden'
+
+            def legacy_stage(src, relative):
+                target = bridge / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, target)
+                return target
+
+            def refuse(path):
+                if path.exists():
+                    raise FileExistsError(str(path))
+
+            context = SimpleNamespace(ROUND_DIR=root, REPO=root, TREE=tree, SCRIPT_DIR=runner,
+                ASCII_BRIDGE=bridge, stage_to_ascii_bridge=legacy_stage,
+                TOOL_YOSYS='fixture-yosys', EQY_ABC='fixture-abc', TOOL_EQY='fixture-eqy',
+                CONTEXT={'builtin': {'integration_id': 'pmux-opt-inline-p3-v1'}},
+                sha256_file=F.sha256_file, rel=lambda p: str(p), refuse_overwrite=refuse)
+            spec = importlib.util.spec_from_file_location('_chains_inplace_fixture', runner / 'run_eqy_chains.py')
+            module = importlib.util.module_from_spec(spec)
+            with mock.patch.dict(sys.modules, {'p3_common': context}):
+                spec.loader.exec_module(module)
+            observed, merged = [], []
+
+            def setup(config, work, log, **kwargs):
+                observed.append((config, work))
+                work.mkdir(parents=True)
+                (work / 'partial.log').write_text('partition evidence')
+                log.write_text('setup evidence')
+                return 0
+
+            def parts(work, **kwargs):
+                failed = 'test3' in work.parts
+                return {'partition': {'proof': {'state': 'FAIL' if failed else 'PASS'},
+                    'probes': {'noDF': {'verdict': 'PREMISES_SAT'},
+                               'DF': {'verdict': 'PREMISES_UNSAT'}}}}
+
+            def merge(case, cdir, *, workdir, merged_dir, **kwargs):
+                merged.append((cdir, workdir, merged_dir))
+                merged_dir.mkdir()
+                (merged_dir / 'merged.log').write_text('merged evidence')
+                return {'state': 'PASS', 'probe': 'PREMISES_SAT', 'assert_cover_ok': True, 'k': 3}
+
+            with mock.patch.object(sys, 'argv', ['run_eqy_chains.py', '--input-mode', 'builtin']), \
+                 mock.patch.object(module.F, 'setup_eqy', side_effect=setup), \
+                 mock.patch.object(module, 'run_partitions', side_effect=parts), \
+                 mock.patch.object(module, 'run_merged', side_effect=merge), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(module.main(), 0)
+            out = root / '10_selfcheck/chains/run01'
+            self.assertEqual(len(observed), 8)
+            for config, work in observed:
+                self.assertEqual(work, config.parent / 'work')
+                self.assertEqual((work / 'partial.log').read_text(), 'partition evidence')
+            self.assertEqual(len(merged), 2)
+            for cdir, workdir, merged_dir in merged:
+                self.assertEqual(workdir, cdir / 'work')
+                self.assertEqual(merged_dir, cdir / 'merged')
+                self.assertTrue((merged_dir / 'merged.log').is_file())
+            self.assertEqual(len(list((out / 'inputs').glob('*_mapped.il'))), 8)
+            self.assertTrue((out / 'inputs/form_cells_cycloneiv.v').is_file())
+            rows = json.loads((out / 'chains_summary.json').read_text())
+            for row in rows:
+                side = 'optimized' if row['chain'] == 'c4a_rtl_opt_mapped' else 'baseline'
+                source = root / '05_public/round01' / row['case'] / side / 'post_abc.il'
+                self.assertEqual(row['formal_netlist_sha256'], F.sha256_file(source))
+                self.assertEqual(F.sha256_file(Path(row['formal_netlist_input'])), F.sha256_file(source))
+            self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
+
+
 class BuiltinPrepareIntegrationTests(unittest.TestCase):
     """run 流程必须经过自动准备：新工具路径写入本轮 context；准备失败即失败记录。"""
 
     def _cfg(self, base: Path):
-        return {'repo': str(base), 'performance_pairs': 15,
+        return dict(_v8_context(), **{'repo': str(base), 'performance_pairs': 1,
                 'flow_version': 'official4-p4', 'suite_version': 'official4-v1',
                 'target_commit': 'a' * 40, 'source_sha256': 'e' * 64,
                 'project_head': 'b' * 40, 'suite_verified': True,
                 'suite_manifest_sha256': '5' * 64,
                 'model_version': 'dffeas-v3', 'strategy_version': 'noDF-local-r1',
                 'tools': {'yosys': {'sha256': '1' * 64}, 'abc': {'sha256': '2' * 64},
-                          'eqy': {'sha256': '3' * 64}, 'z3': {'sha256': '4' * 64}}}
+                          'eqy': {'sha256': '3' * 64}, 'z3': {'sha256': '4' * 64}}})
 
     def test_run_builtin_goes_through_prepare_and_binds_new_paths(self):
         import validate
@@ -1372,8 +1532,8 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             base = Path(t)
             round_dir = base / 'round1'
-            (round_dir / '01_来源与环境_meta').mkdir(parents=True)
-            (round_dir / '03_脚本与插件_runner').mkdir()   # 指纹函数需要目录存在
+            (round_dir / '01_meta').mkdir(parents=True)
+            (round_dir / '03_runner').mkdir()   # 指纹函数需要目录存在
             fake_base_abc = base / 'baseline-yosys-abc.exe'
             fake_opt_abc = base / 'optimized-yosys-abc.exe'
             fake_base_abc.write_bytes(b'baseline abc fixture')
@@ -1402,6 +1562,10 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
             def fake_execute(root, name, cmd, stages, timeout=10800):
                 executed.append((name, tuple(str(c) for c in cmd)))
                 stages.append({'name': name, 'state': 'COMPLETED', 'rc': 0})
+                if name == 'measurement_selfcheck':
+                    proof = root / '09_performance/selftest/selftest_results.json'
+                    proof.parent.mkdir(parents=True)
+                    proof.write_text(json.dumps(dict(selftest_ok=True, method=V8.METHOD)), encoding='utf-8')
                 return 0
 
             with mock.patch.object(validate, 'make_round', return_value=round_dir), \
@@ -1410,7 +1574,7 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
                                    return_value=(True, [], {'ok': True})), \
                  mock.patch.object(validate, 'execute', side_effect=fake_execute), \
                  mock.patch('report.build_builtin_report', return_value='NEEDS_REVIEW'):
-                rc = validate.run_builtin(self._cfg(base), b'alg', '测试')
+                rc = validate.run_builtin(self._cfg(base), b'alg', 'fixture')
             self.assertEqual(rc, 2)
             # 自动准备被调用，且请求的算法源码哈希正确传入
             self.assertEqual(prep_mock.call_args.kwargs.get('source_sha256'), 'e' * 64)
@@ -1418,13 +1582,13 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
             ctx = json.loads((round_dir / 'validation_context.json').read_text())
             self.assertEqual(ctx['builtin']['optimized']['path'], '/fake/opt/yosys')
             self.assertEqual(ctx['builtin_prepare']['optimized']['action'], 'built')
-            # 阶段调度完整；性能阶段接收 15 对
+            # V8先采集唯一8次正式综合，再只读分析与独立证明。
             names = [n for n, _ in executed]
-            self.assertEqual(names, ['flowcheck', 'formal_selfcheck', 'measurement_selfcheck',
-                                     'public', 'chains', 'performance'])
+            self.assertEqual(names, ['formal_selfcheck', 'measurement_selfcheck', 'performance',
+                                     'flowcheck', 'public', 'chains'])
             perf_cmd = dict(executed)['performance']
-            self.assertIn('--pairs', perf_cmd)
-            self.assertIn('15', perf_cmd)
+            self.assertTrue(any(str(c).endswith('measure_v8.py') for c in perf_cmd))
+            self.assertNotIn('--pairs', perf_cmd)
 
     def test_build_failure_records_status_and_stops(self):
         import validate
@@ -1433,121 +1597,20 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             base = Path(t)
             round_dir = base / 'round1'
-            (round_dir / '01_来源与环境_meta').mkdir(parents=True)
+            (round_dir / '01_meta').mkdir(parents=True)
             err = P.BuildError('模拟构建失败', build_dir=str(base / 'build'), logs={'dir': 'x'})
             with mock.patch.object(validate, 'make_round', return_value=round_dir), \
                  mock.patch('prepare_builtin.prepare_builtin', side_effect=err), \
                  mock.patch('report.build_builtin_build_failed_report',
                             return_value='BUILTIN_BUILD_FAILED') as fail_mock:
-                rc = validate.run_builtin(self._cfg(base), b'alg', '测试')
+                rc = validate.run_builtin(self._cfg(base), b'alg', 'fixture')
             self.assertEqual(rc, 3)
-            stages = json.loads((round_dir / '01_来源与环境_meta/stages.json').read_text())
+            stages = json.loads((round_dir / '01_meta/stages.json').read_text())
             self.assertEqual(stages[0]['state'], 'ERROR')
             self.assertIn('工具准备失败', stages[0]['detail'])
             fail_mock.assert_called_once()
 
 
-class FifteenPairMeasurementTests(unittest.TestCase):
-    """十五对统一：样本数判定、失败/超限样本不通过、旧五对轮次仍按旧方案读取。"""
-
-    def _runs(self, pairs, *, bad=False):
-        runs = []
-        for i in range(pairs):
-            tag = 'B→O' if i % 2 == 0 else 'O→B'
-            sides = ('baseline', 'optimized') if i % 2 == 0 else ('optimized', 'baseline')
-            for side in sides:
-                rc = 1 if (bad and side == 'optimized' and i == 0) else 0
-                runs.append({'side': side, 'seq': i + 1, 'rc': rc, 'timed_out': False,
-                             'stat_exists': True, 'cpu_total_s': 1.0,
-                             'tree_rss_peak_kb': 1000, 'order': tag})
-        return runs
-
-    def _summary(self, pairs, *, opt=1.0, bad=False):
-        return {'case': 'test1', 'pairs': pairs, 'runs': self._runs(pairs, bad=bad),
-                'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': opt,
-                'baseline_tree_rss_peak_median': 1000,
-                'optimized_tree_rss_peak_median': 1000}
-
-    def test_fifteen_pair_judgement_and_count_check(self):
-        from report import judge_case_performance
-        j = judge_case_performance(self._summary(15), pairs=15)
-        self.assertTrue(j['valid'])
-        self.assertTrue(j['pass'])
-        j_bad = judge_case_performance(self._summary(15, bad=True), pairs=15)
-        self.assertFalse(j_bad['valid'])
-        self.assertFalse(j_bad['pass'])
-        j_over = judge_case_performance(self._summary(15, opt=1.06), pairs=15)
-        self.assertFalse(j_over['cpu_ok'])
-        self.assertFalse(j_over['pass'])
-        # 数量不匹配（15 对数据按 5 对口径）→ 无效：不得用新默认值重解释旧样本
-        j_mismatch = judge_case_performance(self._summary(15), pairs=5)
-        self.assertFalse(j_mismatch['valid'])
-        # 旧五对数据按五对判定仍有效（旧轮次读取路径）
-        j_old = judge_case_performance(self._summary(5), pairs=5)
-        self.assertTrue(j_old['valid'])
-        self.assertTrue(j_old['pass'])
-
-    def _write_round(self, root: Path, *, pairs: int):
-        BuiltinModeTests()._write_builtin_round(root)
-        if pairs == 5:
-            return
-        ctx = json.loads((root / 'validation_context.json').read_text())
-        ctx['performance_pairs'] = pairs
-        ctx['performance_scheme'] = 'pmux-perf-15p-v1'
-        (root / 'validation_context.json').write_text(json.dumps(ctx) + '\n')
-        perf = []
-        for case in ('test1', 'test2', 'test3', 'test4'):
-            runs = []
-            for side in ('baseline', 'optimized'):
-                for i in range(pairs):
-                    runs.append({'side': side, 'seq': i + 1, 'rc': 0, 'timed_out': False,
-                                 'stat_exists': True, 'cpu_total_s': 1.0,
-                                 'tree_rss_peak_kb': 1000,
-                                 'order': 'B→O' if i % 2 == 0 else 'O→B'})
-            perf.append({'case': case, 'pairs': pairs, 'runs': runs,
-                         'baseline_cpu_total_median': 1.0, 'optimized_cpu_total_median': 1.0,
-                         'baseline_tree_rss_peak_median': 1000,
-                         'optimized_tree_rss_peak_median': 1000})
-        (root / '09_时间内存开销_performance/round01/performance_summary.json').write_text(
-            json.dumps(perf) + '\n')
-
-    def test_builtin_report_fifteen_pairs_and_old_five_pair_compat(self):
-        import report as R
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write_round(root, pairs=15)
-            status = R.build_builtin_report(root, chain_attempt='run01')
-            self.assertEqual(status, R.BUILTIN_COMPLETE_STATUS)
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertIn('每侧 15 次交错运行', text)
-            self.assertIn('自动内置准备 + 每例 15 对性能', text)
-            manifest = json.loads((root / '11_汇总与证据_summary/manifest.json').read_text())
-            self.assertEqual(manifest['performance_scheme'], 'pmux-perf-15p-v1')
-        with tempfile.TemporaryDirectory() as t:
-            root = Path(t)
-            self._write_round(root, pairs=5)   # 旧口径数据 + 旧 ctx
-            status = R.build_builtin_report(root, chain_attempt='run01')
-            self.assertEqual(status, R.BUILTIN_COMPLETE_STATUS)
-            text = (root / '00_本轮验证结论.md').read_text()
-            self.assertIn('每侧 5 次交错运行', text)
-            self.assertNotIn('每侧 15 次交错运行', text)
-
-    def test_insert_integration_idempotent_and_reports_mismatch(self):
-        import prepare_builtin as P
-        cmake = 'yosys_pass(muxpack\n\tmuxpack.cc\n)\nyosys_pass(opt_balance_tree\n\topt_balance_tree.cc\n)\n'
-        synth = ('\t\t\trun("opt -nodffe -nosdff");\n\t\t\trun("fsm");\n'
-                 '\t\t\trun("opt");\n\t\t\trun("wreduce");\n')
-        c1, s1, already = P.insert_integration(cmake, synth)
-        self.assertFalse(already)
-        self.assertIn(P.CMAKE_BLOCK, c1)
-        self.assertIn(P.SYNTH_BLOCK, s1)
-        c2, s2, already2 = P.insert_integration(c1, s1)
-        self.assertTrue(already2)
-        self.assertEqual((c2, s2), (c1, s1))
-        with self.assertRaises(P.BuildError):
-            P.insert_integration('no anchor\n', s1)
-        with self.assertRaises(P.BuildError):
-            P.insert_integration(cmake + '#ifdef pmux_opt\n', s1)
 
 
 if __name__ == '__main__':

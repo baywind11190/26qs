@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""内置 Yosys 工具自动准备（official4-p4）。
+"""Windows V8 内置 Yosys 工具自动准备。
 
 给定目标算法源码（字节 + SHA-256），解析原版（baseline）与优化版（内置
 pmux_opt）两份 Yosys 0.69 构建：
@@ -26,7 +26,6 @@ pmux_opt）两份 Yosys 0.69 构建：
   下写登记文件。
 """
 import hashlib
-import runtime_patch
 import integration_profiles as I
 import json
 import os
@@ -112,7 +111,7 @@ def compiler_identity(cfg):
 def cache_key(cfg, source_sha256):
     """optimized 缓存键：算法源码哈希、基础提交、集成模板/位置、构建参数、编译器。"""
     key = {
-        "runtime_patch": runtime_patch.identity() if runtime_patch.enabled(cfg) else None,
+        "runtime_patch": None,
         "algorithm_source_sha256": source_sha256,
         "base_commit": cfg["builtin"]["source_commit"],
         "integration_id": I.identity(cfg),
@@ -222,6 +221,8 @@ def _read_registry_entries(cache_dir):
 
 def reference_key_matches(candidate, wanted):
     """Accept the legacy p6 key only when its omitted field means no runtime patch."""
+    if candidate.get("runtime_patch") is not None or wanted.get("runtime_patch") is not None:
+        return False
     if candidate == wanted:
         return True
     if "runtime_patch" not in candidate:
@@ -246,7 +247,10 @@ def _read_reference_registry(path):
 
 def _verify_unpatched_reference(entry, cfg):
     """Check the old source/build registration is a genuinely unpatched p6 pair."""
-    if entry.get("status") != "READY" or entry.get("optimized", {}).get("runtime_patch"):
+    if (entry.get("status") != "READY"
+            or (entry.get("key") or {}).get("runtime_patch") is not None
+            or any((entry.get(side) or {}).get("runtime_patch") is not None
+                   for side in ("baseline", "optimized"))):
         return False
     if entry.get("abc_source_commit") != _current_abc_commit(cfg):
         return False
@@ -297,6 +301,8 @@ def _verify_unpatched_reference(entry, cfg):
 def verify_entry_files(entry, sides=("baseline", "optimized")):
     """核对登记条目引用的产物（文件存在 + 哈希一致 + 源码树在）。返回 (ok, reasons)。"""
     reasons = []
+    if (entry.get("key") or {}).get("runtime_patch") is not None:
+        reasons.append("V8 不复用带 runtime_patch 的缓存键")
     for side in sides:
         spec = entry.get(side) or {}
         if not spec:
@@ -311,10 +317,8 @@ def verify_entry_files(entry, sides=("baseline", "optimized")):
         src = Path(spec.get("src_dir", "") or "")
         if not (src / ".git").exists():
             reasons.append("%s 源码树缺失：%s" % (side, src))
-        if spec.get("runtime_patch"):
-            try:
-                if runtime_patch.verify(src) != spec["runtime_patch"]: reasons.append("计量补丁身份不符")
-            except (OSError, ValueError, subprocess.SubprocessError) as exc: reasons.append(str(exc))
+        if spec.get('runtime_patch') is not None:
+            reasons.append(side + ' runtime_patch entries are unsupported by V8')
         if side == "optimized" and spec.get("algorithm_source_path"):
             alg = src / spec["algorithm_source_path"]
             if not alg.is_file():
@@ -356,21 +360,9 @@ def find_cached_optimized(cache_dir, key, *, current_abc_commit=None,
 def resolve_baseline_reuse(cfg):
     """config.builtin.baseline_reuse 核对。返回 (spec, reasons)；reasons 为空即可复用。"""
     spec = (cfg["builtin"].get("baseline_reuse") or {}) or None
-    if runtime_patch.enabled(cfg):
-        for entry in reversed(_read_registry_entries(cfg['builtin']['cache_dir'])):
-            key = entry.get('key', {})
-            wanted = cache_key(cfg, key.get('algorithm_source_sha256'))
-            if entry.get('status') == 'READY' and key == wanted:
-                candidate = entry.get('baseline') or {}
-                ok, _ = verify_entry_files(entry, sides=('baseline',))
-                if ok and candidate.get('runtime_patch') == runtime_patch.identity():
-                    spec = dict(candidate, build_profile=build_profile(cfg))
-                    break
     if not spec:
         return None, ["无 baseline 复用登记"]
     reasons = []
-    if runtime_patch.enabled(cfg) and spec.get("runtime_patch") != runtime_patch.identity():
-        reasons.append("公共计量补丁身份缺失或不匹配")
     if spec.get("build_profile") != build_profile(cfg):
         reasons.append("构建参数与当前配置不一致")
     c = cfg["tools"]["compiler"]
@@ -801,10 +793,6 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
                         "binary": str(_build_product_path(tree, "yosys")), "binary_sha256": None,
                         "abc": str(_build_product_path(tree, "yosys-abc")), "abc_sha256": None,
                     }
-                if runtime_patch.enabled(cfg):
-                    runtime_patch.apply(tree)
-                    entry[side]['runtime_patch'] = runtime_patch.verify(tree)
-                    entry[side]['full_diff_sha256'] = hashlib.sha256(_git(tree, 'diff').encode()).hexdigest()
                 _cmake_build(tree, logs, side, cfg)
                 copy_cmd = (["shutil.copytree", str(cfg["builtin"]["source_repo"]),
                              str(tree), "ignore=build"] if os.name == "nt" else
@@ -937,6 +925,9 @@ def import_prebuilt(cfg, build_dir, name=None):
     for existing in _read_registry_entries(cache_dir):
         if existing.get("name") == name:
             if existing.get("status") == "READY":
+                ok, reasons = verify_entry_files(existing)
+                if not ok:
+                    raise BuildError("同名 READY 条目未通过复用核对：" + "；".join(reasons))
                 return existing
             raise BuildError("同名条目已存在且非 READY：%s" % existing.get("_file"))
     src_commit = cfg["builtin"]["source_commit"]
@@ -957,14 +948,11 @@ def import_prebuilt(cfg, build_dir, name=None):
             spec = {"action": "reuse", "src_dir": str(tree), "src_commit": head,
                     "binary": str(_build_product_path(tree, "yosys")),
                     "abc": str(_build_product_path(tree, "yosys-abc"))}
-            if runtime_patch.enabled(cfg):
-                spec['runtime_patch'] = runtime_patch.verify(tree)
-                spec['full_diff_sha256'] = hashlib.sha256(_git(tree, 'diff').encode()).hexdigest()
             if side == "baseline":
-                if _git(tree, "diff", '--', '.', ':(exclude)kernel/driver.cc') if runtime_patch.enabled(cfg) else _git(tree, "diff"):
+                if _git(tree, "diff"):
                     raise BuildError("baseline 树存在未提交改动（影响来源证据）")
             else:
-                diff_text = _git(tree, "diff", "--", "passes/opt/CMakeLists.txt", "techlibs/intel/synth_intel.cc") if runtime_patch.enabled(cfg) else _git(tree, "diff")
+                diff_text = _git(tree, "diff")
                 spec["integration_diff_sha256"] = _check_integration_diff(diff_text, I.identity(cfg))
                 alg = tree / ALGORITHM_SOURCE_PATH
                 if not alg.is_file():

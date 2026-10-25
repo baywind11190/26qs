@@ -48,5 +48,17 @@ __pycache__/
 
 # Local evaluation evidence and management backups (keep files on disk).
 # Already tracked reports remain tracked; selected new reports can be added explicitly.
-/results/官方口径评测/
+/results/official_eval/**
+!/results/official_eval/**/
 /results/90_整理记录_management/
+
+# Machine-local V8 tools and build caches (retained on disk).
+/.tools/
+
+# Current English results navigation and reversible path-migration record.
+!/results/README.md
+!/results/_migrations/**/
+!/results/_migrations/20261025_ascii_layout/**
+
+# Preserve the previous tracked-report intent after the approved ASCII migration.
+!/results/_migrations/20261025_ascii_layout/navigation_before.md

@@ -14,9 +14,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
+import result_layout as L
 from process_utils import process_group_kwargs, terminate_process_tree
 
 STRATEGY_VERSION = "noDF-local-r1"
@@ -35,29 +35,9 @@ class TransformError(ValueError):
     """EQY 生成的 run.ys 不符合预期格式：必须停止并说明，不得静默继续。"""
 
 
-def ascii_eqy_workdir(ascii_root, relative_name):
-    """Return a contained EQY scratch path rooted under an ASCII-only directory."""
-    root = Path(ascii_root).resolve()
-    work = (root / "eqy_work" / relative_name).resolve()
-    try:
-        work.relative_to(root)
-    except ValueError as exc:
-        raise ValueError("EQY work path escapes ASCII scratch root") from exc
-    if not str(work).isascii():
-        raise ValueError("EQY scratch path must contain ASCII characters only")
-    return work
-
-
-def copy_eqy_workdir(source, destination):
-    """Copy completed or partial ASCII EQY evidence into the result directory."""
-    source, destination = Path(source), Path(destination)
-    if not source.is_dir():
-        return False
-    if destination.exists():
-        raise FileExistsError("refusing to overwrite EQY evidence: {}".format(destination))
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, destination)
-    return True
+def eqy_workdir(result_root, relative_name):
+    """Use the final result path directly; partial evidence never needs copying."""
+    return L.contained_path(result_root, relative_name)
 
 
 def sha256_file(path) -> str:

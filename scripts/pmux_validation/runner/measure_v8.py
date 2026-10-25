@@ -4,12 +4,12 @@ import json
 import math
 import os
 from pathlib import Path
+import result_layout as L
 import subprocess
 import sys
 import time
 import uuid
 
-from measure_v7 import compare
 from process_utils import process_group_kwargs, terminate_process_tree
 
 SCHEME = 'pmux-perf-single-powershell-same-run-exitpeak-v8'
@@ -17,6 +17,24 @@ METHOD = 'powershell-measure-command-same-run-wall-v2'
 POLICY = {'synthesis_runs_per_side': 1, 'same_run_metrics': True, 'stage_timeout_s': 1800}
 CASES = ('test1', 'test2', 'test3', 'test4')
 ARTIFACTS = ('flow.ys', 'run.log', 'post_abc.il', 'post_abc_stat.json', 'mapped.il', 'stat.json')
+
+
+def compare(base_ticks, opt_ticks):
+    if (type(base_ticks) is not int or type(opt_ticks) is not int
+            or base_ticks <= 0 or opt_ticks <= 0):
+        return {"wall_overhead_pct": None, "wall_5pct": "INVALID",
+                "wall_15pct": "INVALID", "wall_verdict": "INVALID",
+                "official_midband_score": "NOT_DETERMINED"}
+    over = (opt_ticks - base_ticks) * 100.0 / base_ticks
+    within5 = opt_ticks * 100 <= base_ticks * 105
+    within15 = opt_ticks * 100 <= base_ticks * 115
+    return {"wall_overhead_pct": over,
+            "wall_5pct": "PASS" if within5 else "FAIL",
+            "wall_15pct": "PASS" if within15 else "FAIL",
+            "wall_verdict": "PASS" if within5 else "FAIL",
+            "official_midband_score": ("NOT_DETERMINED" if not within5 and within15
+                                       else "ABOVE_15_THRESHOLD" if not within15
+                                       else "UP_TO_5_THRESHOLD")}
 
 
 def save(path, obj):
@@ -154,8 +172,8 @@ def run(context, round_dir, binaries, flows, *, execute=None):
         raise ValueError('V8 fixed four-case joint policy mismatch')
     execute = execute or run_combined_measured
     root = Path(round_dir)
-    pub = root / '05_公开四例_public/round01'
-    out = root / '09_时间内存开销_performance/round01'
+    pub = root / (L.PUBLIC + '/round01')
+    out = root / (L.PERFORMANCE + '/round01')
     pub.mkdir(parents=True, exist_ok=False); out.mkdir(parents=True, exist_ok=False)
     samples = []; failure = None; started = time.monotonic()
     ledger = {'schema': 1, 'performance_scheme': SCHEME, 'expected_runs': 8,
@@ -217,8 +235,7 @@ def main():
     import builtin_common as B
     flows = {}
     for case in CASES:
-        rtl = C.stage_to_ascii_bridge(C.TREE / f'pmux_case/competition_case/{case}/{case}.v',
-                                     f'builtin_inputs/{case}.v')
+        rtl = L.validate_output_root(C.TREE / f'pmux_case/competition_case/{case}/{case}.v')
         flows[case] = B.gen_builtin_formal_ys(rtl, case)
     return run(C.CONTEXT, C.ROUND_DIR, B.select_binaries(C.CONTEXT['builtin']), flows)
 

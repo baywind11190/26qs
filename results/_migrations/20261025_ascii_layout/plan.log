@@ -1,0 +1,90 @@
+{
+  "target_commit": "17f9361099dcda757c16bb81caa18ddb52d74c4e",
+  "source_sha256": "baa4d2122ecdf6d0370d4f65846e264cfc64465aa4a7a206952917aa56977651",
+  "flow_version": "official4-p6-windows",
+  "suite_version": "official4-v1",
+  "model_version": "dffeas-v3",
+  "strategy_version": "noDF-local-r1",
+  "suite_manifest_sha256": "e855ac523ef13e89288a6a08e80c39ad9ba680d90c1c4a68e73c9af6b96d1723",
+  "performance_pairs": null,
+  "performance_scheme": "pmux-perf-single-powershell-same-run-exitpeak-v8",
+  "tool_data_checked": 29,
+  "integration_profile": "p3-local-lut",
+  "integration_patch": {
+    "path": "integration/yosys_0_69_local_lut.patch",
+    "sha256": "d21c3cbc519586df587ccdf5334b6275ef7022b443cd34b4435b96d55f24157b",
+    "text": "--- a/techlibs/intel/synth_intel.cc\n+++ b/techlibs/intel/synth_intel.cc\n@@ -269,6 +269,7 @@\n \t\t\trun(\"opt -fast\");\n \t\t\trun(\"autoname\");\n \t\t\trun(\"clean\");\n+\t\t\trun(\"pmux_opt -lut\");\n \t\t}\n \n \t\tif (check_label(\"map_cells\")) {\n"
+  }
+}
+{
+  "mode_default": "builtin",
+  "builtin_plan": {
+    "cache_dir": "D:/codex/0000_26qs/.tools/cache-v8",
+    "integration_id": "pmux-opt-inline-p3-local-lut-v1",
+    "baseline": {
+      "action": "reuse",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys.exe",
+      "reason": "baseline 登记核对通过（构建参数/编译器/基础提交/二进制/ABC 一致）"
+    },
+    "optimized": {
+      "action": "reuse",
+      "path": "D:/codex/0000_26qs/.tools/cache-v7/20261022_180517_baa4d21/optimized-src/build/yosys.exe",
+      "reason": "缓存命中：D:/codex/0000_26qs/.tools/cache-v8/registry/v7-reference-baa4d2122ecd.json"
+    },
+    "blocked": [],
+    "build_required": false
+  },
+  "result_layout_version": "ascii-v1",
+  "round_parent": "D:/codex/0000_26qs/results/official_eval",
+  "round_label": "v8_same_run",
+  "selfcheck_cache": "D:/codex/0000_26qs/results/official_eval/_cache/selfcheck_v8.json",
+  "policy_source": {
+    "path": "D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md",
+    "sha256": "4bb8538650c7a00d275e588b8e37e22d8cc227949269a39f68c5cf5bd63758aa"
+  },
+  "formal_synthesis_expected_runs": 8,
+  "performance_expected_runs": 8,
+  "same_run_policy": {
+    "synthesis_runs_per_side": 1,
+    "same_run_metrics": true,
+    "stage_timeout_s": 1800
+  },
+  "wall_time_tool_identity": {
+    "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "sha256": "0ff6f2c94bc7e2833a5f7e16de1622e5dba70396f31c7d5f56381870317e8c46",
+    "expected_version_prefix": "5.1.",
+    "version": "5.1.26100.7462",
+    "cmdlet": "Microsoft.PowerShell.Utility\\Measure-Command"
+  },
+  "wall_runs_per_case": 1,
+  "wall_runs_total": 8,
+  "performance_estimate_note": "8次正式综合，同次墙钟/峰值内存/功能网表/资源；EQY和专用自检另计，无预热或补跑",
+  "runtime_identity": {
+    "python": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\python3.exe",
+      "sha256": "55618310faf739813d2106d642d2e1f822955013f1819eb6b7a430d5f3fa68f9",
+      "resolved": "D:/codex/0000_26qs/.tools/msys64/mingw64/bin/python3.EXE",
+      "version": "Python 3.14.8"
+    },
+    "make": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\make.exe",
+      "sha256": "91b7e155590d59db22e5eb0a3ffeec6350149f70f9ed2c242d133e584eb72fee",
+      "resolved": "D:/codex/0000_26qs/.tools/msys64/usr/bin/make.EXE",
+      "version": "GNU Make 4.4.1"
+    },
+    "bash": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\bash.exe",
+      "sha256": "7b4dc5d6878aacdec5d09ca9c5d8e2b43b925a6bbf631873a24c692980b792b2",
+      "resolved": "D:/codex/0000_26qs/.tools/msys64/usr/bin/bash.EXE",
+      "version": "GNU bash, version 5.3.20(1)-release (x86_64-pc-cygwin)"
+    },
+    "git": {
+      "path": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "sha256": "78211c7ed73988da93a6d8a33d47ec6187f464d7ea2a9a00c182bbd7a1ecf30f",
+      "resolved": "C:/Program Files/Git/cmd/git.EXE",
+      "version": "git version 2.55.0.windows.5"
+    }
+  },
+  "note": "plan 只读：不创建轮次/构建目录、不编译、不登记。run 先自动准备（复用或构建）再执行内置四例验收。"
+}
+只读预检完成。

@@ -1,0 +1,125 @@
+{
+  "kind": "existing RTL positive/negative native path smoke, not official four-case run",
+  "tools": {
+    "yosys": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys.exe",
+      "sha256": "c71c744de978fc9f665d3702ea98259de9749ac03f8f13d4e80530445fd46dc2",
+      "version": "Yosys 0.69 (git sha1 9f75ca1f9, Release, GNU D:/codex/0000_26qs/.tools/msys64/mingw64/bin/c++.exe 16.2.0)"
+    },
+    "abc": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-abc.exe",
+      "sha256": "81e9ce920b799a5954de4adac70d73420f99bb4b62cfe53aeaed98e79e9b7770"
+    },
+    "eqy": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install\\bin\\eqy.exe",
+      "sha256": "71cfb17fea328a26dc7c0329e337f83f639f0d6e70552ec38a4c4401d377fc4f",
+      "version": "EQY v0.69"
+    }
+  },
+  "results": [
+    {
+      "name": "rtl_positive",
+      "expect": "PASS",
+      "ok": true,
+      "why": "",
+      "detail": {
+        "proof_states": [
+          "PASS"
+        ],
+        "probe_noDF": [
+          "PREMISES_SAT"
+        ],
+        "probe_DF": [
+          "PREMISES_SAT"
+        ]
+      },
+      "result": {
+        "state": "RUN_DONE",
+        "partitions": {
+          "selfcheck_pos.y": {
+            "proof": {
+              "state": "PASS",
+              "induct_len": 1,
+              "failed_steps": 0,
+              "base_proven": 1,
+              "base_fail_len": null,
+              "asserts": [
+                "\\__po_y__assert.okay"
+              ],
+              "errors": [],
+              "rc": 0
+            },
+            "probes": {
+              "noDF": {
+                "verdict": "PREMISES_SAT",
+                "x_in_init": null,
+                "rc": 0
+              },
+              "DF": {
+                "verdict": "PREMISES_SAT",
+                "x_in_init": null,
+                "rc": 0
+              }
+            }
+          }
+        }
+      },
+      "work": "C:\\Users\\21915\\AppData\\Local\\Temp\\pmux_ascii_smoke_AMjoCl\\results\\official_eval\\2026-10-25_0000_v8_path_smoke_17f9361_r01\\10_selfcheck\\attempt01\\rtl_positive\\work",
+      "work_exists": true,
+      "old_bridge_created": false
+    },
+    {
+      "name": "rtl_negative",
+      "expect": "REJECT",
+      "ok": true,
+      "why": "",
+      "detail": {
+        "proof_states": [
+          "FAIL"
+        ],
+        "probe_noDF": [
+          "PREMISES_SAT"
+        ],
+        "probe_DF": [
+          "PREMISES_SAT"
+        ]
+      },
+      "result": {
+        "state": "RUN_DONE",
+        "partitions": {
+          "selfcheck_neg.y": {
+            "proof": {
+              "state": "FAIL",
+              "induct_len": null,
+              "failed_steps": 0,
+              "base_proven": 0,
+              "base_fail_len": 1,
+              "asserts": [
+                "\\__po_y__assert.okay"
+              ],
+              "errors": [],
+              "rc": 0
+            },
+            "probes": {
+              "noDF": {
+                "verdict": "PREMISES_SAT",
+                "x_in_init": null,
+                "rc": 0
+              },
+              "DF": {
+                "verdict": "PREMISES_SAT",
+                "x_in_init": null,
+                "rc": 0
+              }
+            }
+          }
+        }
+      },
+      "work": "C:\\Users\\21915\\AppData\\Local\\Temp\\pmux_ascii_smoke_AMjoCl\\results\\official_eval\\2026-10-25_0000_v8_path_smoke_17f9361_r01\\10_selfcheck\\attempt01\\rtl_negative\\work",
+      "work_exists": true,
+      "old_bridge_created": false
+    }
+  ],
+  "ok": true,
+  "root": "C:\\Users\\21915\\AppData\\Local\\Temp\\pmux_ascii_smoke_AMjoCl"
+}

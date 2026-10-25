@@ -24,7 +24,7 @@ class LocalLutIntegrationTests(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[2])
 
     def cfg(self):
-        return {'performance_scheme': I.WALL_SCHEME, 'builtin': {
+        return {'performance_scheme': 'pmux-perf-single-powershell-same-run-exitpeak-v8', 'builtin': {
             'integration_id': P.INTEGRATION_ID, 'source_commit': 'base',
             'build_profile': {}}, 'tools': {'compiler': {'path': 'cc', 'sha256': 'cc'}}}
 
@@ -39,7 +39,7 @@ class LocalLutIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             I.configure(cfg, 'p3-local-lut', self.patch)
 
-    def test_key_is_separate_and_legacy_key_unchanged(self):
+    def test_key_is_separate_and_p3_key_unchanged(self):
         cfg = self.cfg()
         old = P.cache_key(cfg, 'source')
         I.configure(cfg, 'p3', None)
@@ -112,7 +112,7 @@ class LocalLutIntegrationTests(unittest.TestCase):
             def save(rel, value):
                 path = root / rel; path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(value))
-            patch = root / '02_冻结源码与输入_assets/tree' / I.PATCH_PATH
+            patch = root / '02_assets/tree' / I.PATCH_PATH
             patch.parent.mkdir(parents=True); patch.write_bytes(self.patch)
             fc, public, chains = [], [], []
             for case in I.CASES:
@@ -120,16 +120,16 @@ class LocalLutIntegrationTests(unittest.TestCase):
                 fc.append({'case': case, 'sides': {'optimized': {'integration_calls': call}}})
                 pub = {'case': case, 'optimized_integration_calls': call}
                 for side, chain in zip(('optimized', 'baseline'), I.CHAINS):
-                    path = root / '05_公开四例_public/round01' / case / side / 'post_abc.il'
+                    path = root / '05_public/round01' / case / side / 'post_abc.il'
                     path.parent.mkdir(parents=True); path.write_bytes((case + side).encode())
                     sha = hashlib.sha256(path.read_bytes()).hexdigest()
                     pub[side + '_post_abc_sha256'] = sha
                     chains.append(dict(case=case, chain=chain, state='PASS', rc=0, verified=True,
                                        probes_noDF_all_sat=True, formal_netlist_sha256=sha))
                 public.append(pub)
-            save('04_流程一致性_flowcheck/builtin_run01/builtin_flowcheck.json', {'all_ok': True, 'cases': fc})
-            save('05_公开四例_public/round01/summary.json', {'cases': public})
-            rel = '10_验证工具自检_selfcheck/chains/run01/chains_summary.json'
+            save('04_flowcheck/builtin_run01/builtin_flowcheck.json', {'all_ok': True, 'cases': fc})
+            save('05_public/round01/summary.json', {'cases': public})
+            rel = '10_selfcheck/chains/run01/chains_summary.json'
             save(rel, chains)
             self.assertEqual(V.performance_precondition(root, cfg), [])
             chains[0]['formal_netlist_sha256'] = '0' * 64

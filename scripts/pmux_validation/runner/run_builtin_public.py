@@ -15,7 +15,7 @@ pmux_opt（原版不含该调用）；p3-local-lut 还在 map_luts 末尾执行 
 post_abc.il 在局部 LUT 优化完成后导出。两侧独立目录、独立进程运行同一脚本，
 输出路径差异由各自工作目录处理（相对输出名）。
 
-输出：05_公开四例_public/round01/<case>/<side>/（flow.ys、run.log、
+输出：05_public/round01/<case>/<side>/（flow.ys、run.log、
 post_abc.il、mapped.il、stat.json、triggers.json、cell_types.json）
 汇总：summary.json（cases 行；含 Comb/DFF 缩减与 DFF 不增检查）
 """
@@ -25,6 +25,7 @@ import json
 import sys
 import time
 from pathlib import Path
+import result_layout as L
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
@@ -34,7 +35,7 @@ import integration_profiles as I
 
 def run_case(top: str, out_root: Path) -> dict:
     rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
-    rtl = C.stage_to_ascii_bridge(rtl_source, "builtin_inputs/{}.v".format(top))
+    rtl = L.validate_output_root(rtl_source)
     joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
     case_dir = out_root / top
     case_dir.mkdir(parents=True, exist_ok=joint)
@@ -78,7 +79,7 @@ def run_case(top: str, out_root: Path) -> dict:
         )
         from formal_status import check_post_abc_model
         stage_info = check_post_abc_model(side_dir / "post_abc.il", top)
-        full_stat_path = C.ROUND_DIR / "04_流程一致性_flowcheck" / "builtin_run01" / top / side / "stat.json"
+        full_stat_path = C.ROUND_DIR / L.FLOWCHECK / "builtin_run01" / top / side / "stat.json"
         full_stat = C.parse_stat_json(full_stat_path) if not joint else None
         if not joint and stat["cell_types"] != full_stat["cell_types"]:
             raise RuntimeError(f"{top} {side}: split/full synthesis resource mismatch")
@@ -153,7 +154,7 @@ def run_case(top: str, out_root: Path) -> dict:
 
 
 def main():
-    out = C.ROUND_DIR / "05_公开四例_public" / "round01"
+    out = C.ROUND_DIR / L.PUBLIC / "round01"
     joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
     C.refuse_overwrite(out / 'summary.json' if joint else out)
     out.mkdir(parents=True, exist_ok=joint)

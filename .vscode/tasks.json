@@ -2,96 +2,37 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build PMUX Plugin",
-            "type": "shell",
-            "command": "yosys-config",
+            "label": "V8只读预检",
+            "type": "process",
+            "command": "C:\\Windows\\System32\\cmd.exe",
             "args": [
-                "--build",
-                "build/pmux_opt.so",
-                "src/pmux_opt.cc"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": [
-                "$gcc"
-            ]
-        },
-        {
-            "label": "Run PMUX Tcl Test",
-            "type": "shell",
-            "command": "yosys",
-            "args": [
-                "-m",
-                "./build/pmux_opt.so",
-                "-c",
-                "scripts/test_pmux.tcl"
+                "/d",
+                "/c",
+                "${workspaceFolder}\\scripts\\pmux_validation\\validate_windows_v8.cmd",
+                "plan",
+                "${input:algorithmCommit}",
+                "--integration-profile",
+                "${input:integrationProfile}"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "algorithmCommit",
+            "type": "promptString",
+            "description": "算法完整40位Git提交（不使用分支名或SHA-256）",
+            "default": "17f9361099dcda757c16bb81caa18ddb52d74c4e"
         },
         {
-            "label": "Run EQY Self Check",
-            "type": "shell",
-            "command": "eqy",
-            "args": [
-                "-f",
-                "formal/pmux_self.eqy"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Generate PMUX Stats",
-            "type": "shell",
-            "command": "yosys",
-            "args": [
-                "-s",
-                "scripts/stat_pmux.ys"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Measure PMUX Performance",
-            "type": "shell",
-            "command": "/usr/bin/time",
-            "args": [
-                "-v",
-                "-o",
-                "results/04_早期调试_early_debug/pmux_perf.txt",
-                "yosys",
-                "-m",
-                "./build/pmux_opt.so",
-                "-c",
-                "scripts/test_pmux.tcl"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "PMUX Full Check",
-            "dependsOn": [
-                "Build PMUX Plugin",
-                "Run PMUX Tcl Test",
-                "Run EQY Self Check",
-                "Generate PMUX Stats",
-                "Measure PMUX Performance"
-            ],
-            "dependsOrder": "sequence",
-            "problemMatcher": []
+            "id": "integrationProfile",
+            "type": "pickString",
+            "description": "目标含已登记7.1局部LUT补丁时必须选择p3-local-lut",
+            "options": ["p3", "p3-local-lut"],
+            "default": "p3-local-lut"
         }
     ]
 }

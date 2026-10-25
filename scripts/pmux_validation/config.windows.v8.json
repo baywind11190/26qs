@@ -105,12 +105,7 @@
       }
     ],
     "optimized_reference_registries": [
-      "D:\\codex\\0000_26qs\\.tools\\cache-p6\\registry\\prebuilt-p6-9f89a80-windows.json",
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261020_163833_84708ad.json",
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261022_154042_ce410fd-requalified.json",
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261022_154042_ce410fd.json",
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261022_180517_baa4d21.json",
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\v7-reference-86bea9e9961f.json"
+      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261022_180517_baa4d21.json"
     ]
   },
   "tools": {
@@ -327,7 +322,7 @@
   },
   "memory_method_version": "windows-root-exit-event-v1",
   "wall_time_method": "powershell-measure-command-same-run-wall-v2",
-  "selfcheck_cache_rel": "results/官方口径评测/_共享自检缓存_v8-same-run/selfcheck_cache.json",
+  "selfcheck_cache_rel": "results/official_eval/_cache/selfcheck_v8.json",
   "wall_time_tool": {
     "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     "sha256": "0ff6f2c94bc7e2833a5f7e16de1622e5dba70396f31c7d5f56381870317e8c46",

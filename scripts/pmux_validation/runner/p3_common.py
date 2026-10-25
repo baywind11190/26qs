@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""P3 v1 validation runner; adapted from the preserved 2026-09-22 round.
-See ../POLICY.md for scope, provenance and limitations.
+"""Windows V8 轮次共用上下文、原位工具调用及证据读取。
+模块名及共用接口沿用已有轮次；当前范围与判定规则见 ../POLICY.md。
 """
 
 import hashlib
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import result_layout as L
 from process_utils import process_group_kwargs, terminate_process_tree
 
 import json
@@ -20,9 +21,8 @@ CONTEXT = json.loads((ROUND_DIR / "validation_context.json").read_text())
 REPO = Path(CONTEXT["repo"])
 RESULTS_DIR = REPO / "results"
 EVAL_DIR = ROUND_DIR.parent
-TREE = ROUND_DIR / "02_冻结源码与输入_assets" / "tree"
+TREE = ROUND_DIR / L.ASSETS / "tree"
 PLUGIN_SO = SCRIPT_DIR / "pmux_opt.so"
-ASCII_BRIDGE = Path(CONTEXT["ascii_bridge"])
 TOOL_YOSYS = Path(CONTEXT["tools"]["yosys"]["path"])
 TOOL_YOSYS_CONFIG = Path(CONTEXT["tools"]["yosys_config"]["path"])
 TOOL_EQY = Path(CONTEXT["tools"]["eqy"]["path"])
@@ -74,22 +74,6 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def stage_to_ascii_bridge(src: Path, rel_name: str) -> Path:
-    dst = (ASCII_BRIDGE / rel_name).resolve()
-    dst.relative_to(ASCII_BRIDGE.resolve())
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    digest = sha256_file(src)
-    if dst.exists():
-        if sha256_file(dst) != digest:
-            raise RuntimeError(f"Bridge collision: {dst}")
-    else:
-        shutil.copyfile(src, dst)
-    with (ROUND_DIR / "01_来源与环境_meta" / "bridge.jsonl").open("a") as f:
-        f.write(json.dumps({"source": str(src), "bridge": str(dst), "sha256": digest}) + "\n")
-    return dst
-
 
 
 def refuse_overwrite(path: Path):

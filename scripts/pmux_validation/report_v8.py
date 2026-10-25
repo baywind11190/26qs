@@ -2,6 +2,7 @@
 import csv
 import json
 from pathlib import Path
+import result_layout as L
 
 from measure_v8 import CASES, SCHEME, METHOD, POLICY, evaluate_summary, sample_errors, sha, save
 import builtin_common as B
@@ -16,16 +17,16 @@ def load(path, default):
 def build_report(root, output_root=None, chain_attempt='run01', stages_override=None):
     from report import row_functional_ok, judge_area, judge_delivery
     root = Path(root); dest = Path(output_root) if output_root else root
-    out = dest / '11_汇总与证据_summary'; out.mkdir(parents=True, exist_ok=True)
+    out = dest / L.SUMMARY; out.mkdir(parents=True, exist_ok=True)
     ctx = load(root / 'validation_context.json', {})
-    stages = stages_override if stages_override is not None else load(root / '01_来源与环境_meta/stages.json', [])
-    pub_path = root / '05_公开四例_public/round01'
+    stages = stages_override if stages_override is not None else load(root / (L.META + '/stages.json'), [])
+    pub_path = root / (L.PUBLIC + '/round01')
     public = load(pub_path / 'summary.json', {}).get('cases', [])
-    fc = load(root / '04_流程一致性_flowcheck/builtin_run01/builtin_flowcheck.json', {})
-    perf_path = root / '09_时间内存开销_performance/round01'
+    fc = load(root / (L.FLOWCHECK + '/builtin_run01/builtin_flowcheck.json'), {})
+    perf_path = root / (L.PERFORMANCE + '/round01')
     perf = load(perf_path / 'performance_summary.json', [])
     ledger = load(perf_path / 'synthesis_ledger.json', {})
-    chains = load(root / f'10_验证工具自检_selfcheck/chains/{chain_attempt}/chains_summary.json', [])
+    chains = load(root / f'{L.SELFCHECK}/chains/{chain_attempt}/chains_summary.json', [])
     samples = {}
     for case in CASES:
         for side in ('baseline', 'optimized'):
@@ -65,7 +66,7 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
                 good = good and (I.check_calls(log, I.identity(ctx), require_export=True)['ok']
                                  if side == 'optimized' else 'Executing PMUX_OPT' not in log)
                 logs_ok = logs_ok and good
-                frozen = root / f'02_冻结源码与输入_assets/tree/pmux_case/competition_case/{case}/{case}.v'
+                frozen = root / f'{L.ASSETS}/tree/pmux_case/competition_case/{case}/{case}.v'
                 external_ok = external_ok and row.get('input_sha256') == sha(frozen)
                 spec = ctx.get('builtin', {}).get(side, {})
                 external_ok = external_ok and row.get('executable_sha256') == spec.get('binary_sha256')
@@ -73,7 +74,7 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
                 logs_ok = False; external_ok = False
     gates['相同输入脚本与工具身份'] = external_ok
     gates['本次日志的ABC9与PMUX调用和导出阶段'] = logs_ok and fc.get('all_ok') is True and fc.get('analysis_only') is True
-    evidence = load(root / '01_来源与环境_meta/builtin_evidence.json', {})
+    evidence = load(root / (L.META + '/builtin_evidence.json'), {})
     gates['内置工具身份核验'] = evidence.get('ok') is True and ctx.get('suite_verified') is True
     resources = {}; comparisons = {}; rates = []; resource_ok = len(public) == 4
     public_by = {p.get('case'): p for p in public}
@@ -182,10 +183,10 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
         line = [json.dumps(resources.get(case, {}).get(s, {}).get('cell_types', {}), sort_keys=True) for s in ('baseline', 'optimized')]
         lines.append(f"| {case} | `{line[0]}` | `{line[1]}` |")
     lines += ['', '## 工具与证据', '',
-        f"- 工具及构建身份：`01_来源与环境_meta/builtin_prepare.json`、`builtin_evidence.json`；完整配置见 `validation_context.json`。",
-        '- `05_公开四例_public/round01/`：8次唯一正式运行的脚本、请求/响应、联合测量记录、日志、post_abc及最终网表/stat。',
-        '- `09_时间内存开销_performance/round01/`：调度账本与性能摘要，引用上述同次产物。',
-        '- `04_流程一致性_flowcheck/`：只读日志分析；`10_验证工具自检_selfcheck/chains/`：EQY配置、模型与完整证明日志。',
-        '- `11_汇总与证据_summary/official_summary.csv`：逐例汇总；`ALL_SHA256.txt`：证据哈希清单。', '']
-    (dest / '00_本轮验证结论.md').write_text('\n'.join(lines), encoding='utf-8')
+        f"- 工具及构建身份：`01_meta/builtin_prepare.json`、`builtin_evidence.json`；完整配置见 `validation_context.json`。",
+        '- `05_public/round01/`：8次唯一正式运行的脚本、请求/响应、联合测量记录、日志、post_abc及最终网表/stat。',
+        '- `09_performance/round01/`：调度账本与性能摘要，引用上述同次产物。',
+        '- `04_flowcheck/`：只读日志分析；`10_selfcheck/chains/`：EQY配置、模型与完整证明日志。',
+        '- `11_summary/official_summary.csv`：逐例汇总；`ALL_SHA256.txt`：证据哈希清单。', '']
+    (dest / L.REPORT).write_text('\n'.join(lines), encoding='utf-8')
     return status

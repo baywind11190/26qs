@@ -2,11 +2,12 @@
 import hashlib
 import json
 from pathlib import Path
+import result_layout as L
 import re
 
 P3_ID = 'pmux-opt-inline-p3-v1'
 LOCAL_ID = 'pmux-opt-inline-p3-local-lut-v1'
-WALL_SCHEME = 'pmux-perf-single-powershell-wall-exitpeak-v7'
+SAME_RUN_SCHEME = 'pmux-perf-single-powershell-same-run-exitpeak-v8'
 PATCH_PATH = 'integration/yosys_0_69_local_lut.patch'
 PATCH_SHA256 = 'd21c3cbc519586df587ccdf5334b6275ef7022b443cd34b4435b96d55f24157b'
 LUT_ANCHOR = ('\t\t\trun("opt -fast");\n\t\t\trun("autoname");\n'
@@ -24,6 +25,8 @@ def identity(cfg):
 
 
 def configure(cfg, profile, patch):
+    if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
+        raise ValueError('Integration profiles require the Windows V8 builtin flow')
     if profile not in ('p3', 'p3-local-lut'):
         raise ValueError('Unknown integration profile: ' + str(profile))
     if profile == 'p3':
@@ -32,8 +35,6 @@ def configure(cfg, profile, patch):
         cfg['integration_profile'] = 'p3'
         cfg['builtin']['integration_id'] = P3_ID
         return
-    if cfg.get('performance_scheme') not in (WALL_SCHEME, 'pmux-perf-single-powershell-same-run-exitpeak-v8'):
-        raise ValueError('p3-local-lut requires the Windows V7 or V8 builtin flow')
     if patch is None or hashlib.sha256(patch).hexdigest() != PATCH_SHA256:
         raise ValueError('Missing or unrecognized target local LUT integration patch')
     cfg['integration_profile'] = profile
@@ -102,11 +103,11 @@ def evidence_errors(root, ctx):
     def sha(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
     errors = []
-    patch = root / '02_冻结源码与输入_assets/tree' / PATCH_PATH
+    patch = root / (L.ASSETS + '/tree') / PATCH_PATH
     if not patch.is_file() or sha(patch) != (ctx.get('integration_patch') or {}).get('sha256') \
             or (ctx.get('integration_patch') or {}).get('sha256') != PATCH_SHA256:
         errors.append('frozen integration patch identity mismatch')
-    fc = load('04_流程一致性_flowcheck/builtin_run01/builtin_flowcheck.json', {})
+    fc = load((L.FLOWCHECK + '/builtin_run01/builtin_flowcheck.json'), {})
     cases = fc.get('cases') or []
     if fc.get('all_ok') is not True or len(cases) != 4 or {r.get('case') for r in cases} != set(CASES):
         errors.append('four-case invocation evidence missing or failed')
@@ -114,8 +115,8 @@ def evidence_errors(root, ctx):
         call = row.get('sides', {}).get('optimized', {}).get('integration_calls') or {}
         if call.get('integration_id') != LOCAL_ID or call.get('ok') is not True:
             errors.append('new integration invocation not verified: ' + str(row.get('case')))
-    public = load('05_公开四例_public/round01/summary.json', {}).get('cases') or []
-    chains = load('10_验证工具自检_selfcheck/chains/run01/chains_summary.json', [])
+    public = load((L.PUBLIC + '/round01/summary.json'), {}).get('cases') or []
+    chains = load((L.SELFCHECK + '/chains/run01/chains_summary.json'), [])
     if not formal_chains_ok(chains):
         errors.append('original RTL functional proofs are incomplete or failed')
     if len(public) != 4 or {r.get('case') for r in public} != set(CASES):
@@ -126,7 +127,7 @@ def evidence_errors(root, ctx):
         if call.get('integration_id') != LOCAL_ID or call.get('ok') is not True or call.get('export_after_lut') is not True:
             errors.append('functional netlist was not exported after local LUT: ' + str(case))
         for side, chain in zip(('optimized', 'baseline'), CHAINS):
-            net = root / '05_公开四例_public/round01' / str(case) / side / 'post_abc.il'
+            net = root / (L.PUBLIC + '/round01') / str(case) / side / 'post_abc.il'
             matched = [r for r in chains if r.get('case') == case and r.get('chain') == chain]
             if not net.is_file() or len(matched) != 1 or row.get(side + '_post_abc_sha256') != sha(net) \
                     or matched[0].get('formal_netlist_sha256') != sha(net):

@@ -1,16 +1,17 @@
 {
     "configurations": [
         {
-            "name": "WSL-Yosys",
-            "compilerPath": "/usr/bin/g++",
+            "name": "Windows-MSYS2-Yosys",
+            "compilerPath": "${workspaceFolder}/.tools/msys64/mingw64/bin/c++.exe",
             "includePath": [
-                "${workspaceFolder}/**",
-                "/home/fpga/eda/yosys/build/share/include"
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/.tools/yosys-source-lf",
+                "${workspaceFolder}/.tools/build-baseline-lf"
             ],
             "defines": [],
             "cStandard": "c17",
             "cppStandard": "c++20",
-            "intelliSenseMode": "linux-gcc-x64"
+            "intelliSenseMode": "windows-gcc-x64"
         }
     ],
     "version": 4
