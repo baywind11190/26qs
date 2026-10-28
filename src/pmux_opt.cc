@@ -27,6 +27,9 @@
  * 7 映射后局部逻辑优化
  *   7.1 有界局部LUT函数分解
  *
+ * 8 译码多路选择重构
+ *   8.1 译码PMUX默认分支补全与二进制重构
+ *
  * 历史研发代号对应关系：
  *   Pattern A -> 1.1
  *   H1        -> 1.2
@@ -357,6 +360,164 @@ static void optimize_local_luts(RTLIL::Design *design)
         }
     }
     log("7.1 local LUT: %d rewrites, %d LUTs removed; cuts %d, work %d.\n", rewrites, saved, 16384 - budget.cuts, 2000000 - budget.work);
+}
+
+
+// 8.1 Recover a binary address from an injective equality decoder. Missing
+// addresses retain the original PMUX default; no reachability assumptions.
+static int optimize_decoded_pmux(RTLIL::Design *design)
+{
+    std::unique_ptr<CellTypes> types;
+    int rebuilt = 0;
+    for (auto module : design->selected_modules()) {
+        if (module->get_bool_attribute(ID::keep))
+            continue;
+        bool possible = false;
+        for (auto cell : module->selected_cells())
+            if (cell->type == ID($pmux) && !cell->get_bool_attribute(ID::keep) &&
+                cell->hasParam(ID::S_WIDTH) && cell->getParam(ID::S_WIDTH).as_int() >= 2 &&
+                cell->getParam(ID::S_WIDTH).as_int() <= 8) {
+                possible = true;
+                break;
+            }
+        if (!possible)
+            continue;
+        if (!types)
+            types = std::make_unique<CellTypes>(design);
+        SigMap sigmap(module);
+        dict<RTLIL::SigBit, std::vector<RTLIL::Cell *>> drivers;
+        pool<RTLIL::SigBit> pinned;
+        for (auto wire : module->wires())
+            if (wire->port_input || wire->get_bool_attribute(ID::keep) || wire->attributes.count(ID::init))
+                for (auto bit : sigmap(wire))
+                    pinned.insert(bit);
+        for (auto cell : module->cells()) {
+            bool known = types->cell_known(cell->type);
+            for (auto &port : cell->connections()) {
+                if (!known)
+                    for (auto bit : sigmap(port.second))
+                        pinned.insert(bit);
+                if (known && types->cell_output(cell->type, port.first))
+                    for (auto bit : sigmap(port.second))
+                        drivers[bit].push_back(cell);
+            }
+        }
+        pool<RTLIL::Cell *> removed;
+        std::vector<RTLIL::Cell *> cells = module->selected_cells();
+        for (auto cell : cells) {
+            if (cell->type != ID($pmux) || cell->get_bool_attribute(ID::keep) ||
+                !cell->hasParam(ID::WIDTH) || !cell->hasParam(ID::S_WIDTH) ||
+                !cell->hasPort(ID::A) || !cell->hasPort(ID::B) ||
+                !cell->hasPort(ID::S) || !cell->hasPort(ID::Y))
+                continue;
+            int width = cell->getParam(ID::WIDTH).as_int();
+            int count = cell->getParam(ID::S_WIDTH).as_int();
+            RTLIL::SigSpec a = sigmap(cell->getPort(ID::A)), b = sigmap(cell->getPort(ID::B));
+            RTLIL::SigSpec s = sigmap(cell->getPort(ID::S)), y = sigmap(cell->getPort(ID::Y));
+            if (width < 1 || count < 2 || count > 8 || GetSize(a) != width ||
+                int64_t(GetSize(b)) != int64_t(width) * count || GetSize(s) != count || GetSize(y) != width)
+                continue;
+            bool valid = true;
+            RTLIL::SigSpec control;
+            dict<int, RTLIL::SigSpec> branches;
+            for (int branch = 0; branch < count; branch++) {
+                auto driver = drivers.find(s[branch]);
+                if (pinned.count(s[branch]) || driver == drivers.end() || GetSize(driver->second) != 1) {
+                    valid = false;
+                    break;
+                }
+                RTLIL::Cell *decode = driver->second[0];
+                if (removed.count(decode) || decode->get_bool_attribute(ID::keep) || !decode->hasPort(ID::A) ||
+                    !decode->hasPort(ID::Y) || GetSize(decode->getPort(ID::Y)) != 1) {
+                    valid = false;
+                    break;
+                }
+                RTLIL::SigSpec signal;
+                RTLIL::Const value;
+                if (decode->type == ID($logic_not)) {
+                    signal = sigmap(decode->getPort(ID::A));
+                    value = RTLIL::Const(0, GetSize(signal));
+                } else if (decode->type == ID($eq) && decode->hasPort(ID::B) &&
+                           decode->hasParam(ID::A_SIGNED) && decode->hasParam(ID::B_SIGNED)) {
+                    signal = sigmap(decode->getPort(ID::A));
+                    RTLIL::SigSpec constant = sigmap(decode->getPort(ID::B));
+                    if (signal.is_fully_const())
+                        std::swap(signal, constant);
+                    if (!constant.is_fully_const() || !constant.as_const().is_fully_def() ||
+                        GetSize(signal) != GetSize(constant) || decode->getParam(ID::A_SIGNED).as_bool() ||
+                        decode->getParam(ID::B_SIGNED).as_bool()) {
+                        valid = false;
+                        break;
+                    }
+                    value = constant.as_const();
+                } else {
+                    valid = false;
+                    break;
+                }
+                // This bounded first implementation has at most eight addresses.
+                if (GetSize(signal) < 2 || GetSize(signal) > 3) {
+                    valid = false;
+                    break;
+                }
+                pool<RTLIL::SigBit> distinct;
+                for (auto bit : signal)
+                    if (bit.wire == nullptr || !distinct.insert(bit).second ||
+                        (drivers.count(bit) && GetSize(drivers.at(bit)) != 1))
+                        valid = false;
+                if (!valid)
+                    break;
+                if (GetSize(control) == 0)
+                    control = signal;
+                int address = value.as_int();
+                if (signal != control || branches.count(address)) {
+                    valid = false;
+                    break;
+                }
+                branches[address] = b.extract(branch * width, width);
+            }
+            if (!valid || GetSize(control) == 0)
+                continue;
+            pool<RTLIL::SigBit> outputs;
+            for (auto bit : y) {
+                outputs.insert(bit);
+                if (bit.wire == nullptr || pinned.count(bit) || GetSize(drivers[bit]) != 1)
+                    valid = false;
+            }
+            std::vector<RTLIL::SigSpec> table;
+            for (int address = 0; address < (1 << GetSize(control)); address++) {
+                RTLIL::SigSpec data = branches.count(address) ? branches.at(address) : a;
+                for (auto bit : data)
+                    if ((bit.wire == nullptr && bit != State::S0 && bit != State::S1) || outputs.count(bit))
+                        valid = false;
+                table.push_back(data);
+            }
+            if (!valid)
+                continue;
+            // A fixed ordering for every design: the original low address bit
+            // is the root, higher address bits select within its subtrees.
+            std::function<RTLIL::SigSpec(int, int)> build = [&](int depth, int address) -> RTLIL::SigSpec {
+                if (depth == GetSize(control))
+                    return table[address];
+                RTLIL::SigSpec low = build(depth + 1, address);
+                RTLIL::SigSpec high = build(depth + 1, address | (1 << depth));
+                if (low == high)
+                    return low;
+                RTLIL::SigSpec result = depth == 0 ? cell->getPort(ID::Y) :
+                    RTLIL::SigSpec(module->addWire(NEW_ID, width));
+                module->addMux(NEW_ID, low, high, control.extract(depth, 1), result);
+                return result;
+            };
+            RTLIL::SigSpec result = build(0, 0);
+            if (result != cell->getPort(ID::Y))
+                module->connect(cell->getPort(ID::Y), result);
+            log("8.1 DECODED PMUX REBUILT: width=%d control=%d explicit=%d\n",
+                width, GetSize(control), GetSize(branches));
+            removed.insert(cell);
+            module->remove(cell);
+            rebuilt++;
+        }
+    }
+    return rebuilt;
 }
 
 
@@ -4064,6 +4225,8 @@ if (pattern_e_candidates > 0)
 
 
         log("\n");
+
+        log("Total 8.1 decoded PMUX rebuilt: %d\n", optimize_decoded_pmux(design));
 
         log(
             "Total $pmux cells: %d\n",

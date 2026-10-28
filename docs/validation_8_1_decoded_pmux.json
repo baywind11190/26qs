@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-28",
+  "base_commit": "1159f55d42b0b57902f21aaf08f548ea3e747c13",
+  "source_sha256": "41cc37d8e6a1fb7a188dc01d2e23d52c9f4ee964b0896845e82d15295c2425fb",
+  "builtin_candidate_sha256": "b05b40f6e4f5c2afbf8738871bdc98ba5f375a1adb589e920630bc2acb7f6cd4",
+  "yosys_basis": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+  "results": {
+    "test1": {
+      "logic": 181,
+      "expected_experiment_logic": 181,
+      "reproduces_experiment": true,
+      "stock_logic": 288,
+      "area_percent": 37.15277777777778,
+      "cells": {
+        "$not": 2,
+        "cycloneiv_lcell_comb": 179,
+        "dffeas": 222
+      },
+      "rewrites": 0,
+      "formal": "PASS actual induction"
+    },
+    "test2": {
+      "logic": 16,
+      "expected_experiment_logic": 16,
+      "reproduces_experiment": true,
+      "stock_logic": 25,
+      "area_percent": 36.0,
+      "cells": {
+        "cycloneiv_lcell_comb": 16
+      },
+      "rewrites": 0,
+      "formal": "PASS actual induction"
+    },
+    "test3": {
+      "logic": 9,
+      "expected_experiment_logic": 9,
+      "reproduces_experiment": true,
+      "stock_logic": 13,
+      "area_percent": 30.76923076923077,
+      "cells": {
+        "$not": 1,
+        "cycloneiv_lcell_comb": 8,
+        "dffeas": 12
+      },
+      "rewrites": 0,
+      "formal": "PASS actual induction"
+    },
+    "test4": {
+      "logic": 32,
+      "expected_experiment_logic": 32,
+      "reproduces_experiment": true,
+      "stock_logic": 36,
+      "area_percent": 11.111111111111116,
+      "cells": {
+        "$not": 1,
+        "cycloneiv_lcell_comb": 31,
+        "dffeas": 10
+      },
+      "rewrites": 0,
+      "formal": "PASS actual induction"
+    },
+    "pmux_case01_balanced": {
+      "logic": 396,
+      "expected_experiment_logic": 396,
+      "reproduces_experiment": true,
+      "stock_logic": 426,
+      "area_percent": 7.042253521126762,
+      "cells": {
+        "cycloneiv_lcell_comb": 396,
+        "dffeas": 12
+      },
+      "rewrites": 5,
+      "formal": "PASS actual induction"
+    },
+    "pmux_case02_pipeline": {
+      "logic": 383,
+      "expected_experiment_logic": 383,
+      "reproduces_experiment": true,
+      "stock_logic": 450,
+      "area_percent": 14.888888888888886,
+      "cells": {
+        "cycloneiv_lcell_comb": 383,
+        "dffeas": 24
+      },
+      "rewrites": 24,
+      "formal": "PASS actual induction"
+    },
+    "pmux_case03_crossbar": {
+      "logic": 356,
+      "expected_experiment_logic": 356,
+      "reproduces_experiment": true,
+      "stock_logic": 408,
+      "area_percent": 12.745098039215685,
+      "cells": {
+        "cycloneiv_lcell_comb": 356,
+        "dffeas": 10
+      },
+      "rewrites": 10,
+      "formal": "PASS actual induction"
+    },
+    "pmux_case04_feedback": {
+      "logic": 365,
+      "expected_experiment_logic": 365,
+      "reproduces_experiment": true,
+      "stock_logic": 368,
+      "area_percent": 0.8152173913043459,
+      "cells": {
+        "$not": 1,
+        "cycloneiv_lcell_comb": 364,
+        "dffeas": 16
+      },
+      "rewrites": 8,
+      "formal": "PASS actual induction"
+    },
+    "pmux_case05_nested": {
+      "logic": 412,
+      "expected_experiment_logic": 412,
+      "reproduces_experiment": true,
+      "stock_logic": 413,
+      "area_percent": 0.2421307506053294,
+      "cells": {
+        "cycloneiv_lcell_comb": 412,
+        "dffeas": 12
+      },
+      "rewrites": 4,
+      "formal": "PASS actual induction"
+    }
+  },
+  "summary": {
+    "avg_area": 16.751856472140073,
+    "all_equivalence": true,
+    "all_logic_no_increase": true,
+    "all_reproduce_spike": true,
+    "candidate_sha256": "b05b40f6e4f5c2afbf8738871bdc98ba5f375a1adb589e920630bc2acb7f6cd4",
+    "source_sha256": "41cc37d8e6a1fb7a188dc01d2e23d52c9f4ee964b0896845e82d15295c2425fb",
+    "no_plugin_loaded": true,
+    "windows_time_memory": "NOT_RUN"
+  },
+  "boundary_regression": {
+    "positive": "PASS",
+    "positive_3bit": "PASS",
+    "dependent_selector": "PASS",
+    "keep_cell": "PASS",
+    "keep_module": "PASS",
+    "keep_output": "PASS",
+    "init_output": "PASS",
+    "duplicate_selector": "PASS",
+    "unknown_default": "PASS",
+    "signed_compare": "PASS",
+    "decoder_keep": "PASS",
+    "multiple_driver": "PASS",
+    "unknown_cell_touching_output": "PASS",
+    "output_is_input": "PASS",
+    "partial_unselected": "PASS",
+    "positive_all_inputs_equivalence": "PASS"
+  },
+  "windows_official_acceptance": "NOT_RUN",
+  "area20_target": "NOT_MET",
+  "review": "Independent review; stale driver pointer issue fixed using per-module removed-cell guard; no further important issue reported."
+}
