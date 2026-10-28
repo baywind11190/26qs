@@ -1,14 +1,34 @@
+# 当前活动版本：V9
+
+入口为[D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd](D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd)，唯一规则见工程POLICY.md。V9结果根为D:/0026_qs_result，r/e/c/a分别保存轮次、短EQY现场、验证缓存和开发证据。V8入口已退役，以下保留V8历史原文和原判定，不作为当前操作指令。
+
+V9改造与一次九例正式轮次已完成：**FAIL / NEEDS_REVIEW**。18条功能主链PASS，资源/内存PASS，平均逻辑缩减13.158%；pipeline首次时间+43.593%，按用户1—10秒扩展复核后+48.619%，仍超过5%和15%。共90预热+18首次+10复核=118个有效样本，没有追加轮次。
+
+[本轮报告](D:/0026_qs_result/r/2026-10-27_1646_v9_17f9361_r01/00_report.md) · [第21号实施与实测记录](D:/codex/02_嵌赛/验证流程版本更新说明/21_V9预热与条件复核升级及九例实测记录_20261027.md) · [V9结果导航](D:/0026_qs_result/README.md)。交付NOT_RUN，官方认可NOT_CLAIMED。
+
+---
+
 # PMUX Windows 原生 V8 工程
+
+三例六链EQY路径专项复核已完成：[23:39专项报告](D:/codex/0000_26qs/results/official_eval/2026-10-26_2339_eqy_pathfix_17f9361_r01/00_report.md)。六条主链、104个分区全部有效PASS；使用显式管理的D:/eqy_work短工作根，未重新综合或测性能。该专项历史结果保持原判定；正式V8现已默认接入受管理短根，最新九例实测见下方第20号记录。
 
 本工程位于 `D:\codex\0000_26qs`。当前入口是 [validate_windows_v8.cmd](D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v8.cmd)，固定使用 `config.windows.v8.json`；唯一规则正文为 [POLICY.md](D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md)，操作说明见 [验证 README](D:/codex/0000_26qs/scripts/pmux_validation/README.md)。Yosys 是电路综合工具；EQY 是独立运行的功能等价证明工具。
 
-当前已获得 test1～test4，每例原版后优化版各一次，共8次正式综合，同一次运行采集墙钟、Yosys主进程退出事件峰值及功能/资源网表。先做只读 `plan` 核对规则来源、完整算法提交、集成选项、预计8次及 `builtin_plan.blocked` 为空，再按授权执行 `run`。VS Code任务只提供V8只读预检。
+当前套件official9-v1包含原test1～test4与用户提供的五份新增官方用例，由唯一cases清单驱动。每例原版后优化版各一次，共18次正式综合、18条必需两侧功能证明；同次采集墙钟、Yosys主进程峰值和功能/资源产物。先只读plan核对精确算法提交、集成、九例ID/top、规则和预计18次及blocked=[]，再按授权run；以后N例按2N推导。
 
-当前结果布局为 `ascii-v1`：新轮次在 `results/official_eval/YYYY-MM-DD_HHMM_<label>_<commit7>_rNN`，默认label为 `v8_same_run`，主报告为 `00_report.md`。轮次和内部阶段均为英文路径，报告正文保持中文；正式输入和EQY工作文件直接在所属轮次内使用，不再创建随机桥接目录。解析后的输出根路径必须为安全ASCII且无空格，否则plan/run在写入前阻断。
+当前结果布局为 `ascii-v1`：新轮次在 `results/official_eval/YYYY-MM-DD_HHMM_<label>_<commit7>_rNN`，默认label为 `v8_same_run`，主报告为 `00_report.md`。轮次和内部阶段均为英文路径，报告正文保持中文；正式综合输入保持本轮冻结位置，EQY自动使用受管理短根并核验归档，不创建随机桥接目录。解析后的输出根路径必须为安全ASCII且无空格，否则plan/run在写入前阻断。
 
-## 当前轮次
+<!-- nine-case-live-status -->
+## 当前九例正式验证：2026-10-27
 
-以下均为既有结果的导航，本次文档整理未追加综合或EQY。算法提交为 `17f9361099dcda757c16bb81caa18ddb52d74c4e`，使用 `p3-local-lut`；项目HEAD、算法源码哈希和工具哈希另按轮次证据核对。
+正式V8已默认接入受管理短EQY工作根，命令入口保持plan/run。最新独立轮次为 **FAIL / NEEDS_REVIEW**：18次综合全部有效、18条功能主链PASS，资源和内存PASS；九例平均逻辑缩减13.158%。balanced、pipeline、crossbar墙钟分别+8.507%、+16.321%、+7.107%超过5%目标，其中pipeline超过15%。不补跑，不改阈值。
+
+算法固定17f9361099dcda757c16bb81caa18ddb52d74c4e / p3-local-lut。[本轮主报告](D:/codex/0000_26qs/results/official_eval/2026-10-27_1045_v8_eqy_short_17f9361_r01/00_report.md)、[第20号接入与实测记录](D:/codex/02_嵌赛/验证流程版本更新说明/20_V8短EQY工作目录正式接入与九例实测记录_20261027.md)。交付NOT_RUN、官方认可NOT_CLAIMED；原2026-10-26 20:16九例FAIL及23:39六链专项PASS均保留原判定，不混算。
+<!-- /nine-case-live-status -->
+
+## 历史四例轮次
+
+以下为历史轮次导航，这些历史轮次本次未重新执行综合或EQY。算法提交为 `17f9361099dcda757c16bb81caa18ddb52d74c4e`，使用 `p3-local-lut`；项目HEAD、算法源码哈希和工具哈希另按轮次证据核对。
 
 | V8轮次 | 原判定及限制 |
 |---|---|
@@ -19,7 +39,7 @@
 
 后3轮功能、资源、内存检查通过，四例平均逻辑单元缩减约28.7583%。各轮独立保存，不平均、不混算。2026-10-22 2136同次采集前身和2026-10-23五个直接诊断轮次全部保留，诊断不替代正式单次结果；完整报告链接见 [results目录导航](D:/codex/0000_26qs/results/README.md)。
 
-新增官方用例仍为 `WAITING_OFFICIAL_CASES`；新增用例接入和逐例 `logic_units` 增加的独立门禁尚待适配。7.1局部LUT允许范围、同次调试计量及部分计量细节待官方确认，见 [第18号记录](D:/codex/02_嵌赛/验证流程版本更新说明/18_1022答疑与V8符合性核对及待确认问题_20261023.md)。交付包 `NOT_RUN`，官方认可 `NOT_CLAIMED`；四例本地PASS不等于全部官方验收通过。
+五份新增用例已取得并接入九例清单，逐例logic_units不增加门禁已纳入本次实现；实际测试及正式结果见 [第19号记录](D:/codex/02_嵌赛/验证流程版本更新说明/19_官方新增五例接入与V8九例实测记录_20261026.md)。7.1局部LUT范围、同次调试计量及部分评分边界等待官方确认，继续参考第18号原文；交付未重新执行NOT_RUN，官方认可NOT_CLAIMED。本地套件通过不等于官方验收。
 
 ## 目录与资料
 

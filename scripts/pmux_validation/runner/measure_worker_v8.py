@@ -41,10 +41,14 @@ class Handler(socketserver.StreamRequestHandler):
                 if action == 'ping':
                     result = {'ok': True, 'action': 'ping', 'worker_pid': os.getpid()}
                 elif action == 'run':
+                    if str(req.get('performance_scheme','')).endswith('-v9'):
+                        if req.get('measurement_revision') != win_measure.H.REVISION or req.get('heap_policy') != win_measure.H.POLICY:
+                            raise ValueError('V9 heap policy/revision missing or invalid')
                     start = time.perf_counter()
                     metrics = win_measure.run_measured(
                         req['cmd'], cwd=req['cwd'], log_path=req['log_path'],
-                        timeout_s=float(req.get('timeout_s', 1800)), env=req.get('env'))
+                        timeout_s=float(req.get('timeout_s', 1800)), env=req.get('env'),
+                        measurement_revision=req.get('measurement_revision'), heap_policy=req.get('heap_policy'))
                     metrics['worker_call_wall_s'] = time.perf_counter() - start
                     result = {'ok': True, 'action': 'run', 'request_id': req.get('request_id'),
                               'worker_pid': os.getpid(), 'metrics': metrics}

@@ -33,7 +33,8 @@ import p3_common as C
 import function_common as F
 import integration_profiles as I
 
-CASES = ["test1", "test2", "test3", "test4"]
+import official_suite as S
+import eqy_recheck_support as W
 MAIN_CHAINS = ("c1_local", "c2_stage", "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
 FULL_CHAINS = ("c1_local", "c2_stage", "c3a_rtl_opt", "c3b_rtl_base",
                "c4a_rtl_opt_mapped", "c4b_rtl_base_mapped", "c5_mapped_pair")
@@ -140,7 +141,7 @@ def run_strategy(strategy_dir: Path, *, yosys: str) -> dict:
     proof["rc"] = rc
     if rc == 124:
         proof["state"] = "TIMEOUT"
-    elif rc != 0 and proof["state"] in ("PASS", "INCOMPLETE"):
+    elif rc != 0 or proof.get("errors"):
         proof["state"] = "TOOL_OR_CONFIG_ERROR"
 
     probes = {}
@@ -150,9 +151,8 @@ def run_strategy(strategy_dir: Path, *, yosys: str) -> dict:
         probe_ys.write_text(F.make_probe_ys(base, variant))
         prc = F.run_yosys_script(probe_ys, strategy_dir / "probe_{}.log".format(variant),
                                  strategy_dir, yosys=yosys, timeout_s=PARTITION_PROBE_TIMEOUT)
-        pv = F.classify_probe_text(
-            (strategy_dir / "probe_{}.log".format(variant)).read_text(errors="replace"))
-        pv["rc"] = prc
+        pv = F.classify_probe_result(
+            (strategy_dir / "probe_{}.log".format(variant)).read_text(errors="replace"), prc)
         probes[variant] = pv
 
     (strategy_dir / "status_noDF.json").write_text(json.dumps(
@@ -176,13 +176,14 @@ def aggregate_partitions(parts: dict) -> dict:
     states = {p: r["proof"]["state"] for p, r in parts.items()}
     npass = sum(1 for s in states.values() if s == "PASS")
     probes_ok = bool(parts) and all(
-        r["probes"]["noDF"]["verdict"] == "PREMISES_SAT" for r in parts.values())
+        r["probes"]["noDF"]["verdict"] == "PREMISES_SAT"
+        and r["probes"]["noDF"].get("rc", 0) == 0
+        and r["probes"]["noDF"].get("state", "VALID") == "VALID" for r in parts.values())
     df_unsat = sum(1 for r in parts.values()
                    if r["probes"]["DF"]["verdict"] == "PREMISES_UNSAT")
-    if not parts:
-        state = "INCOMPLETE"
-    elif not probes_ok:
-        state = "PREMISES_NOT_SAT"
+    gate = W.proof_gate(parts)
+    if gate:
+        state = gate
     elif npass == len(states):
         state = "PASS"
     elif any(s == "FAIL" for s in states.values()):
@@ -239,14 +240,18 @@ def run_merged(case: str, cdir: Path, *, yosys: str,
     probe_ys = mdir / "probe_noDF.ys"
     probe_ys.write_text(head + "chformal -assert -remove\n"
                         "sat -seq 1 -set-init-undef -set-def-inputs -set-assumes miter\n")
+    if getattr(C, 'CONTEXT', {}).get('eqy_workspace'):
+        import eqy_workspace as M
+        M.check_paths([probe_ys.name, "test3_miter.sv", case + ".merged.il"], cwd=mdir)
     prc = F.run_yosys_script(probe_ys, mdir / "probe_noDF.log", mdir,
                              yosys=yosys, timeout_s=MERGED_PROBE_TIMEOUT)
-    probe = F.classify_probe_text((mdir / "probe_noDF.log").read_text(errors="replace"))
-    probe["rc"] = prc
+    probe = F.classify_probe_result((mdir / "probe_noDF.log").read_text(errors="replace"), prc)
 
     proof_ys = mdir / "proof_m{}.ys".format(meta["maxsteps"])
     proof_ys.write_text(head + "sat -tempinduct -set-init-undef -set-def-inputs "
                         "-maxsteps {} -set-assumes -prove-asserts miter\n".format(meta["maxsteps"]))
+    if getattr(C, 'CONTEXT', {}).get('eqy_workspace'):
+        M.check_paths([proof_ys.name], cwd=mdir)
     rc = F.run_yosys_script(proof_ys, mdir / "proof_m{}.log".format(meta["maxsteps"]), mdir,
                             yosys=yosys, timeout_s=MERGED_PROOF_TIMEOUT)
     proof = F.classify_proof_text(
@@ -254,7 +259,7 @@ def run_merged(case: str, cdir: Path, *, yosys: str,
     proof["rc"] = rc
     if rc == 124:
         proof["state"] = "TIMEOUT"
-    elif rc != 0 and proof["state"] in ("PASS", "INCOMPLETE"):
+    elif rc != 0 or proof.get("errors"):
         proof["state"] = "TOOL_OR_CONFIG_ERROR"
     cover_ok, cover_missing = F.verify_expected_asserts(meta["assert_suffixes"], proof["asserts"])
 
@@ -316,13 +321,39 @@ def main():
                          "builtin=内置流程网表（post_abc；链集合=c4a/c4b 主证明）")
     ap.add_argument("--frozen-round", default=None,
                     help="功能复核：只读复用既有轮次 05_public 产物（逐文件哈希核对）")
+    ap.add_argument('--cases', nargs='+', default=None)
+    ap.add_argument('--eqy-work-root', default=None)
     args = ap.parse_args()
+    managed = bool(C.CONTEXT.get('eqy_workspace'))
+    if managed:
+        import eqy_workspace as M
+        if args.input_mode != 'builtin':
+            ap.error('Managed official EQY requires builtin input mode')
+    recheck = C.CONTEXT.get('functional_recheck')
+    cases = S.context_cases(C.CONTEXT)
+    workspace = None
+    if args.cases or args.eqy_work_root:
+        if not recheck or not args.cases or not args.eqy_work_root:
+            ap.error('Subset/short root requires an explicit functional recheck context')
+        cases = W.select_cases(cases, args.cases)
+        if [c['id'] for c in cases] != recheck['cases']:
+            ap.error('Requested case set differs from frozen recheck context')
+        if W.safe_root(args.eqy_work_root) != W.safe_root(recheck['root']):
+            ap.error('Short root differs from frozen recheck context')
+        workspace = W.safe_root(recheck['workspace'])
+        workspace.relative_to(W.safe_root(args.eqy_work_root))
+        manifest = __import__('json').loads((workspace / 'workspace_manifest.json').read_text(encoding='utf-8'))
+        if (W.safe_root(manifest['result_round']) != W.safe_root(C.ROUND_DIR)
+                or W.safe_root(manifest['source_round']) != W.safe_root(args.frozen_round)):
+            ap.error('Workspace identity differs from recheck context')
+    elif recheck:
+        ap.error('Functional recheck requires explicit cases and short root')
     if not __import__("re").fullmatch(r"run[0-9]+", args.attempt):
         ap.error("attempt must be runNN")
     if args.input_mode == "builtin":
         if args.chains == "full":
             ap.error("内置模式无 P3 中间网表，不支持 --chains full")
-        if args.frozen_round:
+        if args.frozen_round and not recheck:
             ap.error("内置模式不支持 --frozen-round")
         selected = [c for c in MAIN_CHAINS
                     if c in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")]
@@ -343,12 +374,18 @@ def main():
             print("STOP：冻结轮次缺少 05_public/round01：{}".format(pub))
             return 2
 
-    inputs_dir = out / "inputs"
-    inputs_dir.mkdir()
+    inputs_dir = (Path(C.CONTEXT['eqy_workspace']['workspace']) / 'chains/inputs' if managed
+                  else (workspace / 'inputs') if workspace else out / 'inputs')
+    if not managed:
+        inputs_dir.mkdir()
     hash_map = {}
     used_frozen = []
 
     def stage(src: Path, rel: str, frozen_rel=None):
+        if managed:
+            dst = M.stage_input(C.CONTEXT, 'chains', src, name=Path(rel).name)
+            hash_map[str(dst)] = {"source": C.rel(src), "sha256": C.sha256_file(src)}
+            return dst
         dst = L.contained_path(inputs_dir, Path(rel).name)
         expected = C.sha256_file(src)
         if dst.exists():
@@ -361,12 +398,17 @@ def main():
             used_frozen.append((src, frozen_rel))
         return dst
 
-    form_model = stage(C.SCRIPT_DIR / "form_cells_cycloneiv.v", "chains/form_cells_cycloneiv.v")
+    model_source = (frozen / L.RUNNER) if recheck else C.SCRIPT_DIR
+    form_model = stage(model_source / "form_cells_cycloneiv.v", "chains/form_cells_cycloneiv.v",
+                       frozen_rel=(L.RUNNER + '/form_cells_cycloneiv.v' if recheck else None))
 
     case_paths = {}
-    for top in CASES:
-        rtl = stage(C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top),
-                    "chains/{}.v".format(top))
+    for spec in cases:
+        top, case_id = spec['top'], spec['id']
+        tree = frozen / L.ASSETS / 'tree' if recheck else C.TREE
+        rtl_source = S.case_path(tree, spec)
+        rtl = stage(rtl_source, 'chains/{}.v'.format(case_id),
+                    frozen_rel=rtl_source.relative_to(frozen).as_posix() if recheck else None)
         kinds = (("mapped",) if args.input_mode == "builtin"
                  else ("pre_p3", "post_p3", "coarse_done", "mapped"))
         sides = {}
@@ -374,16 +416,16 @@ def main():
             for kind in kinds:
                 if args.input_mode == "builtin":
                     # 内置功能输入为 post_abc.il；阶段内输入保留 mapped 后缀供旧预检和合并器识别（两侧脚本逐字节相同）。
-                    src = pub / top / side / "post_abc.il"
+                    src = pub / case_id / side / "post_abc.il"
                     from formal_status import check_post_abc_model
                     check_post_abc_model(src, top)
-                    rel = (L.PUBLIC + "/round01/{}/{}/post_abc.il").format(top, side)
+                    rel = (L.PUBLIC + "/round01/{}/{}/post_abc.il").format(case_id, side)
                 else:
-                    src = pub / top / side / "{}_{}.il".format(side, kind)
-                    rel = (L.PUBLIC + "/round01/{}/{}/{}_{}.il").format(top, side, side, kind)
-                sides[(side, kind)] = stage(src, "chains/{}_{}_{}.il".format(top, side, kind),
+                    src = pub / case_id / side / "{}_{}.il".format(side, kind)
+                    rel = (L.PUBLIC + "/round01/{}/{}/{}_{}.il").format(case_id, side, side, kind)
+                sides[(side, kind)] = stage(src, "chains/{}_{}_{}.il".format(case_id, side, kind),
                                             frozen_rel=(rel if frozen else None))
-        case_paths[top] = {"rtl": rtl, "sides": sides}
+        case_paths[case_id] = {"rtl": rtl, "sides": sides}
 
     if frozen:
         ok, details = verify_frozen(frozen, used_frozen)
@@ -401,9 +443,10 @@ def main():
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         prc = precheck_main(["--dir", str(inputs_dir),
-                             "--expect", *["{}:{}".format(c, s) for c in CASES
+                             "--expect", *["{}:{}".format(c['id'], s) for c in cases
                                            for s in ("baseline", "optimized")],
-                             "--top-from-name", "--model", "form_cells_cycloneiv.v"])
+                             "--top-map", *[c["id"] + ":" + c["top"] for c in cases],
+                             "--model", "form_cells_cycloneiv.v"])
     (out / "precheck_report.txt").write_text(buf.getvalue())
     print(buf.getvalue(), end="")
     if prc != 0:
@@ -412,12 +455,13 @@ def main():
 
     rows = []
     try:
-        for top in CASES:
+        for spec in cases:
+            top, case_id = spec['top'], spec['id']
             for cname in selected:
-                cdir = out / top / cname
+                cdir = out / case_id / cname
                 cdir.mkdir(parents=True)
-                sides = case_paths[top]["sides"]
-                rtl = case_paths[top]["rtl"]
+                sides = case_paths[case_id]["sides"]
+                rtl = case_paths[case_id]["rtl"]
                 if cname == "c1_local":
                     cfg_text = make_cfg(net_side_prelude(sides[("optimized", "pre_p3")], top),
                                         net_side_prelude(sides[("optimized", "post_p3")], top))
@@ -445,14 +489,24 @@ def main():
                                                                 top, form_model))
                 else:
                     raise ValueError(cname)
-                (cdir / "config.eqy").write_text(cfg_text)
-                eqy_job = cdir
-                work = F.eqy_workdir(cdir, "work")
+                eqy_job = W.job_dir(workspace, case_id,
+                    'optimized' if cname == W.CHAINS[0] else 'baseline') if workspace else cdir
+                if managed:
+                    eqy_job = M.job_dir(C.CONTEXT, 'chains', case=case_id,
+                        side='optimized' if cname == I.CHAINS[0] else 'baseline')
+                if workspace or managed:
+                    eqy_job.mkdir(parents=True)
+                if managed:
+                    M.check_paths([eqy_job / 'config.eqy', eqy_job / 'work', eqy_job / 'setup.log'])
+                (eqy_job / 'config.eqy').write_text(cfg_text)
+                if workspace or managed:
+                    shutil.copyfile(eqy_job / 'config.eqy', cdir / 'config.eqy')
+                work = F.eqy_workdir(eqy_job, "work")
                 work.parent.mkdir(parents=True, exist_ok=True)
-                rc = F.setup_eqy(cdir / "config.eqy", work, cdir / "setup.log",
+                rc = F.setup_eqy(eqy_job / "config.eqy", work, eqy_job / "setup.log",
                                  yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
                 if rc != 0:
-                    row = {"case": top, "chain": cname, "rc": 2,
+                    row = {"case": case_id, "chain": cname, "rc": 2,
                            "state": "TOOL_OR_CONFIG_ERROR", "method": "partition",
                            "error": "eqy -m rc={}".format(rc),
                            "strategy_version": F.STRATEGY_VERSION,
@@ -469,8 +523,18 @@ def main():
                         json.dumps(row, ensure_ascii=False, indent=2) + "\n")
                     print("{} {}: setup FAILED rc={}".format(top, cname, rc))
                     continue
+                if workspace:
+                    original = json.loads((frozen / L.SELFCHECK / 'chains/run01' / case_id / cname / 'summary.json').read_text(encoding='utf-8'))
+                    audit = W.check_work(work, list(original['partition_states']))
+                    W.save(eqy_job / 'path_audit.json', audit)
+                audit = None
+                if managed:
+                    audit = M.check_work(work, expected=None)
+                    (eqy_job / 'path_audit.json').write_text(json.dumps(audit, indent=2) + '\n')
                 parts = run_partitions(work, yosys=C.TOOL_YOSYS)
                 agg = aggregate_partitions(parts)
+                if audit is not None and set(parts) != set(audit['partitions']):
+                    raise ValueError('Partition result set differs from audited generated set')
                 merged = None
                 if (top in MERGED and cname in ("c4a_rtl_opt_mapped", "c4b_rtl_base_mapped")
                         and agg["state"] != "PASS"):
@@ -481,7 +545,7 @@ def main():
                 else:
                     final_state = agg["state"]
                     method = "partition"
-                row = {"case": top, "chain": cname,
+                row = {"case": case_id, "chain": cname,
                        "rc": 0 if final_state == "PASS" else 2,
                        "state": final_state, "method": method,
                        "strategy_version": F.STRATEGY_VERSION,

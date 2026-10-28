@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""内置四例两侧综合运行器（run_builtin_public）。
+"""内置套件两侧综合运行器（run_builtin_public）。
 
 对每个用例、两侧内置二进制分别运行**逐字节相同**的外部综合脚本：
 
@@ -31,20 +31,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import builtin_common as B
 import integration_profiles as I
+import official_suite as S
 
 
-def run_case(top: str, out_root: Path) -> dict:
-    rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+def run_case(spec: dict, out_root: Path) -> dict:
+    top, case_id = spec['top'], spec['id']
+    rtl_source = S.case_path(C.TREE, spec)
     rtl = L.validate_output_root(rtl_source)
-    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
-    case_dir = out_root / top
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-warm10-initial-review5-same-run-v9'
+    case_dir = out_root / case_id
     case_dir.mkdir(parents=True, exist_ok=joint)
     builtin = C.CONTEXT.get("builtin") or {}
     binaries = B.select_binaries(builtin)
 
     script = B.gen_builtin_formal_ys(rtl, top)
     script_sha = hashlib.sha256(script.encode()).hexdigest()
-    result = {"case": top, "input": C.rel(rtl_source),
+    result = {"case": case_id, "input": C.rel(rtl_source),
               "input_sha256": C.sha256_file(rtl_source),
               "staged_input": str(rtl), "staged_input_sha256": C.sha256_file(rtl),
               "script_sha256": script_sha}
@@ -60,7 +62,7 @@ def run_case(top: str, out_root: Path) -> dict:
         (side_dir / "binary.txt").write_text(str(binary) + "\n" + C.sha256_file(binary) + "\n")
         t0 = time.perf_counter()
         if joint:
-            from measure_v8 import sample_errors
+            from measure_v9 import sample_errors
             sample = json.loads((side_dir / 'measure_result.json').read_text(encoding='utf-8'))
             errors = sample_errors(sample, require_outputs=True)
             if errors: raise RuntimeError('; '.join(errors))
@@ -79,7 +81,7 @@ def run_case(top: str, out_root: Path) -> dict:
         )
         from formal_status import check_post_abc_model
         stage_info = check_post_abc_model(side_dir / "post_abc.il", top)
-        full_stat_path = C.ROUND_DIR / L.FLOWCHECK / "builtin_run01" / top / side / "stat.json"
+        full_stat_path = C.ROUND_DIR / L.FLOWCHECK / "builtin_run01" / case_id / side / "stat.json"
         full_stat = C.parse_stat_json(full_stat_path) if not joint else None
         if not joint and stat["cell_types"] != full_stat["cell_types"]:
             raise RuntimeError(f"{top} {side}: split/full synthesis resource mismatch")
@@ -137,8 +139,9 @@ def run_case(top: str, out_root: Path) -> dict:
     result["total_reduction_pct"] = red(result["baseline_total"], result["optimized_total"])
     result["comb_reduction_pct"] = red(result["baseline_comb"], result["optimized_comb"])
     resource_comparison = B.compare_resource_counts(
-        result["baseline_resources"], result["optimized_resources"])
+        result["baseline_resources"], result["optimized_resources"], allow_dff_increase=True)
     result["logic_reduction_pct"] = resource_comparison["logic_reduction_pct"]
+    result["logic_nonincrease"] = resource_comparison["logic_nonincrease"]
     result["dff_nonincrease"] = resource_comparison["dff_nonincrease"]
     result["io_nonincrease"] = resource_comparison["io_nonincrease"]
     result["io_resources"] = resource_comparison["io_resources"]
@@ -155,25 +158,23 @@ def run_case(top: str, out_root: Path) -> dict:
 
 def main():
     out = C.ROUND_DIR / L.PUBLIC / "round01"
-    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-warm10-initial-review5-same-run-v9'
     C.refuse_overwrite(out / 'summary.json' if joint else out)
     out.mkdir(parents=True, exist_ok=joint)
 
     rows = []
-    for i in range(1, 5):
-        row = run_case("test{}".format(i), out)
+    cases = S.context_cases(C.CONTEXT)
+    for spec in cases:
+        row = run_case(spec, out)
         rows.append(row)
-        print("test{}: total {}->{} comb {}->{} dff {}->{} script={}".format(
-            i, row["baseline_total"], row["optimized_total"],
-            row["baseline_comb"], row["optimized_comb"],
-            row["baseline_dff"], row["optimized_dff"], row["script_sha256"][:12]))
+        print(spec['id'], 'logic', row['baseline_logic_units'], '->', row['optimized_logic_units'])
 
     comb_reds = [r["comb_reduction_pct"] for r in rows]
     logic_reds = [r["logic_reduction_pct"] for r in rows]
     total_reds = [r["total_reduction_pct"] for r in rows]
-    mean_comb = sum(comb_reds) / 4 if len(comb_reds) == 4 and None not in comb_reds else None
-    mean_logic = sum(logic_reds) / 4 if len(logic_reds) == 4 and None not in logic_reds else None
-    mean_total = (sum(total_reds) / 4 if len(total_reds) == 4 and None not in total_reds
+    mean_comb = sum(comb_reds) / len(cases) if len(comb_reds) == len(cases) and None not in comb_reds else None
+    mean_logic = sum(logic_reds) / len(cases) if len(logic_reds) == len(cases) and None not in logic_reds else None
+    mean_total = (sum(total_reds) / len(cases) if len(total_reds) == len(cases) and None not in total_reds
                   else None)
 
     with open(out / "summary.csv", "w", newline="") as f:

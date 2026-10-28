@@ -5,7 +5,7 @@ import re
 LAYOUT_VERSION = 'ascii-v1'
 ROUND_PARENT_REL = 'results/official_eval'
 SELFCHECK_CACHE_REL = 'results/official_eval/_cache/selfcheck_v8.json'
-ROUND_LABEL_DEFAULT = 'v8_same_run'
+ROUND_LABEL_DEFAULT = 'v9'
 META = '01_meta'
 ASSETS = '02_assets'
 RUNNER = '03_runner'
@@ -18,6 +18,20 @@ REPORT = '00_report.md'
 TOOLCHAIN_EVIDENCE = 'toolchain_evidence'
 
 
+def result_parent(cfg):
+    if str(cfg.get('performance_scheme','')).endswith('-v9'):
+        if not cfg.get('results_root'): raise ValueError('V9 results_root is required')
+        return contained_path(cfg['results_root'], 'r')
+    return validate_output_root(Path(cfg['repo']) / ROUND_PARENT_REL)
+
+
+def selfcheck_cache(cfg):
+    if str(cfg.get('performance_scheme','')).endswith('-v9'):
+        if not cfg.get('results_root'): raise ValueError('V9 results_root is required')
+        return contained_path(cfg['results_root'], 'c', 'selfcheck_v9.json')
+    return Path(cfg['repo']) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
+
+
 def validate_label(label):
     if not isinstance(label, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', label):
         raise ValueError('Label may contain only ASCII letters, digits, underscore and hyphen')
@@ -26,6 +40,10 @@ def validate_label(label):
 
 def validate_output_root(root):
     """Resolve and check without creating paths or using a fallback workspace."""
+    original = Path(root).absolute()
+    for part in (original, *original.parents):
+        if part.is_symlink() or (hasattr(part, 'is_junction') and part.is_junction()):
+            raise ValueError('Linked validation output path: ' + str(part))
     root = Path(root).resolve()
     if not str(root).isascii() or any(
             not re.fullmatch(r'[A-Za-z0-9._-]+', part)

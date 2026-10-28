@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "flow_version": "official4-p6-windows",
-  "suite_version": "official4-v1",
-  "suite_manifest": "suite-official4/manifest.json",
+  "flow_version": "official-p6-windows",
+  "suite_version": "official9-v1",
+  "suite_manifest": "suite-official/manifest.json",
   "model_version": "dffeas-v3",
   "strategy_version": "noDF-local-r1",
-  "selfcheck_version": "official4-selfcheck-v8-same-run",
+  "selfcheck_version": "official-selfcheck-v8-same-run",
   "method_notes": {
     "model": "runner/form_cells_cycloneiv.v = 器件语义模型 v3（clrn 异步清零 / ena 时钟使能 / power_up 初值；与已核对实验模型逐字节相同）；支持配置由 runner/precheck_supported_config.py 强制阻断，未支持不静默建模。",
     "strategy": "本地策略修正 noDF-local-r1：EQY setup（-m）生成的 run.ys 经严格转换仅删除恰一处 ' -set-def-formal'（保留 -set-init-undef/-set-def-inputs/-set-assumes/断言）；格式不符即停止。附前提探针（noDF 必需 SAT；DF 记录）。",
@@ -13,7 +13,7 @@
     "builtin_prepare": "V7复用的两侧Yosys 0.69均不含V6内部Job CPU计量补丁；原版无PMUX，优化版含PMUX算法与集成。两侧基础源码、编译器及公共构建参数见工具准备证据。",
     "performance": "Windows PowerShell 5.1 Measure-Command包含同次受调试的Yosys启动至退出及输出收尾；主进程峰值仅看yosys.exe。PowerShell和worker初始化、构建、自检、EQY及事后分析不计入。",
     "formal_stage": "原始 RTL 对比 ABC9 后、map_cells 前 post_abc.il（$lut 阶段）；最终 mapped.il 用于器件资源统计。",
-    "v8": "整轮正式8次，同一次Yosys采集Measure-Command墙钟与退出事件峰值工作集，功能/资源分析复用该产物，EQY随后独立证明。调试与本机通信开销包含于墙钟；官方未指定此内存实现。"
+    "v8": "N例共2N次正式综合；本套件9例共18次，同次采集墙钟、退出事件峰值及功能/资源产物；EQY独立运行18条必需主链。"
   },
   "repo": "D:\\codex\\0000_26qs",
   "builtin": {
@@ -332,5 +332,8 @@
     "synthesis_runs_per_side": 1,
     "same_run_metrics": true,
     "stage_timeout_s": 1800
-  }
+  },
+  "eqy_work_root": "D:/eqy_work",
+  "eqy_workspace_version": "managed-short-v1",
+  "eqy_path_limit": 200
 }

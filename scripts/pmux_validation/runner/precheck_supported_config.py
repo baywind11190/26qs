@@ -52,6 +52,7 @@ def main(argv=None):
                     help="预期文件清单（case:side；逐项要求 <case>_<side>_mapped.il 存在）")
     ap.add_argument("--top-from-name", action="store_true",
                     help="以文件名中的 case 作为顶层模块名（<case>_<side>_mapped.il）")
+    ap.add_argument("--top-map", nargs="*", default=[], help="explicit case:top mapping")
     ap.add_argument("--model", default=None,
                     help="同时要求存在的模型文件（可给绝对路径或目录内相对名）")
     args = ap.parse_args(argv)
@@ -66,9 +67,18 @@ def main(argv=None):
             cand = d / args.model
         if not cand.is_file():
             issues.append("缺少模型文件: {}".format(args.model))
+    mapping = {}
+    for spec in args.top_map:
+        case, sep, top = spec.partition(":")
+        if not sep or not case or not top or case in mapping:
+            issues.append("invalid/duplicate explicit top mapping: " + spec)
+        mapping[case] = top
     for f in files:
         try:
-            top = f.name.split("_", 1)[0] if args.top_from_name else top_of(f)
+            case = f.stem.removesuffix("_mapped").rsplit("_", 1)[0]
+            if args.top_map and case not in mapping:
+                raise ValueError("explicit top mapping missing: " + case)
+            top = mapping[case] if args.top_map else case if args.top_from_name else top_of(f)
             check_mapped_model(f, top)
         except ValueError as exc:
             issues.append("{}: {}".format(f.name, exc))

@@ -15,7 +15,7 @@ from process_utils import process_group_kwargs, terminate_process_tree
 SCHEME = 'pmux-perf-single-powershell-same-run-exitpeak-v8'
 METHOD = 'powershell-measure-command-same-run-wall-v2'
 POLICY = {'synthesis_runs_per_side': 1, 'same_run_metrics': True, 'stage_timeout_s': 1800}
-CASES = ('test1', 'test2', 'test3', 'test4')
+import official_suite as S
 ARTIFACTS = ('flow.ys', 'run.log', 'post_abc.il', 'post_abc_stat.json', 'mapped.il', 'stat.json')
 
 
@@ -49,8 +49,8 @@ def sha(path):
     return h.hexdigest()
 
 
-def schedule():
-    for case in CASES:
+def schedule(context):
+    for case in S.case_ids(context):
         for side in ('baseline', 'optimized'):
             yield {'case': case, 'side': side}
 
@@ -119,7 +119,7 @@ def evaluate_summary(summary):
     elif valid and (not mem_ok or judgment['wall_5pct'] != 'PASS'):
         judgment['official_midband_score'] = 'NOT_DETERMINED'
     reasons = []
-    if not valid: reasons.append('同次样本缺失、无效或八次正式综合未完成')
+    if not valid: reasons.append('同次样本缺失、无效或清单全部正式综合未完成')
     if valid and judgment['wall_5pct'] != 'PASS': reasons.append('墙钟时间相对开销超过本地5%目标')
     if valid and not mem_ok: reasons.append('内存相对开销超过5%')
     if valid and not (wall_abs and mem_abs): reasons.append('超过60秒/2GiB且原版未超限')
@@ -139,14 +139,16 @@ def evaluate_summary(summary):
                 reasons=reasons)
 
 
-def run_combined_measured(command, *, cwd, log_path, timeout_s, powershell_path, env=None):
+def run_combined_measured(command, *, cwd, log_path, timeout_s, powershell_path, env=None,
+                          performance_scheme=SCHEME, measurement_revision=None, heap_policy=None):
     folder = Path(cwd)
     request_path = folder / 'combined_request.json'
     raw_path = folder / 'measure_result.raw.json'
     save(request_path, {'schema': 1, 'command': list(map(str, command)),
                        'cwd': str(folder), 'log_path': str(log_path), 'timeout_s': timeout_s,
                        'python': sys.executable, 'runner': str(Path(__file__).parent),
-                       'result_path': str(raw_path), 'performance_scheme': SCHEME, 'method': METHOD})
+                       'result_path': str(raw_path), 'performance_scheme': performance_scheme, 'method': METHOD,
+                       'measurement_revision': measurement_revision, 'heap_policy': heap_policy})
     host_log = folder / 'measurement_host.log'
     with host_log.open('xb') as stream:
         process = subprocess.Popen([str(powershell_path), '-NoLogo', '-NoProfile', '-NonInteractive',
@@ -167,20 +169,22 @@ def run_combined_measured(command, *, cwd, log_path, timeout_s, powershell_path,
 
 
 def run(context, round_dir, binaries, flows, *, execute=None):
+    cases = S.case_ids(context)
+    expected_runs = 2 * len(cases)
     if context.get('mode') != 'builtin' or context.get('performance_scheme') != SCHEME \
-            or context.get('same_run_policy') != POLICY or set(flows) != set(CASES):
-        raise ValueError('V8 fixed four-case joint policy mismatch')
+            or context.get('same_run_policy') != POLICY or set(flows) != set(cases):
+        raise ValueError('V8 manifest case set or joint policy mismatch')
     execute = execute or run_combined_measured
     root = Path(round_dir)
     pub = root / (L.PUBLIC + '/round01')
     out = root / (L.PERFORMANCE + '/round01')
     pub.mkdir(parents=True, exist_ok=False); out.mkdir(parents=True, exist_ok=False)
     samples = []; failure = None; started = time.monotonic()
-    ledger = {'schema': 1, 'performance_scheme': SCHEME, 'expected_runs': 8,
+    ledger = {'schema': 1, 'performance_scheme': SCHEME, 'expected_runs': expected_runs,
               'attempted_runs': 0, 'started_runs': 0, 'completed_runs': 0, 'execution_complete': False,
-              'schedule': list(schedule()), 'attempts': []}
+              'schedule': list(schedule(context)), 'attempts': []}
     ps = Path(context['wall_time_tool']['path'])
-    for item in schedule():
+    for item in schedule(context):
         case, side = item['case'], item['side']
         folder = pub / case / side; folder.mkdir(parents=True)
         flow = flows[case]; (folder / 'flow.ys').write_text(flow, encoding='utf-8')
@@ -220,12 +224,12 @@ def run(context, round_dir, binaries, flows, *, execute=None):
         save(out / 'synthesis_ledger.json', ledger)
         print(case, side, 'VALID' if not failure else 'INVALID', flush=True)
         if failure: break
-    complete = failure is None and ledger['attempted_runs'] == ledger['started_runs'] == ledger['completed_runs'] == 8
+    complete = failure is None and ledger['attempted_runs'] == ledger['started_runs'] == ledger['completed_runs'] == expected_runs
     ledger.update(execution_complete=complete, error=failure)
     save(out / 'synthesis_ledger.json', ledger)
     summaries = [dict(case=case, performance_scheme=SCHEME, same_run_policy=POLICY,
                       memory_metric='yosys_peak_working_set_bytes', execution_complete=complete,
-                      samples=[r for r in samples if r['case'] == case]) for case in CASES]
+                      samples=[r for r in samples if r['case'] == case]) for case in cases]
     save(out / 'performance_summary.json', summaries)
     return 0 if complete else 1
 
@@ -234,9 +238,9 @@ def main():
     import p3_common as C
     import builtin_common as B
     flows = {}
-    for case in CASES:
-        rtl = L.validate_output_root(C.TREE / f'pmux_case/competition_case/{case}/{case}.v')
-        flows[case] = B.gen_builtin_formal_ys(rtl, case)
+    for spec in S.context_cases(C.CONTEXT):
+        rtl = L.validate_output_root(S.case_path(C.TREE, spec))
+        flows[spec['id']] = B.gen_builtin_formal_ys(rtl, spec['top'])
     return run(C.CONTEXT, C.ROUND_DIR, B.select_binaries(C.CONTEXT['builtin']), flows)
 
 

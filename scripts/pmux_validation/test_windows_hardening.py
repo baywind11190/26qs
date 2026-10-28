@@ -28,8 +28,8 @@ class WindowsHardeningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             dest = Path(td) / 'scripts/pmux_validation'
             dest.mkdir(parents=True)
-            entry = dest / 'validate_windows_v8.cmd'
-            entry.write_bytes(Path(__file__).with_name('validate_windows_v8.cmd').read_bytes())
+            entry = dest / 'validate_windows_v9.cmd'
+            entry.write_bytes(Path(__file__).with_name('validate_windows_v9.cmd').read_bytes())
             proc = subprocess.run([os.environ['COMSPEC'], '/d', '/c', str(entry), 'plan', 'abcdef0'],
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             self.assertEqual(proc.returncode, 3)

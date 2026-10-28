@@ -45,7 +45,11 @@ def build_cfg(check, gold, gate, model, top):
 
 
 def run_check(check, gold, gate, model, d):
+    managed = bool(getattr(C, "CONTEXT", {}).get("eqy_workspace"))
     cfg = d / "config.eqy"
+    if managed:
+        import eqy_workspace as W
+        W.check_paths([cfg, d / "work", d / "setup.log", gold, gate, model])
     cfg.write_text(build_cfg(check, gold, gate, model, check["top"]))
     work = F.eqy_workdir(d, "work")
     work.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +58,10 @@ def run_check(check, gold, gate, model, d):
     if rc != 0:
         return {"state": "TOOL_OR_CONFIG_ERROR", "error": "eqy -m rc={}".format(rc),
                 "partitions": {}}
+    audit = None
+    if managed:
+        audit = W.check_work(work, expected=None)
+        (d / "path_audit.json").write_text(json.dumps(audit, indent=2) + "\n")
     parts = {}
     for sdir in sorted((work / "strategies").glob("*/simple")):
         pname = sdir.parent.name
@@ -78,7 +86,7 @@ def run_check(check, gold, gate, model, d):
         proof["rc"] = prc
         if prc == 124:
             proof["state"] = "TIMEOUT"
-        elif prc != 0 and proof["state"] in ("PASS", "INCOMPLETE"):
+        elif prc != 0 or proof.get("errors"):
             proof["state"] = "TOOL_OR_CONFIG_ERROR"
         probes = {}
         for variant in ("noDF", "DF"):
@@ -87,13 +95,14 @@ def run_check(check, gold, gate, model, d):
             pys.write_text(F.make_probe_ys(base, variant))
             xrc = F.run_yosys_script(pys, sdir / "probe_{}.log".format(variant), sdir,
                                      yosys=C.TOOL_YOSYS, timeout_s=PROBE_TIMEOUT)
-            pv = F.classify_probe_text(
-                (sdir / "probe_{}.log".format(variant)).read_text(errors="replace"))
-            pv["rc"] = xrc
+            pv = F.classify_probe_result(
+                (sdir / "probe_{}.log".format(variant)).read_text(errors="replace"), xrc)
             probes[variant] = pv
         res = {"proof": proof, "probes": probes}
         (sdir / "status_noDF.json").write_text(json.dumps(res, ensure_ascii=False, indent=2) + "\n")
         parts[pname] = res
+    if audit is not None and set(parts) != set(audit["partitions"]):
+        return {"state": "TOOL_OR_CONFIG_ERROR", "error": "partition result set incomplete", "partitions": parts}
     return {"state": "RUN_DONE", "partitions": parts}
 
 
@@ -105,18 +114,29 @@ def judge(check, res):
     probes_DF = [p["probes"]["DF"]["verdict"] for p in parts.values()]
     expect = check["expect"]
     detail = {"proof_states": states, "probe_noDF": probes_noDF, "probe_DF": probes_DF}
+    valid_probes = all(p["probes"]["noDF"].get("rc", 0) == 0
+                       and p["probes"]["noDF"].get("state", "VALID") == "VALID" for p in parts.values())
+    if res.get("state") not in (None, "RUN_DONE"):
+        return False, res.get("error", res["state"]), detail
     if not parts:
         return False, "no partitions", detail
     if expect == "PASS":
         ok = all(s == "PASS" for s in states) and all(v == "PREMISES_SAT" for v in probes_noDF)
     elif expect == "REJECT":
-        ok = any(s == "FAIL" for s in states)
+        ok = any(p["proof"]["state"] == "FAIL" and p["proof"].get("rc", 0) == 0
+                 and not p["proof"].get("errors") for p in parts.values())
+        ok = ok and all(v == "PREMISES_SAT" for v in probes_noDF)
     elif expect == "PREMISE_SAT":
         ok = all(v == "PREMISES_SAT" for v in probes_noDF)
         if check.get("df_probe_expect") and check.get("df_probe_enforce"):
             ok = ok and all(v == check["df_probe_expect"] for v in probes_DF)
     else:
         ok = False
+    clean_proofs = all(p["proof"].get("rc", 0) == 0
+                       and not p["proof"].get("errors")
+                       and p["proof"]["state"] not in ("TOOL_OR_CONFIG_ERROR", "TIMEOUT")
+                       for p in parts.values())
+    ok = ok and valid_probes and clean_proofs
     return ok, "" if ok else "expect={} not met".format(expect), detail
 
 
@@ -132,18 +152,28 @@ def main():
                .get("version"), "model_version": F.MODEL_VERSION,
                "strategy_version": F.STRATEGY_VERSION, "cases": []}
     hash_map = {}
+    managed = bool(getattr(C, "CONTEXT", {}).get("eqy_workspace"))
+    if managed:
+        import eqy_workspace as W
+        model = W.stage_input(C.CONTEXT, "sc", model, name="form_cells_cycloneiv.v")
 
     for check in checks:
         name = check["name"]
         gold_src = assets / check.get("gold", "mapped_model_gold.v")
         gate_src = assets / check.get("gate", "mapped_model_gate.v")
         gold, gate = gold_src, gate_src
+        if managed:
+            gold = W.stage_input(C.CONTEXT, "sc", gold_src)
+            gate = W.stage_input(C.CONTEXT, "sc", gate_src)
         for src, dst in ((gold_src, gold), (gate_src, gate)):
             hash_map[str(dst)] = {"source": C.rel(src), "sha256": C.sha256_file(src),
                                   "input_sha256": C.sha256_file(dst),
                                   "match": C.sha256_file(src) == C.sha256_file(dst)}
-        d = base / name
-        d.mkdir()
+        summary_dir = base / name
+        summary_dir.mkdir()
+        d = W.job_dir(C.CONTEXT, "sc", check=name) if managed else summary_dir
+        if managed:
+            d.mkdir(parents=True)
         try:
             res = run_check(check, gold, gate, model, d)
             ok, why, detail = judge(check, res)
@@ -153,7 +183,7 @@ def main():
                 "state": res.get("state"), "error": res.get("error"),
                 "detail": detail}
         summary["cases"].append(case)
-        (d / "summary.json").write_text(json.dumps(case, ensure_ascii=False, indent=2) + "\n")
+        (summary_dir / "summary.json").write_text(json.dumps(case, ensure_ascii=False, indent=2) + "\n")
         print("{}: expect={} ok={}{}".format(name, check["expect"], ok,
                                              "" if not why else " ({})".format(why)))
 

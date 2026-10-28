@@ -21,12 +21,12 @@ from function_common import (transform_run_ys, make_probe_ys, classify_proof_tex
 import function_common as F
 from report import build_report, row_functional_ok
 import measure_v8 as V8
-from test_measure_v8 import raw as v8_raw
+from test_measure_v8 import raw as v8_raw, fixture_cases
 
 
 def _v8_context():
     return dict(mode='builtin', performance_scheme=V8.SCHEME, same_run_policy=V8.POLICY,
-                result_layout_version='ascii-v1',
+                result_layout_version='ascii-v1', official_cases=fixture_cases(),
                 flow_version='official4-v8', suite_verified=True,
                 target_commit='a' * 40, source_sha256='b' * 64,
                 policy_source={'path': str(Path(__file__).with_name('POLICY.md'))})
@@ -452,7 +452,7 @@ class SelfcheckCacheTests(unittest.TestCase):
         import validate
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            fp = dict(self._fp(), performance_scheme=V8.SCHEME)
+            fp = dict(self._fp(), performance_scheme=validate.SAME_RUN_SCHEME)
             path = root / 'cache.json'
             cache = validate.load_selfcheck_cache(path)
             with self.assertRaisesRegex(ValueError, 'evidence missing'):
@@ -484,7 +484,9 @@ class SelfcheckCacheTests(unittest.TestCase):
         cache = {'cache_schema': 1, 'entries': {'flowcheck': {'fingerprint': dict(fp), 'ok': True}}}
         self.assertTrue(validate.cache_entry_valid(cache, 'flowcheck', fp))
         for key, value in (('abc_sha256', 'CHANGED'), ('model_version', 'dffeas-v2'),
-                           ('strategy_version', 'DF')):
+                           ('strategy_version', 'DF'),
+                           ('official_cases', fixture_cases()),
+                           ('official_cases_sha256', 'CHANGED')):
             changed = dict(fp)
             changed[key] = value
             self.assertFalse(validate.cache_entry_valid(cache, 'flowcheck', changed))
@@ -549,7 +551,7 @@ class BuiltinModeTests(unittest.TestCase):
     def test_builtin_stage_sets_match_and_no_plugin_flags(self):
         import validate
         import integration_profiles as I
-        plan = validate.builtin_stage_plan({'performance_scheme': V8.SCHEME})
+        plan = validate.builtin_stage_plan({'performance_scheme': validate.SAME_RUN_SCHEME})
         self.assertEqual(tuple(n for n, _, _ in plan),
                          ('formal_selfcheck', 'measurement_selfcheck', 'performance',
                           'flowcheck', 'public', 'chains'))
@@ -708,7 +710,7 @@ class BuiltinModeTests(unittest.TestCase):
                                       base_not_bits=1, opt_not_bits=2)
             status = R.build_builtin_report(root, chain_attempt='run01')
             manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
-            self.assertEqual(status, 'BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE')
+            self.assertEqual(status, 'BUILTIN_SUITE_LOCAL_ACCEPTANCE_COMPLETE')
             self.assertTrue(manifest['gates']['最终资源统计与同次来源完整'])
             self.assertAlmostEqual(manifest['mean_logic_reduction_pct'], 4 / 21 * 100)
             self.assertEqual(manifest['resources']['test1']['baseline']['logic_units'], 21)
@@ -828,7 +830,7 @@ class BuiltinModeTests(unittest.TestCase):
              ('build', 'formal_selfcheck', 'measurement_selfcheck', 'performance', 'flowcheck', 'public', 'chains')])
         save('01_meta/builtin_evidence.json', {'ok': True, 'missing': []})
         flows = {}
-        for case in V8.CASES:
+        for case in (c['id'] for c in fixture_cases()):
             rtl = root / f'02_assets/tree/pmux_case/competition_case/{case}/{case}.v'
             rtl.parent.mkdir(parents=True, exist_ok=True)
             rtl.write_text('module ' + case + '; endmodule', encoding='utf-8')
@@ -864,7 +866,7 @@ class BuiltinModeTests(unittest.TestCase):
              {'all_ok': True, 'analysis_only': True})
         public = []
         proofs = []
-        for case in V8.CASES:
+        for case in (c['id'] for c in fixture_cases()):
             row = {'case': case}
             for side, chain in (('optimized', 'c4a_rtl_opt_mapped'), ('baseline', 'c4b_rtl_base_mapped')):
                 folder = root / '05_public/round01' / case / side
@@ -902,14 +904,14 @@ class BuiltinModeTests(unittest.TestCase):
             root = Path(t)
             self._write_builtin_round(root, include_chains=True)
             status = R.build_builtin_report(root, chain_attempt='run01')
-            self.assertEqual(status, 'BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE')
+            self.assertEqual(status, 'BUILTIN_SUITE_LOCAL_ACCEPTANCE_COMPLETE')
             manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
             self.assertTrue(all(manifest['gates'].values()), manifest['reasons'])
             self.assertEqual(manifest['verification_verdict'], 'PASS')
             self.assertEqual(manifest['official_acceptance'], 'NOT_CLAIMED')
             text = (root / '00_report.md').read_text(encoding='utf-8')
             self.assertIn('V8', text)
-            self.assertIn('工程四例验证', text)
+            self.assertIn('工程套件验证', text)
 
     def test_report_rejects_missing_ledger_and_unbound_proof(self):
         import report as R
@@ -932,7 +934,7 @@ class BuiltinModeTests(unittest.TestCase):
                 self.assertEqual(R.build_builtin_report(root), 'NEEDS_REVIEW')
                 manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
                 self.assertNotEqual(manifest['verification_verdict'], 'PASS')
-                gate = ('八次正式综合无补跑' if fault == 'missing_ledger'
+                gate = ('正式综合完整且无补跑' if fault == 'missing_ledger'
                         else '原始RTL功能证明与同次postABC哈希绑定')
                 self.assertFalse(manifest['gates'][gate])
 
@@ -1243,8 +1245,8 @@ class PrepareBuiltinCacheTests(unittest.TestCase):
 class WindowsConfigTests(unittest.TestCase):
 
     def _package_fixture(self, root):
-        names = ('validate.py', 'report.py', 'report_v8.py', 'validate_windows_v8.cmd',
-                 'config.windows.v8.json', 'POLICY.md', 'README.md', 'SKILL.md',
+        names = ('validate.py', 'report.py', 'report_v9.py', 'validate_windows_v9.cmd',
+                 'config.windows.v9.json', 'POLICY.md', 'README.md', 'SKILL.md',
                  'test_measure_v8.py', 'test_local_lut_integration.py', 'test_memory_exit.py',
                  'test_validation.py', 'test_windows_hardening.py')
         package = Path(__file__).parent
@@ -1252,7 +1254,7 @@ class WindowsConfigTests(unittest.TestCase):
         for name in names:
             files[name] = (package / name).read_bytes()
         files['runner/probe.py'] = b'pass\n'
-        files['suite-official4/probe.json'] = b'{}\n'
+        files['suite-official/probe.json'] = b'{}\n'
         manifest = {}
         for name, contents in files.items():
             path = root / name
@@ -1436,7 +1438,7 @@ class InPlaceEqyEvidenceTests(unittest.TestCase):
             root = Path(t)
             runner = Path(__file__).parent / 'runner'
             tree = root / '02_assets/tree'
-            for case in ('test1', 'test2', 'test3', 'test4'):
+            for case in (c['id'] for c in fixture_cases()):
                 rtl = tree / f'pmux_case/competition_case/{case}/{case}.v'
                 rtl.parent.mkdir(parents=True)
                 rtl.write_text(f'module {case}; endmodule\n')
@@ -1459,7 +1461,7 @@ class InPlaceEqyEvidenceTests(unittest.TestCase):
             context = SimpleNamespace(ROUND_DIR=root, REPO=root, TREE=tree, SCRIPT_DIR=runner,
                 ASCII_BRIDGE=bridge, stage_to_ascii_bridge=legacy_stage,
                 TOOL_YOSYS='fixture-yosys', EQY_ABC='fixture-abc', TOOL_EQY='fixture-eqy',
-                CONTEXT={'builtin': {'integration_id': 'pmux-opt-inline-p3-v1'}},
+                CONTEXT={'official_cases': fixture_cases(), 'builtin': {'integration_id': 'pmux-opt-inline-p3-v1'}},
                 sha256_file=F.sha256_file, rel=lambda p: str(p), refuse_overwrite=refuse)
             spec = importlib.util.spec_from_file_location('_chains_inplace_fixture', runner / 'run_eqy_chains.py')
             module = importlib.util.module_from_spec(spec)
@@ -1493,7 +1495,7 @@ class InPlaceEqyEvidenceTests(unittest.TestCase):
                  contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(module.main(), 0)
             out = root / '10_selfcheck/chains/run01'
-            self.assertEqual(len(observed), 8)
+            self.assertEqual(len(observed), 18)
             for config, work in observed:
                 self.assertEqual(work, config.parent / 'work')
                 self.assertEqual((work / 'partial.log').read_text(), 'partition evidence')
@@ -1502,7 +1504,7 @@ class InPlaceEqyEvidenceTests(unittest.TestCase):
                 self.assertEqual(workdir, cdir / 'work')
                 self.assertEqual(merged_dir, cdir / 'merged')
                 self.assertTrue((merged_dir / 'merged.log').is_file())
-            self.assertEqual(len(list((out / 'inputs').glob('*_mapped.il'))), 8)
+            self.assertEqual(len(list((out / 'inputs').glob('*_mapped.il'))), 18)
             self.assertTrue((out / 'inputs/form_cells_cycloneiv.v').is_file())
             rows = json.loads((out / 'chains_summary.json').read_text())
             for row in rows:
@@ -1518,6 +1520,8 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
 
     def _cfg(self, base: Path):
         return dict(_v8_context(), **{'repo': str(base), 'performance_pairs': 1,
+                'performance_scheme': __import__('measure_v9').SCHEME, 'same_run_policy': __import__('measure_v9').POLICY,
+                'results_root': str(base / 'external_results'),
                 'flow_version': 'official4-p4', 'suite_version': 'official4-v1',
                 'target_commit': 'a' * 40, 'source_sha256': 'e' * 64,
                 'project_head': 'b' * 40, 'suite_verified': True,
@@ -1587,7 +1591,7 @@ class BuiltinPrepareIntegrationTests(unittest.TestCase):
             self.assertEqual(names, ['formal_selfcheck', 'measurement_selfcheck', 'performance',
                                      'flowcheck', 'public', 'chains'])
             perf_cmd = dict(executed)['performance']
-            self.assertTrue(any(str(c).endswith('measure_v8.py') for c in perf_cmd))
+            self.assertTrue(any(str(c).endswith('measure_v9.py') for c in perf_cmd))
             self.assertNotIn('--pairs', perf_cmd)
 
     def test_build_failure_records_status_and_stops(self):

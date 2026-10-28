@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import integration_profiles as I
 import prepare_builtin as P
 import validate as V
+from test_measure_v8 import fixture_cases
 
 class LocalLutIntegrationTests(unittest.TestCase):
     @classmethod
@@ -24,7 +25,7 @@ class LocalLutIntegrationTests(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[2])
 
     def cfg(self):
-        return {'performance_scheme': 'pmux-perf-single-powershell-same-run-exitpeak-v8', 'builtin': {
+        return {'official_cases': fixture_cases(), 'performance_scheme': 'pmux-perf-single-powershell-same-run-exitpeak-v8', 'builtin': {
             'integration_id': P.INTEGRATION_ID, 'source_commit': 'base',
             'build_profile': {}}, 'tools': {'compiler': {'path': 'cc', 'sha256': 'cc'}}}
 
@@ -97,13 +98,13 @@ class LocalLutIntegrationTests(unittest.TestCase):
             self.assertFalse(I.check_calls(bad, I.LOCAL_ID, require_export=True)['ok'])
 
     def test_rc_zero_but_failed_or_missing_functional_evidence_blocks_performance(self):
-        rows = [dict(case='test'+str(i), chain=chain, state='PASS', rc=0,
+        rows = [dict(case=case['id'], chain=chain, state='PASS', rc=0,
                      verified=True, probes_noDF_all_sat=True)
-                for i in range(1, 5) for chain in I.CHAINS]
-        self.assertTrue(I.formal_chains_ok(rows))
+                for case in fixture_cases() for chain in I.CHAINS]
+        self.assertTrue(I.formal_chains_ok(rows, self.cfg()))
         rows[0]['state'] = 'FAIL'
-        self.assertFalse(I.formal_chains_ok(rows))
-        self.assertFalse(I.formal_chains_ok(rows[1:]))
+        self.assertFalse(I.formal_chains_ok(rows, self.cfg()))
+        self.assertFalse(I.formal_chains_ok(rows[1:], self.cfg()))
 
     def test_performance_gate_requires_matching_export_and_actual_eqy_input(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -115,7 +116,7 @@ class LocalLutIntegrationTests(unittest.TestCase):
             patch = root / '02_assets/tree' / I.PATCH_PATH
             patch.parent.mkdir(parents=True); patch.write_bytes(self.patch)
             fc, public, chains = [], [], []
-            for case in I.CASES:
+            for case in I.S.case_ids(cfg):
                 call = I.check_calls(self.log(), I.LOCAL_ID, require_export=True)
                 fc.append({'case': case, 'sides': {'optimized': {'integration_calls': call}}})
                 pub = {'case': case, 'optimized_integration_calls': call}

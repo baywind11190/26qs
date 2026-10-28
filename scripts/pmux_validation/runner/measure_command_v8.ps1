@@ -37,7 +37,8 @@ try {
     $writer = New-Object System.IO.StreamWriter($stream,$utf8,4096,$true)
     $writer.AutoFlush = $true
     $request = [ordered]@{token=$token; action='run'; request_id=[Guid]::NewGuid().ToString('N');
-        cmd=@($req.command); cwd=$req.cwd; log_path=$req.log_path; timeout_s=$req.timeout_s; env=$null}
+        cmd=@($req.command); cwd=$req.cwd; log_path=$req.log_path; timeout_s=$req.timeout_s; env=$null; performance_scheme=$req.performance_scheme;
+        measurement_revision=$req.measurement_revision; heap_policy=$req.heap_policy}
     $wire = $request | ConvertTo-Json -Compress -Depth 12
     $script:responseLine = $null
     $measurement = Microsoft.PowerShell.Utility\Measure-Command -Expression {

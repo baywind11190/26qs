@@ -623,12 +623,12 @@ def _verify_binary(binary, need_pmux, expected_version, env=None, integration_id
 
 
 def _smoke_input(build_dir, cfg=None):
-    if cfg and cfg.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8':
+    if cfg and cfg.get('performance_scheme') in ('pmux-perf-single-powershell-same-run-exitpeak-v8', 'pmux-perf-warm10-initial-review5-same-run-v9'):
         rtl = Path(build_dir) / 'v8_tool_smoke.v'
         rtl.write_text('module v8_tool_smoke(input [3:0] a,b,input s,output [3:0] y); assign y=s?a:b; endmodule\n', encoding='utf-8')
         return rtl, 'v8_tool_smoke'
     return (Path(__file__).resolve().parent.parent /
-            'suite-official4/tree/pmux_case/competition_case/test4/test4.v'), 'test4'
+            'suite-official/tree/pmux_case/competition_case/test4/test4.v'), 'test4'
 
 
 def _smoke(build_dir, opt_binary, logs, cfg=None):

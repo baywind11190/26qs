@@ -150,6 +150,18 @@ def classify_probe_text(text: str) -> dict:
     return res
 
 
+def classify_probe_result(text: str, rc: int) -> dict:
+    """A SAT/UNSAT marker is valid only after a clean, completed tool process."""
+    result = classify_probe_text(text)
+    errors = re.findall(r"ERROR: (.*)", text)
+    state = ('TIMEOUT' if rc == 124 else 'TOOL_OR_CONFIG_ERROR' if rc != 0 or errors
+             else 'INCOMPLETE' if result['verdict'] == 'OTHER' else 'VALID')
+    if state != 'VALID':
+        result['verdict'] = 'OTHER'
+    result.update(rc=rc, state=state, errors=errors)
+    return result
+
+
 def verify_expected_asserts(assert_suffixes, asserts):
     """要求覆盖全部预期断言（后缀匹配）；返回 (ok, missing)。"""
     missing = [s for s in assert_suffixes if not any(a.endswith(s) for a in asserts)]

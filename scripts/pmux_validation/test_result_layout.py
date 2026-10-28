@@ -49,7 +49,7 @@ class ResultLayoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             cfg = {'repo': str(repo), 'target_commit': 'a' * 40,
-                   'suite_manifest': 'suite-official4/manifest.json',
+                   'suite_manifest': 'suite-official/manifest.json',
                    'ascii_bridge': str(repo / '_eval_ascii_obsolete')}
             with mock.patch.object(validate, 'git', return_value=''):
                 root = validate.make_round(cfg, b'// frozen source\n',

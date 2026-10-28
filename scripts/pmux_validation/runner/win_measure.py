@@ -10,6 +10,7 @@ import subprocess
 import time
 from ctypes import wintypes
 from pathlib import Path
+import heap_policy as H
 
 
 CREATE_SUSPENDED = 0x00000004
@@ -250,7 +251,7 @@ def _process_peak_working_set(psapi, process):
     return int(counters.PeakWorkingSetSize)
 
 
-def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True):
+def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True, measurement_revision=None, heap_policy=None):
     """Run a command suspended, assign it to a Job Object, then resume it.
 
     CPU is the Job Object's accumulated user plus kernel time (including exited
@@ -272,6 +273,11 @@ def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True):
     if not exe or not Path(exe).is_file():
         raise FileNotFoundError("measurement executable is missing: {}".format(cmd[0]))
 
+    enforce_heap = measurement_revision is not None or heap_policy is not None
+    if enforce_heap and (measurement_revision != H.REVISION or heap_policy != H.POLICY):
+        raise ValueError("unsupported heap policy/revision")
+    if enforce_heap: env = H.target_environment(env)
+    heap_observation = None
     kernel, psapi = _api()
     security = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, True)
     log_handle = null_handle = job = None
@@ -381,6 +387,10 @@ def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True):
                     if (ex.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT
                             and ex.dwFirstChance and not initial_breakpoint_seen):
                         initial_breakpoint_seen = True
+                        if enforce_heap:
+                            heap_observation = H.observe(info.hProcess, main_pid)
+                            problems = H.observation_errors(heap_observation, main_pid)
+                            if problems: raise OSError("startup debug heap verification failed: " + "; ".join(problems))
                     else:
                         continue_status = DBG_EXCEPTION_NOT_HANDLED
                 elif event.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT:
@@ -462,6 +472,8 @@ def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True):
                 kernel.CloseHandle(handle)
 
     wall_s = time.perf_counter() - started
+    if enforce_heap and H.observation_errors(heap_observation, main_pid):
+        error = error or 'startup heap observation missing/invalid'
     metrics_valid = cpu_user_s is not None and cpu_system_s is not None \
         and error is None and (not capture_memory or capture_complete)
     if error and log_path.exists():
@@ -504,11 +516,15 @@ def _run(cmd, *, cwd, log_path, timeout_s=1800, env=None, capture_memory=True):
         "main_pid": main_pid,
         "metrics_valid": metrics_valid,
         "measurement_error": error,
+        "measurement_revision": measurement_revision,
+        "heap_policy": heap_policy,
+        "debug_heap_env": env.get("_NO_DEBUG_HEAP") if enforce_heap else None,
+        "heap_observation": heap_observation,
     }
 
 
-def run_measured(cmd, *, cwd, log_path, timeout_s=1800, env=None):
-    return _run(cmd, cwd=cwd, log_path=log_path, timeout_s=timeout_s, env=env, capture_memory=True)
+def run_measured(cmd, *, cwd, log_path, timeout_s=1800, env=None, measurement_revision=None, heap_policy=None):
+    return _run(cmd, cwd=cwd, log_path=log_path, timeout_s=timeout_s, env=env, capture_memory=True, measurement_revision=measurement_revision, heap_policy=heap_policy)
 
 
 def run_cpu_measured(cmd, *, cwd, log_path, timeout_s=1800, env=None):

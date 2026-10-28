@@ -1,4 +1,4 @@
-"""V8: exactly eight joint samples and immutable, shared synthesis evidence."""
+"""V8: exactly 2N joint samples and immutable, shared synthesis evidence."""
 import copy
 import contextlib
 import importlib.util
@@ -16,6 +16,10 @@ try:
     import measure_v8 as v8
 except ImportError:
     v8 = None
+
+
+def fixture_cases():
+    return json.loads((Path(__file__).parent / 'suite-official/manifest.json').read_text(encoding='utf-8'))['cases']
 
 
 def raw(side='baseline', ticks=10_000_000, peak=100_000_000):
@@ -36,12 +40,12 @@ class V8Tests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(v8, 'V8 joint measurement is not implemented')
 
-    def test_eight_unique_case_side_pairs_in_fixed_order(self):
-        rows = list(v8.schedule())
+    def test_2n_unique_case_side_pairs_in_manifest_order(self):
+        rows = list(v8.schedule({'official_cases': fixture_cases()}))
         self.assertEqual([(r['case'], r['side']) for r in rows],
-                         [(f'test{i}', s) for i in range(1, 5)
+                         [(c['id'], s) for c in fixture_cases()
                           for s in ('baseline', 'optimized')])
-        self.assertEqual(len({(r['case'], r['side']) for r in rows}), 8)
+        self.assertEqual(len({(r['case'], r['side']) for r in rows}), 18)
 
     def test_compare_is_independent_of_removed_v7_module(self):
         spec = importlib.util.spec_from_file_location('isolated_v8', Path(v8.__file__))
@@ -82,13 +86,15 @@ class V8Tests(unittest.TestCase):
         with patch.object(validate, 'validate_performance_policy', side_effect=capture):
             with self.assertRaises(StopBeforeToolChecks):
                 validate.preflight('not-a-real-commit')
-        self.assertEqual(seen[0]['performance_scheme'], v8.SCHEME)
-        self.assertEqual(seen[0]['same_run_policy'], v8.POLICY)
+        import measure_v9
+        self.assertEqual(seen[0]['performance_scheme'], measure_v9.SCHEME)
+        self.assertEqual(seen[0]['same_run_policy'], measure_v9.POLICY)
 
     def test_policy_rejects_retired_schemes_and_nonwindows_configuration(self):
         import validate
-        cfg = dict(platform='win32-msys2-mingw64', performance_scheme=v8.SCHEME,
-                   same_run_policy=v8.POLICY)
+        import measure_v9
+        cfg = dict(platform='win32-msys2-mingw64', performance_scheme=measure_v9.SCHEME,
+                   same_run_policy=measure_v9.POLICY)
         validate.validate_performance_policy(cfg)
         for scheme in (None, 'pmux-perf-15p-mainrss-v2', 'pmux-perf-5p-mainrss-v1',
                        'pmux-perf-15p-windows-separate-cpu-exitpeak-v3',
@@ -187,25 +193,25 @@ class V8Tests(unittest.TestCase):
             Path(kwargs['log_path']).write_text('complete output')
             return row
         cfg = dict(mode='builtin', performance_scheme=v8.SCHEME,
-                   same_run_policy=v8.POLICY, wall_time_tool={'path': sys.executable})
-        flows = {f'test{i}': f'read_verilog -sv {rtl.as_posix()}\n' for i in range(1, 5)}
+                   same_run_policy=v8.POLICY, official_cases=fixture_cases(), wall_time_tool={'path': sys.executable})
+        flows = {c['id']: f'read_verilog -sv {rtl.as_posix()}\n' for c in fixture_cases()}
         rc = v8.run(cfg, root, {'baseline': Path(sys.executable),
                               'optimized': Path(sys.executable)}, flows, execute=execute)
         return rc, calls
 
-    def test_driver_runs_only_eight_and_stores_shared_evidence(self):
+    def test_driver_runs_only_2n_and_stores_shared_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             rc, calls = self.invoke_fake(root)
             self.assertEqual(rc, 0)
-            self.assertEqual(len(calls), 8)
-            samples = list(root.glob('05_*/round01/test*/*/measure_result.json'))
-            self.assertEqual(len(samples), 8)
+            self.assertEqual(len(calls), 18)
+            samples = list(root.glob('05_*/round01/*/*/measure_result.json'))
+            self.assertEqual(len(samples), 18)
             ids = {json.loads(p.read_text(encoding='utf-8'))['sample_id'] for p in samples}
-            self.assertEqual(len(ids), 8)
+            self.assertEqual(len(ids), 18)
             ledger = json.loads((root / '09_performance/round01/synthesis_ledger.json').read_text(encoding='utf-8'))
-            self.assertEqual(ledger['attempted_runs'], 8)
-            self.assertEqual(ledger['started_runs'], 8)
+            self.assertEqual(ledger['attempted_runs'], 18)
+            self.assertEqual(ledger['started_runs'], 18)
             self.assertTrue(ledger['execution_complete'])
             self.assertTrue(all(str(p.relative_to(root)).isascii() for p in root.rglob('*')))
             self.assertFalse(any(p.name.startswith('_eval_') for p in root.rglob('*')))
@@ -233,7 +239,7 @@ class V8Tests(unittest.TestCase):
 
     def test_v8_stage_order_and_policy_location_are_explicit(self):
         import validate
-        cfg = {'performance_scheme': v8.SCHEME}
+        cfg = {'performance_scheme': validate.SAME_RUN_SCHEME}
         stages = validate.builtin_stage_plan(cfg)
         names = [s[0] for s in stages]
         self.assertEqual(names, ['formal_selfcheck', 'measurement_selfcheck',
@@ -250,12 +256,12 @@ class V8Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.invoke_fake(root)
             (root / 'validation_context.json').write_text(json.dumps({
-                'performance_scheme': v8.SCHEME, 'same_run_policy': v8.POLICY,
+                'official_cases': fixture_cases(), 'performance_scheme': v8.SCHEME, 'same_run_policy': v8.POLICY,
                 'suite_verified': True, 'builtin': {'integration_id': 'pmux-opt-inline-p3-v1'}}), encoding='utf-8')
             result = report_v8.build_report(root)
             self.assertEqual(result, 'NEEDS_REVIEW')
             manifest = json.loads((root / '11_summary/manifest.json').read_text(encoding='utf-8'))
-            self.assertEqual(manifest['formal_synthesis_attempted_runs'], 8)
+            self.assertEqual(manifest['formal_synthesis_attempted_runs'], 18)
             self.assertEqual(manifest['category_status']['formal'], 'NOT_RUN')
             self.assertNotEqual(manifest['verification_verdict'], 'PASS')
             self.assertTrue(all(p['valid'] for p in manifest['performance']))
@@ -265,8 +271,8 @@ class V8Tests(unittest.TestCase):
         import validate
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
-            validate.snapshot_entrypoints(folder, {'performance_scheme': v8.SCHEME})
-            for name in ('validate.py', 'report.py', 'report_v8.py', 'validate_windows_v8.cmd'):
+            validate.snapshot_entrypoints(folder, {'performance_scheme': validate.SAME_RUN_SCHEME})
+            for name in ('validate.py', 'report.py', 'report_v9.py', 'validate_windows_v9.cmd'):
                 self.assertEqual((folder / (name + '.snapshot')).read_bytes(),
                                  (Path(validate.__file__).parent / name).read_bytes())
         with tempfile.TemporaryDirectory() as temp:

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""内置四例调用与流程证据检查（builtin flowcheck）。
+"""内置套件调用与流程证据检查（builtin flowcheck）。
 
-对四例输入、两侧内置二进制运行**逐字节相同**的外部综合脚本
+对套件输入、两侧内置二进制运行**逐字节相同**的外部综合脚本
 （read_verilog + synth_intel + check -assert + write_rtlil + stat），并检查：
 
 - 两侧综合 rc=0、check -assert 通过（CHECK 段 "Found and reported 0 problems."）；
@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import builtin_common as B
 import integration_profiles as I
+import official_suite as S
 
 
 def norm_name(desc: str) -> str:
@@ -37,7 +38,7 @@ check_pmux_position = B.check_pmux_position
 
 def run_side(side, binary, script, sdir, timeout=900, analyze_only=False):
     if analyze_only:
-        from measure_v8 import sample_errors
+        from measure_v9 import sample_errors
         sample = json.loads((sdir / 'measure_result.json').read_text(encoding='utf-8'))
         errors = sample_errors(sample, require_outputs=True)
         if errors: raise RuntimeError('; '.join(errors))
@@ -90,20 +91,20 @@ def main():
                      for side, p in binaries.items()},
         "cases": [],
     }
-    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-single-powershell-same-run-exitpeak-v8'
+    joint = C.CONTEXT.get('performance_scheme') == 'pmux-perf-warm10-initial-review5-same-run-v9'
     summary['analysis_only'] = joint
     summary['independent_full_split_check'] = 'NOT_RUN' if joint else 'NOT_APPLICABLE'
     all_ok = True
-    for i in range(1, 5):
-        top = "test{}".format(i)
-        rtl_source = C.TREE / "pmux_case" / "competition_case" / top / "{}.v".format(top)
+    for spec in S.context_cases(C.CONTEXT):
+        top, case_id = spec['top'], spec['id']
+        rtl_source = S.case_path(C.TREE, spec)
         rtl = L.validate_output_root(rtl_source)
-        cdir = out / top
+        cdir = out / case_id
         script = (B.gen_builtin_formal_ys(rtl, top) if joint else C.gen_builtin_synth_ys(rtl, top))
         script_sha = __import__("hashlib").sha256(script.encode()).hexdigest()
-        case = {"case": top, "script_sha256": script_sha, "sides": {}}
+        case = {"case": case_id, "script_sha256": script_sha, "sides": {}}
         for side, binary in binaries.items():
-            sdir = (C.ROUND_DIR / (L.PUBLIC + '/round01') / top / side) if joint else cdir / side
+            sdir = (C.ROUND_DIR / (L.PUBLIC + '/round01') / case_id / side) if joint else cdir / side
             if not joint: sdir.mkdir(parents=True)
             info = run_side(side, binary, script, sdir, analyze_only=joint)
             case["sides"][side] = info

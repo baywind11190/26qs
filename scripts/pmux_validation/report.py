@@ -1,4 +1,4 @@
-"""Windows V8 官方四例报告入口与共用判定；缺失证据永不算通过。
+"""Windows V8 官方套件报告入口与共用判定；缺失证据永不算通过。
 
 正式墙钟、退出事件内存及同次产物判定由 report_v8.py 负责。
 共用资源、功能和交付判定，以及工具准备失败/阻断报告保留在此。
@@ -13,14 +13,14 @@ import result_layout as L
 from measure_v8 import SCHEME, evaluate_summary
 
 OVERHEAD_EPS_PCT = 1e-9
-CASES = ('test1', 'test2', 'test3', 'test4')
+import official_suite as S
 BUILTIN_EXPECTED_STAGES = {'build', 'flowcheck', 'formal_selfcheck',
                            'measurement_selfcheck', 'public', 'chains', 'performance'}
 BUILTIN_MAIN_CHAINS = ('c4a_rtl_opt_mapped', 'c4b_rtl_base_mapped')
-BUILTIN_COMPLETE_STATUS = 'BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE'
+BUILTIN_COMPLETE_STATUS = 'BUILTIN_SUITE_LOCAL_ACCEPTANCE_COMPLETE'
 BUILTIN_FOLLOW_UP = (
     '1) 按日志修复失败原因后，使用 validate_windows_v8.cmd plan <完整提交> 只读预检，'
-    '再运行已授权的内置四例验收。',
+    '再运行已授权的内置套件验收。',
     '2) baseline 按登记核对复用；optimized 按算法源码、基础提交、集成模板、构建参数、'
     '编译器和 ABC 身份复用缓存，未命中时在隔离源码树构建；失败保留 FAILED 诊断。',
     '3) 内置外部脚本、插入位点与判定方法见 POLICY.md。',
@@ -116,13 +116,13 @@ def row_functional_ok(r):
     return r.get("probes_noDF_all_sat") is True
 
 
-def per_side_function_lines(chains):
+def per_side_function_lines(chains, context):
     """每例两侧功能状态（两侧分别独立运行；不使用“两链同结果”推断）。"""
     def find(case, chain):
         return next((r for r in chains if r.get("case") == case and r.get("chain") == chain), None)
 
     lines = []
-    for case in CASES:
+    for case in S.case_ids(context):
         chunks = []
         for label, chain in (("c4a", "c4a_rtl_opt_mapped"), ("c4b", "c4b_rtl_base_mapped")):
             r = find(case, chain)
@@ -150,21 +150,21 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
 
 
 def build_builtin_block_report(root, status, missing, evidence, cfg):
-    """内置四例验收的未就绪阻断记录（不执行任何验收进程）。"""
+    """内置套件验收的未就绪阻断记录（不执行任何验收进程）。"""
     root = Path(root)
     out = root / L.SUMMARY
     out.mkdir(parents=True, exist_ok=True)
     context = {k: cfg.get(k) for k in ("flow_version", "suite_version", "target_commit",
                                        "source_sha256", "project_head", "suite_verified")}
     manifest = {
-        "run_status": status, "mode": "builtin", "marking": "官方四例内置验收（未就绪阻断）",
+        "run_status": status, "mode": "builtin", "marking": "官方套件内置验收（未就绪阻断）",
         "official_acceptance": "NOT_CLAIMED", "builtin_execution": "NOT_READY",
         "missing_items": missing, "follow_up": list(BUILTIN_FOLLOW_UP),
         "evidence": evidence, "context": context, "evidence_root": str(root),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     lines = [
-        "# 官方四例内置验收 —— 未就绪阻断", "",
+        "# 官方套件内置验收 —— 未就绪阻断", "",
         f"状态：**{status}**。", "",
         "本次未运行任何综合/EQY/性能实验，未加载插件；不会自动退回插件方案，"
         "也不以空实现冒充内置验收。", "",
@@ -180,7 +180,7 @@ def build_builtin_block_report(root, status, missing, evidence, cfg):
                   "内置证据预检未通过；本次未启动验收进程，不退回插件。", ""]
     lines += ["## 后续动作", ""] + [f"- {item}" for item in BUILTIN_FOLLOW_UP] + [""]
     lines += [
-        "## 内置四例验收要求（契约）", "",
+        "## 内置套件验收要求（契约）", "",
         "- 原版与优化版均为 Yosys 0.69 的可追溯构建；记录基础源码提交、构建信息、二进制指纹、"
         "ABC、实际数据文件和插入调用证据。",
         "- 优化版在 `synth_intel.cc` 中调用 `pmux_opt`（C24/C37）；外部综合脚本两侧内容相同、"
@@ -203,14 +203,14 @@ def build_builtin_build_failed_report(root, error, cfg, build_dir=None, logs=Non
                                        "source_sha256", "project_head", "suite_verified")}
     manifest = {
         "run_status": "BUILTIN_BUILD_FAILED", "mode": "builtin",
-        "marking": "官方四例内置验收（工具准备失败）",
+        "marking": "官方套件内置验收（工具准备失败）",
         "official_acceptance": "NOT_CLAIMED", "builtin_execution": "BUILD_FAILED",
         "error": error, "build_dir": build_dir, "logs": logs or {},
         "context": context, "evidence_root": str(root),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     lines = [
-        "# 官方四例内置验收 —— 工具准备失败", "",
+        "# 官方套件内置验收 —— 工具准备失败", "",
         "状态：**BUILTIN_BUILD_FAILED**。",
         "本次在自动准备内置工具（复用查找或构建）时失败；未启动任何验收阶段、"
         "未加载插件、不退回插件方案、不自动重试。", "",
@@ -241,6 +241,9 @@ def build_builtin_report(root, output_root=None, chain_attempt='run01', stages_o
     """保留原接口，将正式字段和结论逻辑交给 V8 报告模块。"""
     root = Path(root)
     ctx = _read_json(root / 'validation_context.json', {})
+    if str(ctx.get('performance_scheme','')).endswith('-v9'):
+        from report_v9 import build_report
+        return build_report(root, output_root=output_root, chain_attempt=chain_attempt, stages_override=stages_override)
     if ctx.get('performance_scheme') != SCHEME:
         raise ValueError('Only the Windows V8 same-run report scheme is supported')
     from report_v8 import build_report

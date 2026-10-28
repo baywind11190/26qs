@@ -1,8 +1,34 @@
+# 当前活动版本：V9
+
+入口为[D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd](D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd)，唯一规则见工程POLICY.md。V9结果根为D:/0026_qs_result，r/e/c/a分别保存轮次、短EQY现场、验证缓存和开发证据。V8入口已退役，以下保留V8历史原文和原判定，不作为当前操作指令。
+
+V9改造与一次九例正式轮次已完成：**FAIL / NEEDS_REVIEW**。18条功能主链PASS，资源/内存PASS，平均逻辑缩减13.158%；pipeline首次时间+43.593%，按用户1—10秒扩展复核后+48.619%，仍超过5%和15%。共90预热+18首次+10复核=118个有效样本，没有追加轮次。
+
+[本轮报告](D:/0026_qs_result/r/2026-10-27_1646_v9_17f9361_r01/00_report.md) · [第21号实施与实测记录](D:/codex/02_嵌赛/验证流程版本更新说明/21_V9预热与条件复核升级及九例实测记录_20261027.md) · [V9结果导航](D:/0026_qs_result/README.md)。交付NOT_RUN，官方认可NOT_CLAIMED。
+
+---
+
 # PMUX 结果目录导航
 
 当前唯一执行入口为 [Windows原生V8](D:/codex/0000_26qs/scripts/pmux_validation/README.md)，规则正文为 [POLICY.md](D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md)。本页只索引既有证据，不启动实验，也不把不同轮次合并为一个结果。
 
-## 四个V8入口轮次
+<!-- nine-case-live-status -->
+## 当前九例正式验证：2026-10-27
+
+正式V8已默认接入受管理短EQY工作根，命令入口保持plan/run。最新独立轮次为 **FAIL / NEEDS_REVIEW**：18次综合全部有效、18条功能主链PASS，资源和内存PASS；九例平均逻辑缩减13.158%。balanced、pipeline、crossbar墙钟分别+8.507%、+16.321%、+7.107%超过5%目标，其中pipeline超过15%。不补跑，不改阈值。
+
+算法固定17f9361099dcda757c16bb81caa18ddb52d74c4e / p3-local-lut。[本轮主报告](D:/codex/0000_26qs/results/official_eval/2026-10-27_1045_v8_eqy_short_17f9361_r01/00_report.md)、[第20号接入与实测记录](D:/codex/02_嵌赛/验证流程版本更新说明/20_V8短EQY工作目录正式接入与九例实测记录_20261027.md)。交付NOT_RUN、官方认可NOT_CLAIMED；原2026-10-26 20:16九例FAIL及23:39六链专项PASS均保留原判定，不混算。
+<!-- /nine-case-live-status -->
+
+## 六链 EQY 路径专项复核
+
+2026-10-26 23:39独立功能复核 **PASS**：balanced、pipeline、feedback的原版和优化版共六条主链、104个分区全部闭合，104个noDF前提探针有效SAT，无工具错误。路径因素经同工具、同字节读取对照确认，最长拼接路径由260～275字符降至175～189字符。
+
+见 [专项报告](D:/codex/0000_26qs/results/official_eval/2026-10-26_2339_eqy_pathfix_17f9361_r01/00_report.md)。短工作现场为D:/eqy_work/2026-10-26_2016_v8_nine_cases_17f9361_r01/a02，已核验归档。此前 [23:35启动阻断记录](D:/codex/0000_26qs/results/official_eval/2026-10-26_2335_eqy_pathfix_17f9361_r01/00_report.md) 保留：身份字符串的斜杠差异导致预检停止，六链均NOT_RUN，未执行EQY setup或证明。
+
+本次新增综合和性能测量均为0；原20:16九例报告及其FAIL判定不变。该六链专项为此前独立结果；正式V8默认接入与新九例实测见第20号记录；专项PASS不代表九例整体验收或官方认可。
+
+## 历史四例V8入口轮次
 
 算法完整提交均为 `17f9361099dcda757c16bb81caa18ddb52d74c4e`，集成为 `p3-local-lut`。下表保持各轮原判定；本页补全导航不表示本次重新执行。
 
@@ -36,8 +62,8 @@ V8轮次内的 `01_meta` 记录构建/身份，`05_public/round01` 保存同次�
 
 V7及以前不被V8使用的运行产物、工具和活动说明按2026-10-24 [清理方案](D:/codex/02_嵌赛/清理的方案.md)清单处理；其说明、原路径、日期和原判定集中于 [旧版本说明](D:/codex/02_嵌赛/旧版本说明.md)。旧目录名的official不构成官方认可。日后新轮次仍在 `results/official_eval` 独立建目录，不覆盖或自行清理既有证据。
 
-新增用例 `WAITING_OFFICIAL_CASES`，固定四例接入及单例logic_units独立门禁尚待适配；7.1允许范围和计量接受性等待确认问题统一看 [第18号记录](D:/codex/02_嵌赛/验证流程版本更新说明/18_1022答疑与V8符合性核对及待确认问题_20261023.md)。本地四例PASS不等于官方效率全集或最终验收通过。
+新增五例现已取得并纳入九例清单，单例logic_units不增加门禁随本次接入实现；九例新结果不覆盖或拼接历史四例结果。7.1范围及计量接受性等待确认问题继续参考第18号原文，本轮实测状态参考第19号记录。
 
 ## 英文路径迁移
 
-本次迁移不重算任何历史结论。原导航已保存到 [navigation_before.md](_migrations/20261025_ascii_layout/navigation_before.md)，完整路径与哈希见 [迁移台账](_migrations/20261025_ascii_layout/manifest.json)，操作说明见 [迁移记录](_migrations/20261025_ascii_layout/README.md)。新轮次在自身英文目录内执行，不再创建随机桥接目录；历史工作证据已归入所属轮次或 _shared_evidence。旧自检缓存保存在 official_eval/_history/selfcheck_cache_v8.json，新活动缓存 official_eval/_cache/selfcheck_v8.json 为空，须按新指纹真实自检。
+本次迁移不重算任何历史结论。原导航已保存到 [navigation_before.md](_migrations/20261025_ascii_layout/navigation_before.md)，完整路径与哈希见 [迁移台账](_migrations/20261025_ascii_layout/manifest.json)，操作说明见 [迁移记录](_migrations/20261025_ascii_layout/README.md)。新轮次综合在自身英文目录内执行；EQY使用受管理短根并在轮次保存核验归档，不创建随机桥接目录；历史工作证据已归入所属轮次或 _shared_evidence。旧自检缓存保存在 official_eval/_history/selfcheck_cache_v8.json，活动缓存 official_eval/_cache/selfcheck_v8.json 中的旧四例条目不适用于本次九例新指纹，须以本轮真实自检记录为准。

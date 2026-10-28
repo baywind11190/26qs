@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Windows 原生 V8 官方四例验证入口。
+"""Windows 原生 V9 官方套件验证入口。
 
-八次正式综合同次采集墙钟与主进程峰值内存，并复用功能与资源产物；
+清单全部正式综合同次采集墙钟与主进程峰值内存，并复用功能与资源产物；
 EQY 随后独立证明。p3 与 p3-local-lut 为固定内置集成方式。
-使用 validate_windows_v8.cmd plan <commit> 只读检查，run <commit> 执行。
+使用 validate_windows_v9.cmd plan <commit> 只读检查，run <commit> 执行。
 范围与判定规则见同目录 POLICY.md；准备或身份检查失败时保留阻断记录。
 """
 import argparse
@@ -18,21 +18,21 @@ import subprocess
 import sys
 
 PACKAGE = Path(__file__).resolve().parent
-CONFIG_PATH = PACKAGE / "config.windows.v8.json"
+CONFIG_PATH = PACKAGE / "config.windows.v9.json"
 sys.path.insert(0, str(PACKAGE / "runner"))
 import result_layout as L
 ROUND_LABEL_DEFAULT = L.ROUND_LABEL_DEFAULT
 ROUND_PARENT_REL = L.ROUND_PARENT_REL
 SELFCHECK_CACHE_REL = L.SELFCHECK_CACHE_REL
 from process_utils import process_group_kwargs, terminate_process_tree
-from measure_v8 import SCHEME as SAME_RUN_SCHEME, METHOD as SAME_RUN_METHOD
+from measure_v9 import SCHEME as SAME_RUN_SCHEME, METHOD as SAME_RUN_METHOD
 import integration_profiles as I
 
 # 唯一正式综合阶段先产生同次计量、功能网表和资源证据；后续阶段只分析产物。
 BUILTIN_PLAN = (
     ('formal_selfcheck', 'run_selfcheck.py', ()),
     ('measurement_selfcheck', 'measure.py', ('--selftest',)),
-    ('performance', 'measure_v8.py', ()),
+    ('performance', 'measure_v9.py', ()),
     ('flowcheck', 'run_builtin_flowcheck.py', ()),
     ('public', 'run_builtin_public.py', ()),
     ('chains', 'run_eqy_chains.py', ('--attempt', 'run01', '--chains', 'main',
@@ -48,7 +48,7 @@ BUILTIN_MISSING_HINT = (
 
 def builtin_stage_plan(cfg):
     if cfg.get("performance_scheme") != SAME_RUN_SCHEME:
-        raise ValueError("Only the Windows V8 stage plan is supported")
+        raise ValueError("Only the Windows V9 stage plan is supported")
     return list(BUILTIN_PLAN)
 
 
@@ -123,15 +123,15 @@ def verify_package_manifest(package):
             problems.append("内容与清单不符: " + rel)
     # 必需入口独立于清单存在；同时覆盖过渡阶段尚未删除的根脚本。
     active = [package / name for name in (
-        'validate.py', 'report.py', 'report_v8.py', 'config.windows.v8.json',
-        'validate_windows_v8.cmd', 'POLICY.md', 'README.md', 'SKILL.md',
+        'validate.py', 'report.py', 'report_v9.py', 'config.windows.v9.json',
+        'validate_windows_v9.cmd', 'POLICY.md', 'README.md', 'SKILL.md',
         'test_validation.py', 'test_windows_hardening.py', 'test_local_lut_integration.py',
         'test_measure_v8.py', 'test_memory_exit.py',
     )]
     active += [p for p in package.iterdir()
                if p.is_file() and p.suffix.lower() in ('.py', '.json', '.cmd', '.md')
                and p.name != 'PACKAGE_SHA256.json' and p not in active]
-    for sub in ("runner", "suite-official4"):
+    for sub in ("runner", "suite-official"):
         active += [p for p in (package / sub).rglob("*")
                    if p.is_file() and "__pycache__" not in p.parts]
     for p in active:
@@ -148,10 +148,10 @@ def git(repo, *args):
 
 
 def selected_tool_data(cfg):
-    """四例流程实际依赖的数据文件子集（intel/cycloneiv 与 share 直下）。
+    """套件流程实际依赖的数据文件子集（intel/cycloneiv 与 share 直下）。
 
     完整 tool_data 仍保留在 config 中供审计；其余厂商技术库不参与 cycloneiv
-    四例流程，不再逐轮核对（预检仅覆盖四例及实际使用依赖）。
+    套件流程，不再逐轮核对（预检仅覆盖套件及实际使用依赖）。
     """
     rules = cfg["tool_data_fourcase_filter"]
     direct = set(rules["direct_share_files"])
@@ -184,25 +184,35 @@ def yosys_share_root(binary):
 
 
 def validate_performance_policy(cfg):
-    """仅接受固定 Windows V8 同次计量配置，禁止猜测或回退旧方案。"""
-    from measure_v8 import POLICY
+    """仅接受固定 Windows V9 同次计量配置，禁止猜测或回退旧方案。"""
+    from measure_v9 import POLICY
     if os.name != 'nt' or cfg.get('platform') != 'win32-msys2-mingw64':
         raise ValueError('V8 requires the native Windows configuration')
     if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
-        raise ValueError('Only the Windows V8 same-run performance scheme is supported')
+        raise ValueError('Only the Windows V9 same-run performance scheme is supported')
     if cfg.get('same_run_policy') != POLICY:
-        raise ValueError('v8 fixed same-run policy mismatch')
+        raise ValueError('v9 fixed measurement policy mismatch')
 
 
 def preflight(commit, config_path=None, integration_profile='p3'):
     config_path = Path(config_path).resolve() if config_path else CONFIG_PATH
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    L.validate_output_root(Path(cfg['repo']) / ROUND_PARENT_REL)
-    if cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL) != SELFCHECK_CACHE_REL:
-        raise ValueError('V8 ASCII layout requires the current selfcheck cache path')
+    L.result_parent(cfg)
+    import eqy_workspace as EW
+    if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
+        raise ValueError('V8 is retired; use the V9 configuration')
+    EW.safe_root(cfg['results_root'])
+    L.selfcheck_cache(cfg)
+    if EW.path_identity(cfg['eqy_work_root']) != EW.path_identity(L.contained_path(cfg['results_root'], 'e')):
+        raise ValueError('V9 EQY root must be results_root/e')
+    if cfg.get('eqy_workspace_naming') != 'round-sha256-16-v1':
+        raise ValueError('V9 short workspace naming is required')
     cfg['result_layout_version'] = L.LAYOUT_VERSION
     validate_performance_policy(cfg)
     cfg['policy_source'] = policy_identity()
+    qa = cfg.get('official_qa_source') or {}
+    if not qa.get('path') or digest(qa['path']) != qa.get('sha256'):
+        raise ValueError('Official Q&A source missing or changed')
     if os.name == 'nt':
         configure_windows_runtime(cfg)
         runtime = {}
@@ -211,7 +221,7 @@ def preflight(commit, config_path=None, integration_profile='p3'):
             if not path.is_file() or digest(path) != spec['sha256']:
                 raise ValueError('Fixed runtime tool missing or identity mismatch: ' + str(path))
             if name == 'python' and Path(sys.executable).resolve() != path.resolve():
-                raise ValueError('Use validate_windows_v8.cmd with the fixed Python: ' + str(path))
+                raise ValueError('Use validate_windows_v9.cmd with the fixed Python: ' + str(path))
             resolved = shutil.which('python3' if name == 'python' else name)
             if not resolved or Path(resolved).resolve() != path.resolve():
                 raise ValueError('Runtime lookup mismatch for ' + name + ': ' + str(resolved))
@@ -237,8 +247,8 @@ def preflight(commit, config_path=None, integration_profile='p3'):
             cfg['wall_time_tool_identity'] = dict(spec, version=ps_version,
                                                   cmdlet='Microsoft.PowerShell.Utility\\Measure-Command')
     repo = Path(cfg["repo"])
-    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
-        raise ValueError("Supply a Git commit hash (7-40 hex characters), not a branch or file SHA-256")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+        raise ValueError("Supply the complete 40-character algorithm Git commit")
     sha = git(repo, "rev-parse", "--verify", commit + "^{commit}")
     source = subprocess.check_output(["git", "-C", str(repo), "show", sha + ":src/pmux_opt.cc"])
     if not source:
@@ -252,7 +262,7 @@ def preflight(commit, config_path=None, integration_profile='p3'):
     for inc in includes:
         if not inc.startswith((b"kernel/", b"libs/", b"frontends/", b"backends/", b"passes/")):
             raise ValueError(f"New local source dependency needs build-profile review: {inc!r}")
-    # 关键工具 + 四例实际依赖的数据文件指纹。
+    # 关键工具 + 套件实际依赖的数据文件指纹。
     for item in [*cfg["tools"].values(), *selected_tool_data(cfg)]:
         if digest(item["path"]) != item["sha256"]:
             raise ValueError("Tool or data file changed; qualify a new flow version: " + item["path"])
@@ -271,13 +281,17 @@ def preflight(commit, config_path=None, integration_profile='p3'):
     for item in cfg["builtin"].get("toolchain_build_logs", []):
         if not Path(item["path"]).is_file() or digest(item["path"]) != item["sha256"]:
             raise ValueError("工具构建日志缺失或哈希与工具链身份清单不符：" + item["path"])
-    # 四例冻结输入指纹（新的 official4-v1 清单；不再检查 H2/规模等未使用资产）。
+    # Manifest cases are the sole authority; originals retain separate raw hashes.
+    import official_suite as S
     suite_manifest = PACKAGE / cfg["suite_manifest"]
-    suite = json.loads(suite_manifest.read_text(encoding="utf-8"))
-    for item in suite["files"]:
-        target = PACKAGE / "suite-official4" / item["file"]
-        if digest_package_file(target) != item["sha256"]:
-            raise ValueError("Frozen four-case input changed: " + item["file"])
+    official_cases = S.load_suite(suite_manifest, repo)
+    cfg['official_cases'] = official_cases
+    cfg['official_cases_sha256'] = S.cases_sha256(official_cases)
+    if cfg.get('eqy_workspace_version'):
+        import eqy_workspace as EW
+        if cfg['eqy_workspace_version'] != EW.VERSION or cfg.get('eqy_path_limit') != EW.LIMIT:
+            raise ValueError('Unsupported managed EQY workspace version or path budget')
+        EW.safe_root(cfg['eqy_work_root'])
     # 脚本包清单与活动包文件核对（不一致必须停止，不静默刷新）。
     verify_package_manifest(PACKAGE)
     cfg.update(target_commit=sha, source_sha256=hashlib.sha256(source).hexdigest(),
@@ -296,7 +310,7 @@ def performance_precondition(root, cfg):
 
 
 def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
-    """只读检查内置四例验收证据。返回 (ok, missing, evidence)。
+    """只读检查内置套件验收证据。返回 (ok, missing, evidence)。
 
     规则：目标文件缺失时不运行任何进程（直接记为缺项）；仅在文件存在且
     run_identity=True 时运行无害的身份命令（-V / help pmux_opt）。
@@ -488,7 +502,7 @@ def next_round_dir(parent, prefix):
 def entrypoint_names(cfg):
     names = ["validate.py", "report.py"]
     if cfg.get("performance_scheme") == SAME_RUN_SCHEME:
-        names += ["report_v8.py", "validate_windows_v8.cmd"]
+        names += ["report_v9.py", "validate_windows_v9.cmd"]
     return names
 
 
@@ -497,9 +511,26 @@ def snapshot_entrypoints(meta, cfg):
         shutil.copyfile(PACKAGE / name, Path(meta) / (name + ".snapshot"))
 
 
+def capture_environment(meta, cfg):
+    """Read-only snapshot outside measurement; never change security/background state."""
+    ps = (cfg.get('wall_time_tool') or {}).get('path')
+    if not ps or os.name != 'nt':
+        save(Path(meta) / 'security_environment.json', {'state': 'NOT_CHECKED'})
+        return
+    command = "$ErrorActionPreference='Stop'; $out=@{}; try {$out.defender=Get-MpComputerStatus | Select-Object AntivirusEnabled,RealTimeProtectionEnabled,AMServiceEnabled} catch {$out.defender_error=$_.Exception.Message}; try {$out.products=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object displayName,productState)} catch {$out.products_error=$_.Exception.Message}; $out.process_names=@(Get-Process | Group-Object ProcessName | Select-Object Name,Count); $out | ConvertTo-Json -Depth 6"
+    try:
+        result = subprocess.run([ps,'-NoProfile','-NonInteractive','-Command',command],
+                                capture_output=True,encoding='utf-8',errors='replace',timeout=30)
+        save(Path(meta) / 'security_environment.json',dict(rc=result.returncode,stdout=result.stdout,
+             stderr=result.stderr,security_changed=False,background_processes_changed=False,
+             note='官方建议关闭杀软；本轮仅记录实际状态，不自动关闭。未知或启用状态作为环境限制披露。'))
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        save(Path(meta) / 'security_environment.json',dict(state='UNVERIFIED',error=str(exc)))
+
+
 def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     L.validate_label(label)
-    parent = L.validate_output_root(Path(cfg["repo"]) / ROUND_PARENT_REL)
+    parent = L.result_parent(cfg)
     parent.mkdir(parents=True, exist_ok=True)
     prefix = datetime.now().strftime("%Y-%m-%d_%H%M") + "_" + label + "_" + cfg["target_commit"][:7]
     root = next_round_dir(parent, prefix)
@@ -531,9 +562,9 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
             if digest(source_log) != item["sha256"]:
                 raise ValueError("工具构建日志哈希变化：" + str(source_log))
             shutil.copyfile(source_log, log_dir / item["name"])
-    # 冻结四例输入与自检素材（不含回归/H2/规模资产）。
+    # 冻结套件输入与自检素材（不含回归/H2/规模资产）。
     tree = root / (L.ASSETS + "/tree")
-    shutil.copytree(PACKAGE / "suite-official4/tree", tree)
+    shutil.copytree((PACKAGE / cfg["suite_manifest"]).parent / "tree", tree)
     normalized_inputs = normalize_text_tree(tree)
     (tree / "src").mkdir()
     (tree / "src/pmux_opt.cc").write_bytes(source)
@@ -544,7 +575,7 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
         if digest(patch_path) != cfg['integration_patch']['sha256']:
             raise ValueError('Frozen integration patch hash mismatch')
     selfcheck_assets = root / (L.SELFCHECK + "/assets")
-    shutil.copytree(PACKAGE / "suite-official4/selfcheck", selfcheck_assets)
+    shutil.copytree((PACKAGE / cfg["suite_manifest"]).parent / "selfcheck", selfcheck_assets)
     normalized_selfcheck = normalize_text_tree(selfcheck_assets)
     normalized_files = normalized_inputs + normalized_selfcheck
     save(meta / "frozen_text_normalization.json", {
@@ -555,6 +586,9 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     cfg["created_at"] = datetime.now().astimezone().isoformat()
     cfg["runner_sha256"] = {p.name: digest(p) for p in (root / L.RUNNER).iterdir()
                             if p.is_file()}
+    if cfg.get('official_qa_source'):
+        shutil.copyfile(cfg['official_qa_source']['path'], meta / 'official_qa.xlsx')
+    capture_environment(meta, cfg)
     save(root / "validation_context.json", cfg)
     (meta / "project_status_before.txt").write_text(
         git(cfg["repo"], "status", "--porcelain", "--untracked-files=no") + "\n")
@@ -606,13 +640,18 @@ def execute(root, name, cmd, stages, timeout=10800):
 
 # ---------------------------------------------------------------- 自检与指纹
 def selfcheck_fingerprints(cfg, runner_dir):
-    """自检证据指纹：关键工具、四例输入、本轮代码/配置。任一变化即失效。"""
+    """自检证据指纹：关键工具、套件输入、本轮代码/配置。任一变化即失效。"""
     return {
+        "eqy_workspace_version": cfg.get('eqy_workspace_version'),
+        "eqy_work_root": cfg.get('eqy_work_root'),
+        "eqy_path_limit": cfg.get('eqy_path_limit'),
         "result_layout_version": cfg.get('result_layout_version'),
         "optimized_yosys_sha256": cfg.get('builtin',{}).get('optimized',{}).get('binary_sha256'),
         "builtin_abc_sha256": {side:digest(path) for side,path in cfg.get('builtin',{}).get('abc',{}).items()},
         "compiler_sha256": cfg.get('tools',{}).get('compiler',{}).get('sha256'),
         "platform": cfg.get('platform'),
+        "measurement_revision": cfg.get("measurement_revision"),
+        "heap_policy": cfg.get("heap_policy"),
         "performance_scheme": cfg.get("performance_scheme"),
         "config_sha256": cfg.get("config_sha256"),
         "wall_time_tool_identity": cfg.get("wall_time_tool_identity"),
@@ -626,6 +665,8 @@ def selfcheck_fingerprints(cfg, runner_dir):
         "eqy_sha256": cfg["tools"]["eqy"]["sha256"],
         "z3_sha256": (cfg["tools"].get("z3") or {}).get("sha256"),
         "suite_manifest_sha256": cfg["suite_manifest_sha256"],
+        "official_cases": cfg.get("official_cases"),
+        "official_cases_sha256": cfg.get("official_cases_sha256"),
         "runner_sha256": {p.name: digest(p) for p in sorted(Path(runner_dir).iterdir())
                           if p.is_file()},
         "entry_sha256": {name: digest(PACKAGE / name) for name in entrypoint_names(cfg)},
@@ -643,6 +684,21 @@ def cache_entry_valid(cache, stage, fingerprints):
     """指纹匹配且结果为真实通过时才允许复用；缺证据或指纹不一致不得假定已自检。"""
     entry = ((cache or {}).get("entries") or {}).get(stage)
     matched = bool(entry and entry.get("ok") and entry.get("fingerprint") == fingerprints)
+    if matched and stage == 'formal_selfcheck' and fingerprints.get('eqy_workspace_version'):
+        import eqy_workspace as EW
+        proof = entry.get('formal_evidence') or {}
+        path = Path(proof.get('path', '__missing_formal_evidence__'))
+        try:
+            summary = json.loads(path.read_text(encoding='utf-8'))
+            expected = json.loads((Path(entry['evidence_root']) / L.SELFCHECK / 'assets/checks.json').read_text(encoding='utf-8'))['checks']
+            names = [c.get('name') for c in summary.get('cases', [])]
+            return (path.is_file() and digest(path) == proof.get('sha256')
+                    and summary.get('selfcheck_ok') is True and bool(summary.get('cases'))
+                    and len(names) == len(expected) and set(names) == {c['name'] for c in expected}
+                    and all(c.get('ok') is True for c in summary['cases'])
+                    and EW.verify_archive(Path(entry['evidence_root'])).get('ok') is True)
+        except (OSError, ValueError, KeyError):
+            return False
     if matched and stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SAME_RUN_SCHEME:
         evidence = entry.get('measurement_evidence') or {}
         path = Path(evidence.get('path', ''))
@@ -662,6 +718,17 @@ def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
     entries[stage] = {"fingerprint": fingerprints, "ok": bool(ok),
                       "finished_at": datetime.now().astimezone().isoformat(),
                       "evidence_root": str(evidence_root)}
+    if stage == 'formal_selfcheck' and fingerprints.get('eqy_workspace_version') and ok:
+        import eqy_workspace as EW
+        proof = Path(evidence_root) / (L.SELFCHECK + '/attempt01/selfcheck_summary.json')
+        if not EW.verify_archive(evidence_root).get('ok'):
+            entries.pop(stage, None)
+            raise ValueError('formal selfcheck archive missing or invalid')
+        summary = json.loads(proof.read_text(encoding='utf-8'))
+        if summary.get('selfcheck_ok') is not True or not summary.get('cases') or not all(c.get('ok') is True for c in summary['cases']):
+            entries.pop(stage, None)
+            raise ValueError('formal selfcheck evidence is not valid')
+        entries[stage]['formal_evidence'] = dict(path=str(proof), sha256=digest(proof))
     if stage == 'measurement_selfcheck' and fingerprints.get('performance_scheme') == SAME_RUN_SCHEME and ok:
         proof = Path(evidence_root) / (L.PERFORMANCE + '/selftest/selftest_results.json')
         if not proof.is_file(): raise ValueError('v8 selfcheck evidence missing')
@@ -672,98 +739,124 @@ def update_selfcheck_cache(path, cache, fingerprints, stage, ok, evidence_root):
 
 
 # ---------------------------------------------------------------- 运行
+def workspace_checks(cfg, root=None):
+    path = (Path(root) / L.SELFCHECK / 'assets/checks.json') if root else (
+        PACKAGE / cfg['suite_manifest']).parent / 'selfcheck/checks.json'
+    return json.loads(path.read_text(encoding='utf-8'))['checks']
+
+
+def init_eqy_workspace(cfg, root):
+    if cfg.get('eqy_workspace_version'):
+        import eqy_workspace as EW
+        cfg['eqy_workspace'] = EW.create_workspace(cfg, root, workspace_checks(cfg, root))
+        save(Path(root) / 'validation_context.json', cfg)
+
+
+def finalize_eqy(root, cfg):
+    if not cfg.get('eqy_workspace_version'):
+        return {'ok': True, 'status': 'LEGACY_IN_PLACE'}
+    import eqy_workspace as EW
+    try:
+        return EW.archive(cfg, root)
+    except Exception as exc:
+        status = {'ok': False, 'status': 'ARCHIVE_ERROR', 'error': str(exc)}
+        save(Path(root) / L.META / 'eqy_archive.json', status)
+        return status
+
+
+def hash_round(root):
+    index = root / L.SUMMARY / 'ALL_SHA256.txt'
+    index.parent.mkdir(parents=True, exist_ok=True)
+    with index.open('x', encoding='utf-8') as stream:
+        for directory, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+            for name in sorted(files):
+                path = Path(directory) / name
+                if path != index:
+                    stream.write(digest(path) + '  ' + path.relative_to(root).as_posix() + '\n')
+
+
 def run_builtin(cfg, source, label, build_cache_dir=None):
-    """内置四例验收：自动准备工具（复用/构建）→ 身份检查 → 完整内置调度。"""
+    """One formal round, with unconditional managed-EQY archival before reporting."""
     root = make_round(cfg, source, label, mode="builtin", collect_tools_env=False)
     print("ROUND=" + str(root), flush=True)
     meta = root / L.META
-    stages = []
-
-    # 第一步：工具准备——查找可复用构建；未命中则在缓存命名空间内真实构建
-    # （隔离源码树 + 逐字节算法源码 + 幂等集成 + 冒烟验证 + registry 登记）。
-    # 本轮有效工具配置（路径/指纹/来源记录）写入 validation_context.json，
-    # 各阶段 runner 统一从此读取；不修改仓库 config.json。
+    stages, cache_completed = [], []
+    cache = fingerprints = None
+    failure = None
+    status = "NEEDS_REVIEW"
     sys.path.insert(0, str(PACKAGE / "runner"))
     from prepare_builtin import prepare_builtin, BuildError
+    from report import build_builtin_report, build_builtin_build_failed_report, build_builtin_block_report
     try:
-        prep = prepare_builtin(cfg, source_sha256=cfg["source_sha256"],
-                               source_bytes=source, cache_dir=build_cache_dir)
-    except BuildError as exc:
-        detail = "内置工具准备失败：" + str(exc)
-        print("ERROR:", detail, flush=True)
-        stages.append({"name": "build", "state": "ERROR", "rc": 3,
-                       "detail": detail, "build_dir": exc.build_dir, "logs": exc.logs})
+        # Reserve and write-check before building or measuring. Never reuse a prior workspace.
+        init_eqy_workspace(cfg, root)
+        try:
+            prep = prepare_builtin(cfg, source_sha256=cfg["source_sha256"],
+                                   source_bytes=source, cache_dir=build_cache_dir)
+        except BuildError as exc:
+            stages.append({"name": "build", "state": "ERROR", "rc": 3,
+                           "detail": "内置工具准备失败：" + str(exc), "build_dir": exc.build_dir, "logs": exc.logs})
+            failure = ('build', exc)
+            return 3
+        cfg["builtin"] = prep["builtin"]
+        cfg["builtin_prepare"] = prep["record"]
+        configure_windows_runtime(cfg)
+        save(root / "validation_context.json", cfg)
+        save(meta / "builtin_prepare.json", prep["record"])
+        ok, missing, evidence = check_builtin_evidence(cfg, run_identity=True,
+                                                       source_sha256=cfg["source_sha256"])
+        save(meta / "builtin_evidence.json", {"ok": ok, "missing": missing, "evidence": evidence})
+        if not ok:
+            stages.append({"name": "build", "state": "BLOCKED", "rc": 3, "missing": missing})
+            failure = ('identity', (missing, evidence))
+            return 3
+        stages.append({"name": "build", "state": "COMPLETED", "rc": 0,
+                       "detail": "工具准备完成：" + prep["record"]["summary"]})
         save(meta / "stages.json", stages)
-        from report import build_builtin_build_failed_report
-        status = build_builtin_build_failed_report(root, error=str(exc), cfg=cfg,
-                                                   build_dir=exc.build_dir, logs=exc.logs)
-        print("RESULT=" + status + "\nREPORT=" + str(root / L.REPORT), flush=True)
-        return 3
-    cfg["builtin"] = prep["builtin"]
-    cfg["builtin_prepare"] = prep["record"]
-    configure_windows_runtime(cfg)
-    save(root / "validation_context.json", cfg)
-    save(meta / "builtin_prepare.json", prep["record"])
-
-    # 第二步：身份检查（构建/复用后仍须核对匹配关系；只在文件存在时运行无害身份命令）。
-    ok, missing, evidence = check_builtin_evidence(cfg, run_identity=True,
-                                                   source_sha256=cfg["source_sha256"])
-    save(meta / "builtin_evidence.json", {"ok": ok, "missing": missing, "evidence": evidence})
-    if not ok:
-        stages.append({"name": "build", "state": "BLOCKED", "rc": 3, "missing": missing})
-        save(meta / "stages.json", stages)
-        from report import build_builtin_block_report
-        build_builtin_block_report(root, status="BUILTIN_NOT_READY", missing=missing,
-                                   evidence=evidence, cfg=cfg)
-        print("RESULT=BUILTIN_NOT_READY")
-        print("REPORT=" + str(root / L.REPORT))
-        return 3
-
-    stages.append({"name": "build", "state": "COMPLETED", "rc": 0,
-                   "detail": "工具准备完成：" + prep["record"]["summary"]})
-    save(meta / "stages.json", stages)
-
-    runner = root / L.RUNNER
-    cache_path = Path(cfg["repo"]) / cfg.get('selfcheck_cache_rel', SELFCHECK_CACHE_REL)
-    fingerprints = selfcheck_fingerprints(cfg, runner)
-    cache = load_selfcheck_cache(cache_path)
-    status = "NEEDS_REVIEW"
-    from report import build_builtin_report
-    try:
-        stage_plan = builtin_stage_plan(cfg)
-        for name, script, args in stage_plan:
-            if (name in BUILTIN_CACHED_STAGES
-                    and cache_entry_valid(cache, name, fingerprints)):
+        runner = root / L.RUNNER
+        cache_path = L.selfcheck_cache(cfg)
+        fingerprints = selfcheck_fingerprints(cfg, runner)
+        cache = load_selfcheck_cache(cache_path)
+        for name, script, args in builtin_stage_plan(cfg):
+            if name in BUILTIN_CACHED_STAGES and cache_entry_valid(cache, name, fingerprints):
                 entry = cache["entries"][name]
                 stages.append({"name": name, "state": "REUSED", "rc": 0,
-                               "from_cache": str(cache_path),
-                               "source_round": entry.get("evidence_root")})
+                               "from_cache": str(cache_path), "source_round": entry.get("evidence_root")})
                 save(meta / "stages.json", stages)
                 print("REUSE", name, "from", entry.get("evidence_root"), flush=True)
                 continue
             rc = execute(root, name, [sys.executable, str(runner / script), *args], stages)
             if rc:
-                raise RuntimeError(name + ' failed; V8 preserves partial evidence and never resamples')
+                raise RuntimeError(name + ' failed; V9 preserves partial evidence without replacement')
             if name in BUILTIN_CACHED_STAGES:
-                update_selfcheck_cache(cache_path, cache, fingerprints, name, True, root)
-    except Exception as exc:
-        save(meta / "orchestrator_error.json", {"error": str(exc)})
+                cache_completed.append(name)
+    except (Exception, KeyboardInterrupt) as exc:
+        save(meta / "orchestrator_error.json", {"error": type(exc).__name__ + ': ' + str(exc)})
         print("ERROR:", exc, flush=True)
     finally:
         save(meta / "stages.json", stages)
-        status = build_builtin_report(root, chain_attempt="run01")
-        index = root / (L.SUMMARY + "/ALL_SHA256.txt")
-        index.parent.mkdir(parents=True, exist_ok=True)
-        print("Hashing evidence", flush=True)
-        with index.open("x") as f:
-            for directory, dirs, files in os.walk(root):
-                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-                for name in sorted(files):
-                    path = Path(directory) / name
-                    if path != index:
-                        f.write(digest(path) + "  " + str(path.relative_to(root)) + "\n")
-        print("RESULT=" + status + "\nREPORT=" + str(root / L.REPORT), flush=True)
-    return 0 if status == "BUILTIN_FOUR_CASE_LOCAL_ACCEPTANCE_COMPLETE" else 2
+        archival = finalize_eqy(root, cfg)
+        if cache is not None and archival.get('ok'):
+            for name in cache_completed:
+                try:
+                    update_selfcheck_cache(cache_path, cache, fingerprints, name, True, root)
+                except (OSError, ValueError, KeyError) as exc:
+                    save(meta / (name + '_cache_error.json'), {'error': str(exc)})
+        if failure and failure[0] == 'build':
+            exc = failure[1]
+            status = build_builtin_build_failed_report(root, error=str(exc), cfg=cfg,
+                                                       build_dir=exc.build_dir, logs=exc.logs)
+        elif failure and failure[0] == 'identity':
+            missing, evidence = failure[1]
+            status = build_builtin_block_report(root, status='BUILTIN_NOT_READY', missing=missing,
+                                                evidence=evidence, cfg=cfg)
+        else:
+            status = build_builtin_report(root, chain_attempt='run01')
+        print('Hashing evidence', flush=True)
+        hash_round(root)
+        print('RESULT=' + str(status) + '\nREPORT=' + str(root / L.REPORT), flush=True)
+    return 0 if status == 'BUILTIN_SUITE_LOCAL_ACCEPTANCE_COMPLETE' else 2
 
 
 def main():
@@ -772,11 +865,11 @@ def main():
     ap.add_argument("commit")
     ap.add_argument("--label", default=None)
     ap.add_argument("--config", default=None,
-                    help="指定 Windows V8 配置；默认 config.windows.v8.json")
+                    help="指定 Windows V9 配置；默认 config.windows.v9.json")
     ap.add_argument('--integration-profile', choices=['p3', 'p3-local-lut'], default='p3',
                     help='包含已登记7.1补丁的提交必须选择 p3-local-lut')
     ap.add_argument('--mode', choices=['builtin'], default='builtin',
-                    help='Windows V8 内置四例验收')
+                    help='Windows V9 内置套件验收')
     ap.add_argument("--builtin-cache-dir", default=None,
                     help="内置构建缓存命名空间（默认 config.builtin.cache_dir；仅影响 builtin 模式；"
                          "用于复用检查与空缓存未命中构建验证）")
@@ -793,27 +886,42 @@ def main():
         sys.path.insert(0, str(PACKAGE / "runner"))
         from prepare_builtin import plan_builtin
         plan = plan_builtin(cfg, cfg["source_sha256"], cache_dir=args.builtin_cache_dir)
+        workspace_plan = None
+        if cfg.get('eqy_workspace_version'):
+            import eqy_workspace as EW
+            prefix = datetime.now().strftime('%Y-%m-%d_%H%M') + '_' + args.label + '_' + cfg['target_commit'][:7]
+            parent = L.result_parent(cfg)
+            round_name = next(prefix + '_r%02d' % n for n in range(1, 10000)
+                              if not (parent / (prefix + '_r%02d' % n)).exists())
+            workspace_plan = EW.plan_workspace(cfg, round_name, workspace_checks(cfg))
         print(json.dumps({k: cfg.get(k) for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
               "performance_pairs", "performance_scheme", "tool_data_checked", "integration_profile", "integration_patch"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({'mode_default': 'builtin', 'builtin_plan': plan,
+                          'eqy_workspace_plan': workspace_plan,
                           'result_layout_version': L.LAYOUT_VERSION,
-                          'round_parent': str(Path(cfg['repo']) / ROUND_PARENT_REL),
+                          'round_parent': str(L.result_parent(cfg)),
                           'round_label': args.label,
-                          'selfcheck_cache': str(Path(cfg['repo']) / SELFCHECK_CACHE_REL),
+                          'selfcheck_cache': str(L.selfcheck_cache(cfg)),
                           'policy_source': cfg.get('policy_source'),
-                          'formal_synthesis_expected_runs': 8,
-                          'performance_expected_runs': 8,
+                          'official_cases': cfg['official_cases'],
+                          'required_main_proof_rows': 2 * len(cfg['official_cases']),
+                          'formal_synthesis_expected_runs': 2 * len(cfg['official_cases']),
+                          'performance_expected_runs': 2 * len(cfg['official_cases']),
+                          'warmup_expected_runs': 10 * len(cfg['official_cases']),
+                          'recheck_max_runs': 10 * len(cfg['official_cases']),
+                          'public_runs_min': 12 * len(cfg['official_cases']),
+                          'public_runs_max': 22 * len(cfg['official_cases']),
                           'same_run_policy': cfg.get('same_run_policy'),
                           'wall_time_tool_identity': cfg.get('wall_time_tool_identity'),
-                          'wall_runs_per_case': 1, 'wall_runs_total': 8,
-                          'performance_estimate_note': '8次正式综合，同次墙钟/峰值内存/功能网表/资源；EQY和专用自检另计，无预热或补跑',
+                          'wall_runs_per_case': 1, 'wall_runs_total': 2 * len(cfg['official_cases']),
+                          'performance_estimate_note': str(2 * len(cfg['official_cases'])) + '次首次综合；每例原版预热10次，触发例另复核5对，仅相对时间取均值；EQY和专用自检另计',
                           'runtime_identity': cfg.get('runtime_identity'),
-                          'note': 'plan 只读：不创建轮次/构建目录、不编译、不登记。run 先自动准备（复用或构建）再执行内置四例验收。'},
+                          'note': 'plan 只读：不创建轮次/构建目录、不编译、不登记。run 先自动准备（复用或构建）再执行内置套件验收。'},
                          ensure_ascii=False, indent=2))
         print("只读预检完成。")
-        return 0
+        return 2 if plan.get('blocked') or (workspace_plan or {}).get('blocked') else 0
     return run_builtin(cfg, source, args.label, build_cache_dir=args.builtin_cache_dir)
 
 

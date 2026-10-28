@@ -219,7 +219,7 @@ def run_binary(
             return 124
 
 
-# 内置四例共享纯函数（定义在 builtin_common.py；此处重导出保持调用方不变）。
+# 内置套件共享纯函数（定义在 builtin_common.py；此处重导出保持调用方不变）。
 from builtin_common import (  # noqa: E402
     gen_builtin_synth_ys, extract_executing_sequence, extract_executing_entries,
     executing_name, check_pmux_position, select_binaries)

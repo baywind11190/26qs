@@ -13,7 +13,7 @@ PATCH_SHA256 = 'd21c3cbc519586df587ccdf5334b6275ef7022b443cd34b4435b96d55f24157b
 LUT_ANCHOR = ('\t\t\trun("opt -fast");\n\t\t\trun("autoname");\n'
               '\t\t\trun("clean");\n\t\t}\n\n\t\tif (check_label("map_cells")) {')
 LUT_BLOCK = LUT_ANCHOR.replace('\t\t}\n', '\t\t\trun("pmux_opt -lut");\n\t\t}\n', 1)
-CASES = ('test1', 'test2', 'test3', 'test4')
+import official_suite as S
 CHAINS = ('c4a_rtl_opt_mapped', 'c4b_rtl_base_mapped')
 
 
@@ -25,8 +25,8 @@ def identity(cfg):
 
 
 def configure(cfg, profile, patch):
-    if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
-        raise ValueError('Integration profiles require the Windows V8 builtin flow')
+    if cfg.get('performance_scheme') not in (SAME_RUN_SCHEME, 'pmux-perf-warm10-initial-review5-same-run-v9'):
+        raise ValueError('Integration profiles require a registered Windows builtin flow')
     if profile not in ('p3', 'p3-local-lut'):
         raise ValueError('Unknown integration profile: ' + str(profile))
     if profile == 'p3':
@@ -82,9 +82,9 @@ def check_calls(log, integration_id=P3_ID, require_export=False):
     return result
 
 
-def formal_chains_ok(rows):
+def formal_chains_ok(rows, context):
     from report import row_functional_ok
-    expected = {(c, chain) for c in CASES for chain in CHAINS}
+    expected = {(c, chain) for c in S.case_ids(context) for chain in CHAINS}
     return (len(rows) == len(expected)
             and {(r.get('case'), r.get('chain')) for r in rows} == expected
             and all(row_functional_ok(r) for r in rows))
@@ -102,6 +102,7 @@ def evidence_errors(root, ctx):
             return default
     def sha(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
+    expected_cases = S.case_ids(ctx)
     errors = []
     patch = root / (L.ASSETS + '/tree') / PATCH_PATH
     if not patch.is_file() or sha(patch) != (ctx.get('integration_patch') or {}).get('sha256') \
@@ -109,18 +110,18 @@ def evidence_errors(root, ctx):
         errors.append('frozen integration patch identity mismatch')
     fc = load((L.FLOWCHECK + '/builtin_run01/builtin_flowcheck.json'), {})
     cases = fc.get('cases') or []
-    if fc.get('all_ok') is not True or len(cases) != 4 or {r.get('case') for r in cases} != set(CASES):
-        errors.append('four-case invocation evidence missing or failed')
+    if fc.get('all_ok') is not True or len(cases) != len(expected_cases) or {r.get('case') for r in cases} != set(expected_cases):
+        errors.append('suite invocation evidence missing or failed')
     for row in cases:
         call = row.get('sides', {}).get('optimized', {}).get('integration_calls') or {}
         if call.get('integration_id') != LOCAL_ID or call.get('ok') is not True:
             errors.append('new integration invocation not verified: ' + str(row.get('case')))
     public = load((L.PUBLIC + '/round01/summary.json'), {}).get('cases') or []
     chains = load((L.SELFCHECK + '/chains/run01/chains_summary.json'), [])
-    if not formal_chains_ok(chains):
+    if not formal_chains_ok(chains, ctx):
         errors.append('original RTL functional proofs are incomplete or failed')
-    if len(public) != 4 or {r.get('case') for r in public} != set(CASES):
-        errors.append('four-case exported netlist evidence missing')
+    if len(public) != len(expected_cases) or {r.get('case') for r in public} != set(expected_cases):
+        errors.append('suite exported netlist evidence missing')
     for row in public:
         case = row.get('case')
         call = row.get('optimized_integration_calls') or {}

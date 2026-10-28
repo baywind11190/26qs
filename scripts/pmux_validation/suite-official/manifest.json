@@ -1,0 +1,197 @@
+{
+  "suite_version": "official9-v1",
+  "selfcheck_version": "official4-selfcheck-r2",
+  "scope": "已获得官方九例：原test1～test4及用户于2026-10-26提供的新增五例；按清单顺序原版/优化版各一次，共2N次正式综合。",
+  "frozen_from": "原四例及自检素材来源字段保留；新增五例按用户提供的官方原件登记，源原始字节哈希和LF执行副本哈希分别记录。",
+  "note": "cases为当前用例集合与顺序的唯一来源；canonical_sha256校验工程原件原字节，sha256校验冻结副本规范化LF后的字节；default_parameters仅记录原文件默认值，不施加参数覆盖。不代表官方隐藏题或官方验收认可。",
+  "files": [
+    {
+      "file": "tree/pmux_case/competition_case/test1/test1.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test1/test1.v",
+      "sha256": "2ac40f33e7395f1fe8437e3da232733e32e79607e37871b616bab8184b6fd4aa"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test2/test2.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test2/test2.v",
+      "sha256": "82ef15cf6e75d502633efea71c20d93b0447001974d558a7739dbb1d7bfdf88f"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test3/test3.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test3/test3.v",
+      "sha256": "46ef97a9c39b8b38d00cc6a7e273890e3aea1700e77c141aa2213d33a8b02a61"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/test4/test4.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/02_冻结源码与输入_assets/tree/pmux_case/competition_case/test4/test4.v",
+      "sha256": "87043df2ba5293da863ddd96525a548640fb826f7012d6d2af9920a1e5a0d384"
+    },
+    {
+      "file": "selfcheck/positive_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gold.v",
+      "sha256": "f34f15d142a3bfcef6ffead3027d264542216b89616308dcddb099583aa11b60"
+    },
+    {
+      "file": "selfcheck/positive_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/positive_gate.v",
+      "sha256": "c5fd539cdcd6d19ac304de28023169c5a1889fdf1f5246fa3bd2e9f83a1af97d"
+    },
+    {
+      "file": "selfcheck/negative_gold.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gold.v",
+      "sha256": "9d1785fb7cba9ee427a34c3aa67e29cdb50fc03ab12cae9f086c4fa2d6c85ea9"
+    },
+    {
+      "file": "selfcheck/negative_gate.v",
+      "source": "/home/fpga/fpga/pmux-opt/results/官方口径评测/2026-09-22_H1H2-P3_1dceb17_第01轮/10_验证工具自检_selfcheck/assets/negative_gate.v",
+      "sha256": "b6393ea7992e66337b3d32c68b7fbe19c7e7fd5cb88fe0a0a8cc8837f42681ae"
+    },
+    {
+      "file": "selfcheck/checks.json",
+      "source": "authored for official4-p2（自检扩展：由 2026-09-24 初值建模修正 06/03_模型检查/model_checks.v（sha256 4049c94e26352e23aa93aeebec2a41607fb8b3b70b4f5a32491f36f548e34842）移植并扩展）",
+      "sha256": "46831533ae01cb74032f6b4a899876fb1e59e7908b5559615d4f8e40451ad211"
+    },
+    {
+      "file": "selfcheck/mapped_model_gold.v",
+      "source": "authored for official4-p2（同上来源：model_checks.v 移植 + LUT/未声明初值回归）",
+      "sha256": "da770b67ca67a22d4f5a0becb646c4528edbdd494870792d31ad5b95c5e3573d"
+    },
+    {
+      "file": "selfcheck/mapped_model_gate.v",
+      "source": "authored for official4-p2（同上来源：model_checks.v 移植 + LUT/未声明初值回归）",
+      "sha256": "4de01c1a7ff19aacecf14ad91c76abf39a9de592ca5dab54fb91792f6e78a129"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/pmux_case01_balanced/pmux_case01_balanced.v",
+      "source": "D:/桌面/pmux_cases/pmux_case01_balanced.v",
+      "source_sha256": "463263f4b265cbad3b634d69d316cd29e7ea0a62f91ee396dbeeecf7df5c7343",
+      "source_kind": "official_additional_case_user_supplied_2026-10-26",
+      "sha256": "b237ae4f18f9a248c3d77b8889f25bf6495524ccfea5f8c54cfcd216f456f79b"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/pmux_case02_pipeline/pmux_case02_pipeline.v",
+      "source": "D:/桌面/pmux_cases/pmux_case02_pipeline.v",
+      "source_sha256": "8639081b2fb7c446edef52a514d63b49333e444ce21638f03bdee97dc954e0ea",
+      "source_kind": "official_additional_case_user_supplied_2026-10-26",
+      "sha256": "f24575fc2e025437489fe64c26e1f1181b6a0487ad5896245ee61309483a49c4"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/pmux_case03_crossbar/pmux_case03_crossbar.v",
+      "source": "D:/桌面/pmux_cases/pmux_case03_crossbar.v",
+      "source_sha256": "bf1fc3bf6383beb007a69587d77a29ea74fb1fbdf7429fb401c0855a31c05932",
+      "source_kind": "official_additional_case_user_supplied_2026-10-26",
+      "sha256": "cd853a5d9b246d48108afe656693d529395d7994e1f57427fd7619b4a9ed54e8"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/pmux_case04_feedback/pmux_case04_feedback.v",
+      "source": "D:/桌面/pmux_cases/pmux_case04_feedback.v",
+      "source_sha256": "d668d258d804674dd1412538e7bce04d4630d02928ffe113413b536e6b9ed70f",
+      "source_kind": "official_additional_case_user_supplied_2026-10-26",
+      "sha256": "5b6d9c24a58f4fd58e2c9bba041edc14be23a77e3b48ddc42c4af6fab1be5e93"
+    },
+    {
+      "file": "tree/pmux_case/competition_case/pmux_case05_nested/pmux_case05_nested.v",
+      "source": "D:/桌面/pmux_cases/pmux_case05_nested.v",
+      "source_sha256": "57d64edd3704d9d74407145080a63d06390e4a598c419a948fdea22fb1147f1d",
+      "source_kind": "official_additional_case_user_supplied_2026-10-26",
+      "sha256": "4af5200c45b28bf61af6af2f068407ee780259e4bc77baec1d48819b190fceb4"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test1",
+      "top": "test1",
+      "file": "tree/pmux_case/competition_case/test1/test1.v",
+      "canonical_file": "pmux_case/competition_case/test1/test1.v",
+      "canonical_sha256": "2d2dba011b0e8799d0de3790b69b7f01c6eb6ac665c4321b57b0378a4972fd13",
+      "sha256": "2ac40f33e7395f1fe8437e3da232733e32e79607e37871b616bab8184b6fd4aa",
+      "default_parameters": {}
+    },
+    {
+      "id": "test2",
+      "top": "test2",
+      "file": "tree/pmux_case/competition_case/test2/test2.v",
+      "canonical_file": "pmux_case/competition_case/test2/test2.v",
+      "canonical_sha256": "e43c9b437071488551caf3121e227e86f4fe3190751f245beac3b7ecc3fdb146",
+      "sha256": "82ef15cf6e75d502633efea71c20d93b0447001974d558a7739dbb1d7bfdf88f",
+      "default_parameters": {}
+    },
+    {
+      "id": "test3",
+      "top": "test3",
+      "file": "tree/pmux_case/competition_case/test3/test3.v",
+      "canonical_file": "pmux_case/competition_case/test3/test3.v",
+      "canonical_sha256": "1551b9212622ccef6019d6e77de2c43dc8c80d267957b55a42121f34a08780e9",
+      "sha256": "46ef97a9c39b8b38d00cc6a7e273890e3aea1700e77c141aa2213d33a8b02a61",
+      "default_parameters": {}
+    },
+    {
+      "id": "test4",
+      "top": "test4",
+      "file": "tree/pmux_case/competition_case/test4/test4.v",
+      "canonical_file": "pmux_case/competition_case/test4/test4.v",
+      "canonical_sha256": "c0c5042928bd6bf568e2b7fb2193f2b6db9c4193ba3a5378fc50a331d43422d7",
+      "sha256": "87043df2ba5293da863ddd96525a548640fb826f7012d6d2af9920a1e5a0d384",
+      "default_parameters": {}
+    },
+    {
+      "id": "pmux_case01_balanced",
+      "top": "pmux_case01_balanced",
+      "file": "tree/pmux_case/competition_case/pmux_case01_balanced/pmux_case01_balanced.v",
+      "canonical_file": "pmux_case/competition_case/pmux_case01_balanced/pmux_case01_balanced.v",
+      "canonical_sha256": "463263f4b265cbad3b634d69d316cd29e7ea0a62f91ee396dbeeecf7df5c7343",
+      "sha256": "b237ae4f18f9a248c3d77b8889f25bf6495524ccfea5f8c54cfcd216f456f79b",
+      "default_parameters": {
+        "LANES": 1,
+        "WIDTH": 12
+      }
+    },
+    {
+      "id": "pmux_case02_pipeline",
+      "top": "pmux_case02_pipeline",
+      "file": "tree/pmux_case/competition_case/pmux_case02_pipeline/pmux_case02_pipeline.v",
+      "canonical_file": "pmux_case/competition_case/pmux_case02_pipeline/pmux_case02_pipeline.v",
+      "canonical_sha256": "8639081b2fb7c446edef52a514d63b49333e444ce21638f03bdee97dc954e0ea",
+      "sha256": "f24575fc2e025437489fe64c26e1f1181b6a0487ad5896245ee61309483a49c4",
+      "default_parameters": {
+        "LANES": 4,
+        "WIDTH": 3
+      }
+    },
+    {
+      "id": "pmux_case03_crossbar",
+      "top": "pmux_case03_crossbar",
+      "file": "tree/pmux_case/competition_case/pmux_case03_crossbar/pmux_case03_crossbar.v",
+      "canonical_file": "pmux_case/competition_case/pmux_case03_crossbar/pmux_case03_crossbar.v",
+      "canonical_sha256": "bf1fc3bf6383beb007a69587d77a29ea74fb1fbdf7429fb401c0855a31c05932",
+      "sha256": "cd853a5d9b246d48108afe656693d529395d7994e1f57427fd7619b4a9ed54e8",
+      "default_parameters": {
+        "LANES": 2,
+        "WIDTH": 5
+      }
+    },
+    {
+      "id": "pmux_case04_feedback",
+      "top": "pmux_case04_feedback",
+      "file": "tree/pmux_case/competition_case/pmux_case04_feedback/pmux_case04_feedback.v",
+      "canonical_file": "pmux_case/competition_case/pmux_case04_feedback/pmux_case04_feedback.v",
+      "canonical_sha256": "d668d258d804674dd1412538e7bce04d4630d02928ffe113413b536e6b9ed70f",
+      "sha256": "5b6d9c24a58f4fd58e2c9bba041edc14be23a77e3b48ddc42c4af6fab1be5e93",
+      "default_parameters": {
+        "LANES": 2,
+        "WIDTH": 8
+      }
+    },
+    {
+      "id": "pmux_case05_nested",
+      "top": "pmux_case05_nested",
+      "file": "tree/pmux_case/competition_case/pmux_case05_nested/pmux_case05_nested.v",
+      "canonical_file": "pmux_case/competition_case/pmux_case05_nested/pmux_case05_nested.v",
+      "canonical_sha256": "57d64edd3704d9d74407145080a63d06390e4a598c419a948fdea22fb1147f1d",
+      "sha256": "4af5200c45b28bf61af6af2f068407ee780259e4bc77baec1d48819b190fceb4",
+      "default_parameters": {
+        "LANES": 1,
+        "WIDTH": 12
+      }
+    }
+  ]
+}

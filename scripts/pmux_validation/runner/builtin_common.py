@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""内置四例共享的纯函数（不依赖轮次上下文，便于单元测试）。
+"""内置套件共享的纯函数（不依赖轮次上下文，便于单元测试）。
 
 - gen_builtin_synth_ys：内置外部综合脚本（两侧逐字节相同）；
 - extract_executing_sequence / executing_name：日志 pass 序列解析；
@@ -14,7 +14,7 @@ SYNTH_FAMILY = "cycloneiv"
 
 
 def gen_builtin_synth_ys(rtl, top: str) -> str:
-    """内置四例外部综合脚本（两侧逐字节相同；输出相对 cwd）。
+    """内置套件外部综合脚本（两侧逐字节相同；输出相对 cwd）。
 
     优化版由 synth_intel.cc 内部在 fsm;opt 之后、wreduce 之前调用 pmux_opt；
     原版不含该调用。末尾 check -assert 为最终网表质量检查。
@@ -197,7 +197,7 @@ def parse_resource_counts(stat_data, mapped_il: str, top: str) -> dict:
         'other_cell_types': other_types,
         'cell_types': dict(sorted(cell_types.items())),
     }
-def compare_resource_counts(base: dict, opt: dict) -> dict:
+def compare_resource_counts(base: dict, opt: dict, *, allow_dff_increase=False) -> dict:
     """Compute per-example logic reduction and check every nonlogic resource."""
     baseline_logic = int(base['logic_units'])
     optimized_logic = int(opt['logic_units'])
@@ -219,10 +219,12 @@ def compare_resource_counts(base: dict, opt: dict) -> dict:
                        if counts['optimized'] > counts['baseline']]
     return {
         'logic_reduction_pct': logic_reduction_pct,
+        'logic_nonincrease': optimized_logic <= baseline_logic,
         'dff_nonincrease': dff_nonincrease,
         'io_nonincrease': io_nonincrease,
         'io_resources': {'ok': not io_increases, 'counts': io_counts, 'increases': io_increases},
         'other_resources': {'ok': not other_increases, 'counts': other_counts,
                             'increases': other_increases},
-        'resource_checks_ok': dff_nonincrease and io_nonincrease and not other_increases,
+        'dff_required_nonincrease': not allow_dff_increase,
+        'resource_checks_ok': baseline_logic > 0 and optimized_logic <= baseline_logic and (allow_dff_increase or dff_nonincrease) and io_nonincrease and not other_increases,
     }

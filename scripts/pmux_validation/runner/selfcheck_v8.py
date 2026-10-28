@@ -7,9 +7,15 @@ from measure_v8 import METHOD, SCHEME, run_combined_measured, sample_errors, sav
 
 
 def run(context, output_dir):
+    if str(context.get('performance_scheme','')).endswith('-v9'):
+        from measure_v9 import METHOD, SCHEME, run_combined_measured, sample_errors
+    else:
+        from measure_v8 import METHOD, SCHEME, run_combined_measured, sample_errors
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=False)
     probe = out / 'probe.py'
-    probe.write_text('''import ctypes, gc, time
+    probe.write_text('''import ctypes, gc, time, os
+print('NO_DEBUG_HEAP='+str(os.environ.get('_NO_DEBUG_HEAP')),flush=True)
+print('ROOT_DEBUGGED='+str(ctypes.WinDLL('kernel32').IsDebuggerPresent()),flush=True)
 from ctypes import wintypes
 class Counters(ctypes.Structure):
     _fields_ = [('cb',wintypes.DWORD),('faults',wintypes.DWORD)] + [(n,ctypes.c_size_t) for n in ('peak','current','pqp','qp','pqnp','qnp','page','ppage','private')]
@@ -36,6 +42,11 @@ print('probe-late-output-complete',flush=True)
               'allocation_peak_retained': record.get('yosys_peak_working_set_bytes', 0) >= 192 * 1024**2,
               'late_output_complete': 'probe-late-output-complete' in (out / 'probe.log').read_text(encoding='utf-8', errors='replace'),
               'released_before_exit': 'peak-vs-current' in (out / 'probe.log').read_text(encoding='utf-8', errors='replace')}
+    if str(context.get('performance_scheme','')).endswith('-v9'):
+        import heap_policy as H
+        checks['debug_heap_disabled'] = not H.sample_errors(record)
+        text=(out/'probe.log').read_text(encoding='utf-8',errors='replace')
+        checks['target_environment_and_debugger'] = 'NO_DEBUG_HEAP=1' in text and 'ROOT_DEBUGGED=1' in text
     result = dict(schema=1, performance_scheme=SCHEME, method=METHOD,
                   selftest_ok=all(checks.values()), checks=checks, errors=errors,
                   record=record, public_case_syntheses=0)
