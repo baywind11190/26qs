@@ -384,6 +384,65 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget, b
     return best;
 }
 
+// Input permutations preserve the exact LUT function while reducing the
+// number of distinct truth-table templates used by the unchanged mapper.
+static int normalize_lut_input_permutations(RTLIL::Design *design)
+{
+    struct Permutation { unsigned truth; std::array<int, 4> order; };
+    dict<std::pair<int, unsigned>, Permutation> cache;
+    int normalized = 0;
+    for (auto module : design->selected_modules()) {
+        if (module->get_bool_attribute(ID::keep)) continue;
+        bool has_lut = false;
+        for (auto cell : module->selected_cells())
+            if (cell->type == ID($lut) && !cell->get_bool_attribute(ID::keep)) { has_lut = true; break; }
+        if (!has_lut) continue;
+        SigMap sigmap(module);
+        pool<RTLIL::SigBit> preserved;
+        for (auto wire : module->wires())
+            if (wire->get_bool_attribute(ID::keep) || wire->attributes.count(ID::init))
+                for (auto bit : sigmap(wire)) preserved.insert(bit);
+        for (auto cell : module->selected_cells()) {
+            if (cell->type != ID($lut) || cell->get_bool_attribute(ID::keep) ||
+                !cell->hasParam(ID::WIDTH) || !cell->hasParam(ID::LUT) ||
+                !cell->hasPort(ID::A) || !cell->hasPort(ID::Y)) continue;
+            int width = cell->getParam(ID::WIDTH).as_int();
+            auto input = cell->getPort(ID::A), output = sigmap(cell->getPort(ID::Y));
+            auto truth = cell->getParam(ID::LUT);
+            if (width < 1 || width > 4 || GetSize(input) != width ||
+                GetSize(output) != 1 || preserved.count(output[0]) ||
+                GetSize(truth) != (1 << width) || !truth.is_fully_def()) continue;
+            unsigned mask = truth.as_int();
+            auto key = std::make_pair(width, mask);
+            auto found = cache.find(key);
+            if (found == cache.end()) {
+                Permutation best{mask, {{0, 1, 2, 3}}};
+                std::array<int, 4> order{{0, 1, 2, 3}};
+                do {
+                    unsigned candidate = 0;
+                    for (int address = 0; address < (1 << width); address++) {
+                        int original = 0;
+                        for (int j = 0; j < width; j++)
+                            original |= ((address >> j) & 1) << order[j];
+                        candidate |= ((mask >> original) & 1u) << address;
+                    }
+                    if (candidate < best.truth) best = {candidate, order};
+                } while (std::next_permutation(order.begin(), order.begin() + width));
+                cache[key] = best;
+                found = cache.find(key);
+            }
+            const auto &best = found->second;
+            if (best.truth == mask) continue;
+            RTLIL::SigSpec reordered;
+            for (int j = 0; j < width; j++) reordered.append(input[best.order[j]]);
+            cell->setPort(ID::A, reordered);
+            cell->setParam(ID::LUT, RTLIL::Const(best.truth, 1 << width));
+            ++normalized;
+        }
+    }
+    return normalized;
+}
+
 static void optimize_local_luts(RTLIL::Design *design)
 {
     LocalLutBudget budget;
@@ -431,6 +490,7 @@ static void optimize_local_luts(RTLIL::Design *design)
         }
     }
     log("7.1 local LUT: %d rewrites, %d LUTs removed; cuts %d, work %d.\n", rewrites, saved, 768 - budget.cuts, 250000 - budget.work);
+    log("LUT input permutations normalized: %d\n", normalize_lut_input_permutations(design));
 }
 
 

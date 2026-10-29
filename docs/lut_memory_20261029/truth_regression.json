@@ -1,0 +1,7 @@
+{
+  "checked_functions": 320,
+  "all_three_input_functions": 256,
+  "random_four_input_functions": 64,
+  "formal": "PASS",
+  "idempotent": true
+}

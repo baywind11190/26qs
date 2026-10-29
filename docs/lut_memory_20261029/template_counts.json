@@ -1,0 +1,47 @@
+{
+  "test4": {
+    "stock": 35,
+    "old": 27,
+    "candidate": 26
+  },
+  "pmux_case02_pipeline": {
+    "stock": 53,
+    "old": 92,
+    "candidate": 68
+  },
+  "pmux_case03_crossbar": {
+    "stock": 93,
+    "old": 80,
+    "candidate": 57
+  },
+  "test1": {
+    "stock": 25,
+    "old": 24,
+    "candidate": 14
+  },
+  "pmux_case04_feedback": {
+    "stock": 68,
+    "old": 68,
+    "candidate": 59
+  },
+  "pmux_case01_balanced": {
+    "stock": 118,
+    "old": 140,
+    "candidate": 92
+  },
+  "pmux_case05_nested": {
+    "stock": 98,
+    "old": 107,
+    "candidate": 81
+  },
+  "test3": {
+    "stock": 9,
+    "old": 8,
+    "candidate": 8
+  },
+  "test2": {
+    "stock": 5,
+    "old": 4,
+    "candidate": 4
+  }
+}

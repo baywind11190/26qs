@@ -12,7 +12,7 @@ def design(seed,count=24):
         width=rng.randrange(1,5);ins=rng.sample(signals,width);cells[f'n{i:02}']=cell(ins,fresh,rng.getrandbits(1<<width));signals.append(fresh);fresh+=1
     return {'modules':{'top':{'attributes':{},'ports':{'a':{'direction':'input','bits':list(range(2,10))},'y':{'direction':'output','bits':signals[-3:]}},'cells':cells,'netnames':{f'w{b}':{'hide_name':0,'bits':[b],'attributes':{}} for b in signals}}}}
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--plugin',required=True,type=Path);ap.add_argument('--out',required=True,type=Path);ns=ap.parse_args();out=ns.out.resolve();out.mkdir(parents=True,exist_ok=True)
+    ap=argparse.ArgumentParser();mode=ap.add_mutually_exclusive_group(required=True);mode.add_argument('--plugin',type=Path);mode.add_argument('--yosys',type=Path);ap.add_argument('--out',required=True,type=Path);ns=ap.parse_args();out=ns.out.resolve();out.mkdir(parents=True,exist_ok=True)
     results={}
     fixtures=[(f'random_{i}',design(20261020+i),'',False) for i in range(24)]
     fixtures.append(('stress_1000',design(20261020,1000),'',False))
@@ -26,7 +26,7 @@ def main():
             for net in m['netnames'].values():net['attributes']['keep']='1'
         if name=='shared_outputs':m['ports']['observe']={'direction':'output','bits':[c['connections']['Y'][0] for c in m['cells'].values()]}
         if name=='partial_selection':sel='top/n23'
-        fixtures.append((name,d,sel,True))
+        fixtures.append((name,d,sel,name not in ('shared_outputs','partial_selection')))
     # Unsupported or invalid cones must remain intact, not be evaluated as don't-cares.
     for name in ('multidriver','x_input','x_truth','cycle'):
         m={'attributes':{},'ports':{'a':{'direction':'input','bits':[2]},'y':{'direction':'output','bits':[5]}},'netnames':{},'cells':{'n0':cell([2],3,2),'n1':cell([3],4,2),'n2':cell([4],5,2)}}
@@ -35,13 +35,28 @@ def main():
         if name=='x_truth':m['cells']['n0']['parameters']['LUT']='x0'
         if name=='cycle':m['cells']['n0']['connections']['A']=[4]
         fixtures.append((name,{'modules':{'top':m}},'',False))
+    # Port queries must honor named design modules and conservatively pin
+    # unknown interfaces. An observed/private driver cannot be removed.
+    for direction in ('input','output','inout','unknown'):
+        name='interface_'+direction
+        m={'attributes':{},'ports':{'a':{'direction':'input','bits':[2]},'y':{'direction':'output','bits':[5]}},'netnames':{},'cells':{'n0':cell([2],3,2),'n1':cell([3],4,2),'n2':cell([4],5,2)}}
+        m['cells']['observe']={'hide_name':0,'type':'iface','parameters':{},'attributes':{},'connections':{'P':[3]},'port_directions':{'P':'input' if direction=='unknown' else direction}}
+        d={'modules':{'top':m}}
+        if direction!='unknown':
+            d['modules']['iface']={'attributes':{'blackbox':'1'},'ports':{'P':{'direction':direction,'bits':[2]}},'cells':{},'netnames':{'P':{'hide_name':0,'bits':[2],'attributes':{}}}}
+        fixtures.append((name,d,'top',False))
     for name,d,selection,identity in fixtures:
         folder=out/name;folder.mkdir(exist_ok=True);(folder/'input.json').write_text(json.dumps(d))
         ys=f'read_json {folder}/input.json\nwrite_json {folder}/canonical.json\npmux_opt -lut {selection}\nwrite_json {folder}/output.json\n'
-        (folder/'run.ys').write_text(ys);h.run(['yosys','-m',str(ns.plugin.resolve()),'-s',str(folder/'run.ys')],folder/'run.log')
+        (folder/'run.ys').write_text(ys);h.run((['yosys','-m',str(ns.plugin.resolve())] if ns.plugin else [str(ns.yosys.resolve())])+['-s',str(folder/'run.ys')],folder/'run.log')
         transformed=json.loads((folder/'output.json').read_text())['modules']['top'];original=json.loads((folder/'canonical.json').read_text())['modules']['top']
         if identity:assert transformed['cells']==original['cells'],name
-        if name in ('multidriver','x_input','x_truth','cycle'):
+        if name=='shared_outputs':
+            assert set(transformed['cells'])==set(original['cells']),name
+            assert all(transformed['cells'][n]['connections']['Y']==c['connections']['Y'] for n,c in original['cells'].items()),name
+        if name=='partial_selection':
+            assert all(transformed['cells'].get(n)==c for n,c in original['cells'].items() if n!='n23'),name
+        if name in ('multidriver','x_input','x_truth','cycle') or name.startswith('interface_'):
             assert transformed['cells']['n0']==original['cells']['n0'],name
             if name=='multidriver':assert transformed['cells']['duplicate']==original['cells']['duplicate']
             results[name]='protected boundary PASS';continue

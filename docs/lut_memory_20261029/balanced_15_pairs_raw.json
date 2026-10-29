@@ -1,0 +1,212 @@
+[
+  {
+    "stock": {
+      "wall_ms": 184.3480289999775,
+      "peak_kib": 27688
+    },
+    "old": {
+      "wall_ms": 188.75269199998002,
+      "peak_kib": 28704
+    },
+    "candidate": {
+      "wall_ms": 183.17345100001603,
+      "peak_kib": 26272
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 184.76127600001746,
+      "peak_kib": 27616
+    },
+    "old": {
+      "wall_ms": 181.14974899998515,
+      "peak_kib": 28628
+    },
+    "candidate": {
+      "wall_ms": 164.7325480000177,
+      "peak_kib": 26336
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 187.4093920000064,
+      "peak_kib": 27480
+    },
+    "old": {
+      "wall_ms": 175.9530979999795,
+      "peak_kib": 28628
+    },
+    "candidate": {
+      "wall_ms": 173.13264400002026,
+      "peak_kib": 26236
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 193.99436399999104,
+      "peak_kib": 27600
+    },
+    "old": {
+      "wall_ms": 177.2504000000481,
+      "peak_kib": 28712
+    },
+    "candidate": {
+      "wall_ms": 167.56854299995894,
+      "peak_kib": 26032
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 183.93825700002253,
+      "peak_kib": 27756
+    },
+    "old": {
+      "wall_ms": 173.09265200003665,
+      "peak_kib": 28604
+    },
+    "candidate": {
+      "wall_ms": 167.65503099998114,
+      "peak_kib": 26636
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 185.71623700000828,
+      "peak_kib": 27688
+    },
+    "old": {
+      "wall_ms": 174.9451310000154,
+      "peak_kib": 28724
+    },
+    "candidate": {
+      "wall_ms": 166.56794800002217,
+      "peak_kib": 26552
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 186.50926600003004,
+      "peak_kib": 27392
+    },
+    "old": {
+      "wall_ms": 176.43918200002418,
+      "peak_kib": 28608
+    },
+    "candidate": {
+      "wall_ms": 167.84390300000496,
+      "peak_kib": 26292
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 185.24162400001387,
+      "peak_kib": 27608
+    },
+    "old": {
+      "wall_ms": 173.41529100002617,
+      "peak_kib": 29080
+    },
+    "candidate": {
+      "wall_ms": 167.09236299999475,
+      "peak_kib": 26280
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 187.90065100000675,
+      "peak_kib": 27640
+    },
+    "old": {
+      "wall_ms": 173.253926999962,
+      "peak_kib": 28400
+    },
+    "candidate": {
+      "wall_ms": 168.35153699997818,
+      "peak_kib": 26120
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 183.14603699997178,
+      "peak_kib": 27468
+    },
+    "old": {
+      "wall_ms": 177.00596299999916,
+      "peak_kib": 28748
+    },
+    "candidate": {
+      "wall_ms": 167.7510729999767,
+      "peak_kib": 26324
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 185.26710600002616,
+      "peak_kib": 27200
+    },
+    "old": {
+      "wall_ms": 174.68545899998844,
+      "peak_kib": 28712
+    },
+    "candidate": {
+      "wall_ms": 170.61011200001985,
+      "peak_kib": 26076
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 186.58777000001692,
+      "peak_kib": 27584
+    },
+    "old": {
+      "wall_ms": 176.26723200004335,
+      "peak_kib": 28692
+    },
+    "candidate": {
+      "wall_ms": 170.27447700002085,
+      "peak_kib": 26064
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 190.9900850000099,
+      "peak_kib": 27896
+    },
+    "old": {
+      "wall_ms": 172.36275499999465,
+      "peak_kib": 28648
+    },
+    "candidate": {
+      "wall_ms": 167.76039499995932,
+      "peak_kib": 26596
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 189.2628269999932,
+      "peak_kib": 27700
+    },
+    "old": {
+      "wall_ms": 173.87333699997498,
+      "peak_kib": 28672
+    },
+    "candidate": {
+      "wall_ms": 176.02245799997718,
+      "peak_kib": 26192
+    }
+  },
+  {
+    "stock": {
+      "wall_ms": 183.65394400001378,
+      "peak_kib": 27608
+    },
+    "old": {
+      "wall_ms": 171.21915399997079,
+      "peak_kib": 28380
+    },
+    "candidate": {
+      "wall_ms": 166.20119599997452,
+      "peak_kib": 26192
+    }
+  }
+]
