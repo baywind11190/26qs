@@ -1,0 +1,29 @@
+--- a/techlibs/intel/synth_intel.cc
++++ b/techlibs/intel/synth_intel.cc
+@@ -209,6 +209,8 @@
+ 			run("opt -nodffe -nosdff");
+ 			run("fsm");
+ 			run("opt");
++			run("pmux_opt -arith");
++			run("pmux_opt");
+ 			run("wreduce");
+ 			run("peepopt");
+ 			run("opt_clean");
+@@ -268,6 +270,7 @@
+ 			run("opt -fast");
+ 			run("autoname");
+ 			run("clean");
++			run("pmux_opt -lut");
+ 		}
+ 
+ 		if (check_label("map_cells")) {
+--- a/passes/opt/CMakeLists.txt
++++ b/passes/opt/CMakeLists.txt
+@@ -91,3 +91,7 @@
+ 	peepopt.cc
+ 	${PMGEN_peepopt_OUTPUT}
+ )
++
++yosys_pass(pmux_opt
++	pmux_opt.cc
++)

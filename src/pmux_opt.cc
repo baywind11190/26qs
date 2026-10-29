@@ -65,7 +65,7 @@ PRIVATE_NAMESPACE_BEGIN
 
 struct LocalLutBudget
 {
-    int cuts = 16384, work = 2000000, rewrites = 64;
+    int cuts = 768, work = 250000, rewrites = 64;
     bool spend() { if (work == 0) return false; --work; return true; }
 };
 
@@ -81,6 +81,9 @@ struct LocalLutGraph
     std::vector<std::vector<RTLIL::SigBit>> inputs;
     std::vector<RTLIL::SigBit> results;
     std::vector<unsigned> functions;
+    dict<RTLIL::SigBit,int> driver_indices;
+    std::vector<std::vector<int>> user_indices;
+    std::vector<bool> externally_live;
 
     LocalLutGraph(const CellTypes &types, RTLIL::Module *mod) : module(mod), sigmap(mod)
     {
@@ -127,13 +130,24 @@ struct LocalLutGraph
             inputs.emplace_back(a.begin(), a.end());
             results.push_back(sigmap(cells[i]->getPort(ID::Y)).as_bit());
             functions.push_back(cells[i]->getParam(ID::LUT).as_int());
+            driver_indices[results.back()]=i;
+        }
+        for(int i=0;i<GetSize(cells);i++) {
+            bool live=outputs.count(results[i])||pinned.count(results[i]);
+            std::vector<int> known_users;
+            for(auto user:users[results[i]]) {
+                auto it=index.find(user);
+                if(it==index.end())live=true;
+                else known_users.push_back(it->second);
+            }
+            externally_live.push_back(live);user_indices.push_back(std::move(known_users));
         }
     }
 
     int driver(RTLIL::SigBit bit) const
     {
-        if (!drivers.count(bit) || !index.count(drivers.at(bit))) return -1;
-        return index.at(drivers.at(bit));
+        auto it=driver_indices.find(bit);
+        return it==driver_indices.end()?-1:it->second;
     }
 };
 
@@ -142,8 +156,9 @@ struct LocalLutChoice
     int root = -1;
     std::vector<int> remove;
     std::vector<RTLIL::SigBit> free, bound;
-    unsigned encoded = 0, truth = 0;
-    int saved() const { return GetSize(remove) - (bound.empty() ? 0 : 1); }
+    unsigned encoded = 0, encoded_hi = 0, truth = 0;
+    int encoded_bits = 1;
+    int saved() const { return GetSize(remove) - (bound.empty() ? 0 : encoded_bits); }
 };
 
 // Up to eight boundary variables: one bit per assignment, at most four words.
@@ -151,6 +166,24 @@ struct LocalLutTruth
 {
     std::array<uint64_t, 4> words{};
     bool operator[](int address) const { return (words[address >> 6] >> (address & 63)) & 1; }
+
+    bool depends_on(int bit, int size) const
+    {
+        int count = (size + 63) / 64;
+        if (bit < 6) {
+            uint64_t lower = ~variable(bit).words[0];
+            uint64_t valid = size < 64 ? (UINT64_C(1) << size) - 1 : ~uint64_t(0);
+            for (int w = 0; w < count; w++)
+                if ((words[w] ^ (words[w] >> (1 << bit))) & lower & valid)
+                    return true;
+        } else {
+            int step = 1 << (bit - 6);
+            for (int w = 0; w < count; w++)
+                if (!(w & step) && words[w] != words[w | step])
+                    return true;
+        }
+        return false;
+    }
 
     static LocalLutTruth constant(bool value)
     {
@@ -190,15 +223,40 @@ struct LocalLutTruth
     }
 };
 
-static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
+// Exact membership only: traversal still follows the original todo stack.
+// At most 2000 unique cuts per root, with a half-full fixed table.
+struct LocalLutSeen {
+    struct Entry { std::array<int,6> nodes{}; unsigned epoch=0; int size=0; };
+    std::unique_ptr<Entry[]> entries{new Entry[4096]};
+    unsigned epoch=0; int count=0;
+    void reset() { ++epoch; count=0; }
+    int size() const { return count; }
+    bool insert(const std::vector<int> &cone) {
+        uint32_t hash=2166136261u;
+        for(int n:cone) hash=(hash ^ uint32_t(n))*16777619u;
+        hash=(hash ^ uint32_t(cone.size()))*16777619u;
+        unsigned slot=hash & 4095;
+        for(;;slot=(slot+1)&4095) {
+            auto &e=entries[slot];
+            if(e.epoch!=epoch) {
+                e.epoch=epoch;e.size=GetSize(cone);
+                std::copy(cone.begin(),cone.end(),e.nodes.begin());++count;return true;
+            }
+            if(e.size==GetSize(cone)&&std::equal(cone.begin(),cone.end(),e.nodes.begin()))return false;
+        }
+    }
+};
+
+static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget, bool three = false)
 {
     LocalLutChoice best;
+    LocalLutSeen seen;
     for (int root = 0; root < GetSize(g.cells) && budget.cuts && budget.work; root++) {
-        std::set<std::vector<int>> seen;
+        seen.reset();
         std::vector<std::vector<int>> todo = {{root}};
         while (!todo.empty() && GetSize(seen) < 2000 && budget.cuts && budget.work) {
             auto cone = todo.back(); todo.pop_back();
-            if (!seen.insert(cone).second) continue;
+            if (!seen.insert(cone)) continue;
             --budget.cuts;
             auto inside = [&](int n) { return std::binary_search(cone.begin(), cone.end(), n); };
             // A cut has at most six LUT4 nodes: collect at most 24 bits in
@@ -217,10 +275,9 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
             while (changed) {
                 changed = false;
                 for (auto it = removable.begin(); it != removable.end();) {
-                    int n = *it; bool live = g.outputs.count(g.results[n]) || g.pinned.count(g.results[n]);
-                    for (auto user : g.users[g.results[n]])
-                        if (user != g.cells[root] && (!g.index.count(user) ||
-                            !std::binary_search(removable.begin(), removable.end(), g.index.at(user)))) live = true;
+                    int n = *it; bool live = g.externally_live[n];
+                    for (int user : g.user_indices[n])
+                        if (user != root && !std::binary_search(removable.begin(), removable.end(), user)) live = true;
                     if (live) { it = removable.erase(it); changed = true; } else ++it;
                 }
             }
@@ -231,11 +288,14 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
                 std::vector<LocalLutTruth> leaf_values;
                 for (int k = 0; k < GetSize(leaves); k++) leaf_values.push_back(LocalLutTruth::variable(k));
                 auto zeros = LocalLutTruth::constant(false), ones = LocalLutTruth::constant(true);
-                std::map<int, LocalLutTruth> memo;
-                std::set<int> active;
+                std::array<LocalLutTruth, 6> memo;
+                std::array<bool, 6> ready{}, active{};
+                auto slot = [&](int n) { return int(std::lower_bound(cone.begin(), cone.end(), n) - cone.begin()); };
                 std::function<bool(int)> eval = [&](int n) -> bool {
-                    if (memo.count(n)) return true;
-                    if (!active.insert(n).second) return false;
+                    int position = slot(n);
+                    if (ready[position]) return true;
+                    if (active[position]) return false;
+                    active[position] = true;
                     std::array<const LocalLutTruth *, 4> tables{};
                     int width = 0;
                     for (auto bit : g.inputs[n]) {
@@ -246,7 +306,7 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
                             else {
                                 int source = g.driver(bit);
                                 if (source < 0 || !inside(source) || !eval(source)) return false;
-                                tables[width++] = &memo.at(source);
+                                tables[width++] = &memo[slot(source)];
                             }
                         }
                     }
@@ -255,16 +315,14 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
                     if (budget.work < size) { budget.work = 0; return false; }
                     budget.work -= size;
                     auto result = LocalLutTruth::evaluate(g.functions[n], tables, width, (size + 63) / 64);
-                    memo.emplace(n, std::move(result)); active.erase(n); return true;
+                    memo[position] = std::move(result); ready[position] = true; active[position] = false; return true;
                 };
                 bool valid = eval(root);
                 if (valid) {
-                    const auto &values = memo.at(root);
+                    const auto &values = memo[slot(root)];
                     std::vector<int> support;
                     for (int k = 0; k < GetSize(leaves); k++) {
-                        bool depends = false;
-                        for (int a = 0; a < size; a++) if (values[a] != values[a ^ (1 << k)]) { depends = true; break; }
-                        if (depends) support.push_back(k);
+                        if (values.depends_on(k, size)) support.push_back(k);
                     }
                     LocalLutChoice choice; choice.root = root;
                     choice.remove.assign(removable.begin(), removable.end());
@@ -276,33 +334,39 @@ static LocalLutChoice find_local_lut(LocalLutGraph &g, LocalLutBudget &budget)
                             choice.truth |= unsigned(values[key]) << a;
                         }
                         if (choice.saved() > best.saved()) best = choice;
-                    } else if (GetSize(removable) >= 2 && GetSize(support) <= 7) {
+                    } else if (GetSize(removable) >= (three ? 3 : 2) && GetSize(support) <= (three ? 6 : 7)) {
                         bool found = false;
-                        for (int width = std::max(2, GetSize(support) - 3); width <= 4 && !found && budget.work; width++) {
+                        for (int width = std::max(2, GetSize(support) - (three ? 2 : 3)); width <= 4 && !found && budget.work; width++) {
                             for (int bits = 0; bits < (1 << GetSize(support)) && !found && budget.work; bits++) {
                                 if (__builtin_popcount(unsigned(bits)) != width) continue;
                                 std::vector<int> bound, free;
                                 for (int j = 0; j < GetSize(support); j++) ((bits >> j) & 1 ? bound : free).push_back(support[j]);
-                                std::vector<unsigned> classes; unsigned encoding = 0; bool ok = true;
+                                std::array<int, 16> bound_keys{};
+                                std::array<int, 8> free_keys{};
+                                for (int b = 0; b < (1 << width); b++)
+                                    for (int j = 0; j < width; j++) bound_keys[b] |= ((b >> j) & 1) << bound[j];
+                                for (int f = 0; f < (1 << GetSize(free)); f++)
+                                    for (int j = 0; j < GetSize(free); j++) free_keys[f] |= ((f >> j) & 1) << free[j];
+                                std::vector<unsigned> classes; unsigned encoding = 0, encoding_hi = 0; bool ok = true;
                                 for (int b = 0; b < (1 << width) && ok; b++) {
                                     unsigned cofactor = 0;
                                     for (int f = 0; f < (1 << GetSize(free)); f++) {
                                         if (!budget.spend()) { ok = false; break; }
-                                        int key = 0;
-                                        for (int j = 0; j < width; j++) key |= ((b >> j) & 1) << bound[j];
-                                        for (int j = 0; j < GetSize(free); j++) key |= ((f >> j) & 1) << free[j];
+                                        int key = bound_keys[b] | free_keys[f];
                                         cofactor |= unsigned(values[key]) << f;
                                     }
                                     auto it = std::find(classes.begin(), classes.end(), cofactor);
                                     if (it == classes.end()) { classes.push_back(cofactor); it = classes.end() - 1; }
-                                    if (GetSize(classes) > 2) ok = false;
-                                    else encoding |= unsigned(it - classes.begin()) << b;
+                                    if (GetSize(classes) > (three ? 4 : 2)) ok = false;
+                                    else {unsigned code=unsigned(it-classes.begin());encoding|=(code&1)<<b;encoding_hi|=((code>>1)&1)<<b;}
                                 }
-                                if (!ok || GetSize(classes) != 2) continue;
+                                if (!ok || GetSize(classes) < 2) continue;
                                 for (int k : bound) choice.bound.push_back(leaves[k]);
                                 for (int k : free) choice.free.push_back(leaves[k]);
-                                choice.encoded = encoding;
-                                choice.truth = classes[0] | (classes[1] << (1 << GetSize(free)));
+                                choice.encoded = encoding;choice.encoded_hi=encoding_hi;choice.encoded_bits=GetSize(classes)>2?2:1;
+                                choice.truth=0;
+                                for(int code=0;code<(1<<choice.encoded_bits);code++)
+                                    choice.truth|=(code<GetSize(classes)?classes[code]:classes[0])<<(code*(1<<GetSize(free)));
                                 if (choice.saved() > best.saved()) best = choice;
                                 found = true;
                             }
@@ -337,6 +401,8 @@ static void optimize_local_luts(RTLIL::Design *design)
             LocalLutGraph graph(*types, module);
             if (GetSize(graph.cells) < 2) break;
             auto choice = find_local_lut(graph, budget);
+            if ((choice.root < 0 || choice.saved() <= 0) && budget.cuts && budget.work)
+                choice=find_local_lut(graph,budget,true);
             if (choice.root < 0 || choice.saved() <= 0) break;
             RTLIL::SigSpec input;
             for (auto bit : choice.free) input.append(bit);
@@ -350,6 +416,11 @@ static void optimize_local_luts(RTLIL::Design *design)
                 auto wire = module->addWire(NEW_ID);
                 module->addLut(NEW_ID, bound, wire, RTLIL::Const(choice.encoded, 1 << GetSize(bound)));
                 input.append(wire);
+                if(choice.encoded_bits==2) {
+                    auto high=module->addWire(NEW_ID);
+                    module->addLut(NEW_ID,bound,high,RTLIL::Const(choice.encoded_hi,1<<GetSize(bound)));
+                    input.append(high);
+                }
             }
             auto root = graph.cells[choice.root];
             root->setPort(ID::A, input);
@@ -359,7 +430,7 @@ static void optimize_local_luts(RTLIL::Design *design)
             saved += choice.saved(); ++rewrites; --budget.rewrites;
         }
     }
-    log("7.1 local LUT: %d rewrites, %d LUTs removed; cuts %d, work %d.\n", rewrites, saved, 16384 - budget.cuts, 2000000 - budget.work);
+    log("7.1 local LUT: %d rewrites, %d LUTs removed; cuts %d, work %d.\n", rewrites, saved, 768 - budget.cuts, 250000 - budget.work);
 }
 
 
@@ -850,6 +921,694 @@ struct EnableFeedback
     }
 };
 
+// Early arithmetic sharing from mutually exclusive decoded PMUX branches.
+static void optimize_arithmetic_share(Design *design)
+{
+    constexpr bool low = false;
+    constexpr bool all = true;
+        // Sharing needs at least two arithmetic operators and a PMUX in one selected module.
+        // A type-only precheck avoids constructing driver/user maps when impossible.
+        bool possible=false;
+        for(auto module:design->selected_modules()) {
+            if(module->get_bool_attribute(ID::keep))continue;
+            int ops=0;bool pm=false;
+            for(auto c:module->selected_cells()) {
+                if(c->get_bool_attribute(ID::keep))continue;
+                ops+=(c->type==ID($add)||c->type==ID($sub));
+                pm|=c->type==ID($pmux);
+                if(ops>=2&&pm){possible=true;break;}
+            }
+            if(possible)break;
+        }
+        if(!possible){log("ARITH_SHARE total=0 all=%d\n",int(all));return;}
+        CellTypes types(design);int total=0;
+        for(auto module:design->selected_modules()) {
+            if(module->get_bool_attribute(ID::keep))continue;
+            SigMap sm(module);dict<SigBit,std::vector<Cell*>> drivers;dict<SigBit,pool<Cell*>> users;pool<SigBit> pinned;pool<Cell*> removed;
+            for(auto w:module->wires())if(w->port_output||w->port_input||w->get_bool_attribute(ID::keep)||w->attributes.count(ID::init))for(auto b:sm(w))pinned.insert(b);
+            for(auto c:module->cells())for(auto &p:c->connections())for(auto b:sm(p.second)) {
+                if(!types.cell_known(c->type))pinned.insert(b);
+                if(types.cell_output(c->type,p.first))drivers[b].push_back(c);
+                if(types.cell_input(c->type,p.first))users[b].insert(c);
+            }
+            std::vector<Cell*> parents; for(auto c:module->selected_cells()) if(c->type==ID($pmux))parents.push_back(c);
+            for(auto pmux:parents) {
+                if(pmux->type!=ID($pmux)||pmux->get_bool_attribute(ID::keep))continue;
+                int width=pmux->getParam(ID::WIDTH).as_int(),count=pmux->getParam(ID::S_WIDTH).as_int();
+                if(width<1||width>64||count<2||count>8)continue;
+                SigSpec s=sm(pmux->getPort(ID::S)),control;pool<int> values;std::vector<int> branch_values;bool valid=true;
+                for(auto sb:s) {
+                    if(!drivers.count(sb)||GetSize(drivers.at(sb))!=1){valid=false;break;}
+                    Cell*d=drivers.at(sb)[0];if(removed.count(d)||d->get_bool_attribute(ID::keep)){valid=false;break;}
+                    SigSpec signal;Const value;
+                    if(d->type==ID($logic_not)){signal=sm(d->getPort(ID::A));value=Const(0,GetSize(signal));}
+                    else if(d->type==ID($eq)) {
+                        signal=sm(d->getPort(ID::A));SigSpec constant=sm(d->getPort(ID::B));
+                        if(signal.is_fully_const())std::swap(signal,constant);
+                        if(!constant.is_fully_const()||!constant.as_const().is_fully_def()||GetSize(signal)!=GetSize(constant)||d->getParam(ID::A_SIGNED).as_bool()||d->getParam(ID::B_SIGNED).as_bool()){valid=false;break;}
+                        value=constant.as_const();
+                    }else{valid=false;break;}
+                    if(GetSize(signal)<2||GetSize(signal)>3){valid=false;break;}
+                    for(auto bit:signal)if(bit.wire==nullptr)valid=false;
+                    if(GetSize(control)==0)control=signal;
+                    if(signal!=control||!values.insert(value.as_int()).second){valid=false;break;} branch_values.push_back(value.as_int());
+                }
+                if(!valid)continue;
+                auto data_at=[&](int slot){return sm(slot==count?pmux->getPort(ID::A):pmux->getPort(ID::B).extract(slot*width,width));};
+                auto private_op=[&](int slot)->Cell* {
+                    SigSpec data=data_at(slot);if(GetSize(data)!=width||data[0].wire==nullptr||!drivers.count(data[0])||GetSize(drivers.at(data[0]))!=1)return nullptr;
+                    Cell*c=drivers.at(data[0])[0];if(removed.count(c)||!module->selected(c)||c->get_bool_attribute(ID::keep)||(c->type!=ID($add)&&c->type!=ID($sub)))return nullptr;
+                    if(c->getParam(ID::A_SIGNED).as_bool()||c->getParam(ID::B_SIGNED).as_bool()||GetSize(c->getPort(ID::A))!=width||GetSize(c->getPort(ID::B))!=width||sm(c->getPort(ID::Y))!=data)return nullptr;
+                    SigSpec all_data=sm(pmux->getPort(ID::B));all_data.append(sm(pmux->getPort(ID::A)));
+                    pool<SigBit> distinct;
+                    for(auto bit:data){int occurrences=0;for(auto x:all_data)if(x==bit)occurrences++;
+                        if(bit.wire==nullptr||pinned.count(bit)||!distinct.insert(bit).second||occurrences!=1||GetSize(drivers[bit])!=1||GetSize(users[bit])!=1||!users[bit].count(pmux))return nullptr;}
+                    return c;
+                };
+                SigSpec default_select;pool<int> used;
+                auto select_slot=[&](int slot)->SigSpec {
+                    if(slot<count)return pmux->getPort(ID::S).extract(slot,1);
+                    if(GetSize(default_select)==0){SigSpec any=module->ReduceOr(NEW_ID,pmux->getPort(ID::S));default_select=module->Not(NEW_ID,any);}
+                    return default_select;
+                };
+
+                // The shared result is observed only under these two slots.
+                // A raw address bit may distinguish them without decoding all bits.
+                auto select_pair=[&](int target,int other)->SigSpec {
+                    auto separates=[&](int bit,int polarity) {
+                        bool seen_target=false,seen_other=false;
+                        for(int address=0;address<(1<<GetSize(control));address++) {
+                            int slot=count;
+                            for(int k=0;k<count;k++)if(branch_values[k]==address){slot=k;break;}
+                            if(slot==target){seen_target=true;if(((address>>bit)&1)!=polarity)return false;}
+                            if(slot==other){seen_other=true;if(((address>>bit)&1)==polarity)return false;}
+                        }
+                        return seen_target&&seen_other;
+                    };
+                    for(int pass=0;pass<2;pass++)for(int bit=0;bit<GetSize(control);bit++) {
+                        int actual_bit=low?pass:bit,polarity=low?bit:1-pass;
+                        // Low-bit ordering is handled separately below.
+                        if(low)break;
+                        if(separates(actual_bit,polarity))return polarity?control.extract(actual_bit,1):module->Not(NEW_ID,control.extract(actual_bit,1));
+                    }
+                    if(low)for(int bit=0;bit<GetSize(control);bit++)for(int polarity=1;polarity>=0;polarity--)
+                        if(separates(bit,polarity))return polarity?control.extract(bit,1):module->Not(NEW_ID,control.extract(bit,1));
+                    return select_slot(target);
+                };
+                auto replace_slot=[&](int slot,SigSpec data){if(slot==count)pmux->setPort(ID::A,data);else{SigSpec v=pmux->getPort(ID::B);v.replace(slot*width,data);pmux->setPort(ID::B,v);}};
+                auto table_mux=[&](const std::vector<SigSpec>& table) {
+                    std::function<SigSpec(int,int)> build=[&](int bit,int prefix)->SigSpec {
+                        if(bit==GetSize(control))return table[prefix];
+                        SigSpec lo=build(bit+1,prefix),hi=build(bit+1,prefix|(1<<bit));
+                        return lo==hi?lo:module->Mux(NEW_ID,lo,hi,control.extract(bit,1));
+                    };
+                    return build(0,0);
+                };
+                {
+                    std::vector<int> slots;std::vector<Cell*> ops;
+                    for(int slot=0;slot<=count;slot++) {
+                        Cell*c=private_op(slot);if(!c)continue;
+                        bool is_xor=c->type==ID($xor);
+                        if(is_xor)continue;
+                        slots.push_back(slot);ops.push_back(c);
+                    }
+
+                if(width>=4&&GetSize(ops)>=3) {
+                    std::vector<SigSpec> left_table,right_table,mode_table;
+                    for(int address=0;address<(1<<GetSize(control));address++) {
+                        int slot=count;for(int k=0;k<count;k++)if(branch_values[k]==address){slot=k;break;}
+                        Cell*op=ops[0];for(int k=0;k<GetSize(ops);k++)if(slots[k]==slot){op=ops[k];break;}
+                        left_table.push_back(sm(op->getPort(ID::A)));right_table.push_back(sm(op->getPort(ID::B)));
+                        mode_table.push_back(SigSpec(op->type==ID($sub)?State::S1:State::S0));
+                    }
+                    SigSpec left=table_mux(left_table),right=table_mux(right_table),result=module->addWire(NEW_ID,width);
+                    bool has_add=false,has_sub=false;for(auto op:ops){has_add|=op->type==ID($add);has_sub|=op->type==ID($sub);}
+                    if(!has_sub)module->addAdd(NEW_ID,left,right,result);
+                    else if(!has_add)module->addSub(NEW_ID,left,right,result);
+                    else {
+                        SigSpec mode=table_mux(mode_table);Cell*alu=module->addCell(NEW_ID,ID($alu));
+                        alu->setParam(ID::A_SIGNED,0);alu->setParam(ID::B_SIGNED,0);alu->setParam(ID::A_WIDTH,width);alu->setParam(ID::B_WIDTH,width);alu->setParam(ID::Y_WIDTH,width);
+                        alu->setPort(ID::A,left);alu->setPort(ID::B,right);alu->setPort(ID::BI,mode);alu->setPort(ID::CI,mode);alu->setPort(ID::Y,result);alu->setPort(ID::X,module->addWire(NEW_ID,width));alu->setPort(ID::CO,module->addWire(NEW_ID,width));
+                    }
+                    for(int k=0;k<GetSize(ops);k++){replace_slot(slots[k],result);removed.insert(ops[k]);module->remove(ops[k]);}
+                    total++;log("ARITH_SHARE width=%d mixed=%d slots=%d group=%d family=%d\n",width,int(has_add&&has_sub),slots[0],GetSize(ops),0);
+                    continue;
+                }
+                }
+                for(int i=0;i<=count;i++) {
+                    if(used.count(i))continue;Cell*c0=private_op(i);if(!c0)continue;
+                    for(int j=count;j>i;j--) {
+                        if(used.count(j))continue;Cell*c1=private_op(j);if(!c1||c1==c0)continue;
+                        bool mixed=c0->type!=c1->type;if(!mixed&&!all)continue;
+                        SigSpec a0=sm(c0->getPort(ID::A)),b0=sm(c0->getPort(ID::B)),a1=sm(c1->getPort(ID::A)),b1=sm(c1->getPort(ID::B));
+                        SigSpec result,left,right;bool found=false;SigSpec choose;
+                        if(mixed) {
+                            Cell*add=c0->type==ID($add)?c0:c1;Cell*sub=c0->type==ID($sub)?c0:c1;
+                            SigSpec aa=sm(add->getPort(ID::A)),ab=sm(add->getPort(ID::B)),sa=sm(sub->getPort(ID::A)),sb=sm(sub->getPort(ID::B));
+                            SigSpec addother,subother,common;bool common_right=false;
+                            if(sb==aa){common=sb;addother=ab;subother=sa;common_right=true;found=true;}
+                            else if(sb==ab){common=sb;addother=aa;subother=sa;common_right=true;found=true;}
+                            else if(sa==aa){common=sa;addother=ab;subother=sb;found=true;}
+                            else if(sa==ab){common=sa;addother=aa;subother=sb;found=true;}
+                            if(!found&&width<4)continue;
+                            if(!found){found=true;result=module->addWire(NEW_ID,width);choose=select_pair(c0==sub?i:j,c0==sub?j:i);
+                                left=module->Mux(NEW_ID,aa,sa,choose);right=module->Mux(NEW_ID,ab,sb,choose);
+                                Cell*alu=module->addCell(NEW_ID,ID($alu));alu->setParam(ID::A_SIGNED,0);alu->setParam(ID::B_SIGNED,0);alu->setParam(ID::A_WIDTH,width);alu->setParam(ID::B_WIDTH,width);alu->setParam(ID::Y_WIDTH,width);
+                                alu->setPort(ID::A,left);alu->setPort(ID::B,right);alu->setPort(ID::BI,choose);alu->setPort(ID::CI,choose);alu->setPort(ID::Y,result);alu->setPort(ID::X,module->addWire(NEW_ID,width));alu->setPort(ID::CO,module->addWire(NEW_ID,width));
+                            } else {result=module->addWire(NEW_ID,width);choose=select_pair(c0==sub?i:j,c0==sub?j:i);SigSpec variable=module->Mux(NEW_ID,addother,subother,choose);
+                                left=common_right?variable:common;right=common_right?common:variable;
+                                Cell*alu=module->addCell(NEW_ID,ID($alu));alu->setParam(ID::A_SIGNED,0);alu->setParam(ID::B_SIGNED,0);alu->setParam(ID::A_WIDTH,width);alu->setParam(ID::B_WIDTH,width);alu->setParam(ID::Y_WIDTH,width);
+                                alu->setPort(ID::A,left);alu->setPort(ID::B,right);alu->setPort(ID::BI,choose);alu->setPort(ID::CI,choose);alu->setPort(ID::Y,result);alu->setPort(ID::X,module->addWire(NEW_ID,width));alu->setPort(ID::CO,module->addWire(NEW_ID,width));}
+                        } else {
+                            SigSpec common,other0,other1;bool right_common=false;
+                            if(b0==b1){common=b0;other0=a0;other1=a1;right_common=true;found=true;}
+                            else if(a0==a1){common=a0;other0=b0;other1=b1;found=true;}
+                            else if(c0->type==ID($add)&&a0==b1){common=a0;other0=b0;other1=a1;found=true;}
+                            else if(c0->type==ID($add)&&b0==a1){common=b0;other0=a0;other1=b1;right_common=true;found=true;}
+                            if(!found&&width<4)continue;
+                            if(!found){found=true;result=module->addWire(NEW_ID,width);choose=select_pair(j,i);
+                                left=module->Mux(NEW_ID,a0,a1,choose);right=module->Mux(NEW_ID,b0,b1,choose);
+                                if(c0->type==ID($add))module->addAdd(NEW_ID,left,right,result);else module->addSub(NEW_ID,left,right,result);
+                            } else {result=module->addWire(NEW_ID,width);choose=select_pair(j,i);SigSpec variable=module->Mux(NEW_ID,other0,other1,choose);left=right_common?variable:common;right=right_common?common:variable;
+                                if(c0->type==ID($add))module->addAdd(NEW_ID,left,right,result);else module->addSub(NEW_ID,left,right,result);}
+                        }
+                        if(!found)continue;
+                        replace_slot(i,result);replace_slot(j,result);used.insert(i);used.insert(j);
+                        removed.insert(c0);removed.insert(c1);module->remove(c0);module->remove(c1);total++;
+                        log("ARITH_SHARE width=%d mixed=%d slots=%d,%d\n",width,int(mixed),i,j);break;
+                    }
+                }
+            }
+        }
+        log("ARITH_SHARE total=%d all=%d\n",total,int(all));
+
+}
+
+
+static std::pair<int,int> optimize_priority_mux(RTLIL::Module *module)
+{
+int total_h3_candidates=0,total_h3_rebuilt=0;
+    if (module->get_bool_attribute(ID::keep)) return {0,0};
+
+            std::vector<RTLIL::Cell *> h3_muxes;
+
+            for (auto cell : module->cells())
+            {
+                if (cell->type != ID($mux) || !module->selected(cell) || cell->get_bool_attribute(ID::keep))
+                    continue;
+
+                int width =
+                    cell->getParam(ID::WIDTH).as_int();
+
+                const RTLIL::SigSpec &a = cell->getPort(ID::A);
+
+                const RTLIL::SigSpec &b = cell->getPort(ID::B);
+
+                const RTLIL::SigSpec &sel = cell->getPort(ID::S);
+
+                const RTLIL::SigSpec &y = cell->getPort(ID::Y);
+
+                if (width <= 0)
+                    continue;
+
+                if (GetSize(a) != width ||
+                    GetSize(b) != width ||
+                    GetSize(y) != width ||
+                    GetSize(sel) != 1)
+                    continue;
+
+                h3_muxes.push_back(cell);
+            }
+
+            // 5.1 requires depth >= 3. SigMap preserves signal widths, so
+            // the existing port-shape filter needs no canonicalization.
+            // This is the last analysis in the module; skip it when no
+            // three-cell chain can exist, before building the full map.
+            if (h3_muxes.size() < 3)
+                return {0,0};
+
+            SigMap h3_sigmap(module);
+
+            // Index original canonical vectors; defer deletion until the scan ends.
+            // preserve all drivers so ambiguous child matches still reject.
+            dict<RTLIL::SigSpec, std::vector<RTLIL::Cell *>> h3_by_a, h3_by_y;
+            for (auto cell : h3_muxes) {
+                h3_by_a[h3_sigmap(cell->getPort(ID::A))].push_back(cell);
+                h3_by_y[h3_sigmap(cell->getPort(ID::Y))].push_back(cell);
+            }
+
+            /*
+             * 当前 mux 的 Y 如果接到另一个 mux 的 A，
+             * 那它就不是整条链最靠近输出的一层。
+             */
+            auto h3_has_parent =
+                [&](RTLIL::Cell *cell) -> bool
+            {
+                RTLIL::SigSpec y =
+                    h3_sigmap(
+                        cell->getPort(ID::Y));
+
+                auto it = h3_by_a.find(y);
+                if (it != h3_by_a.end())
+                    for (auto other : it->second)
+                        if (other != cell)
+                            return true;
+
+                return false;
+            };
+
+
+            /*
+             * 查找某个 A 是否来自另一个同宽 mux 的 Y。
+             */
+            auto h3_find_child =
+                [&](const RTLIL::SigSpec &a,
+                    int width,
+                    bool &ambiguous)
+                    -> RTLIL::Cell *
+            {
+                ambiguous = false;
+                if (GetSize(a) != width) return nullptr;
+                auto it = h3_by_y.find(a);
+                if (it == h3_by_y.end()) return nullptr;
+                ambiguous = it->second.size() > 1;
+                return ambiguous ? nullptr : it->second.front();
+            };
+
+
+
+            // Build input users only when a chain reaches the privacy check.
+            // Invalidate after a rewrite because selector ports and new gates
+            // change consumers. Canonical bit keys retain partial overlaps.
+            using H3User = std::pair<RTLIL::Cell *, RTLIL::IdString>;
+            dict<RTLIL::SigBit, pool<H3User>> h3_users;
+            pool<RTLIL::SigBit> h3_output_bits;
+            pool<RTLIL::SigBit> h3_preserved_bits;
+            for (auto wire : module->wires())
+                if (wire->get_bool_attribute(ID::keep) || wire->attributes.count(ID::init))
+                    for (auto bit : h3_sigmap(RTLIL::SigSpec(wire))) h3_preserved_bits.insert(bit);
+            bool h3_users_ready = false;
+            auto h3_prepare_users = [&]() {
+                if (h3_users_ready) return;
+                h3_users.clear();
+                h3_output_bits.clear();
+                for (auto cell : module->cells())
+                    for (auto &port : cell->connections()) if (cell->input(port.first))
+                        for (auto bit : h3_sigmap(port.second))
+                            h3_users[bit].insert(H3User(cell, port.first));
+                for (auto wire : module->wires()) if (wire->port_output)
+                    for (auto bit : h3_sigmap(RTLIL::SigSpec(wire))) h3_output_bits.insert(bit);
+                h3_users_ready = true;
+            };
+
+
+            /*
+             * 中间 mux 的 Y 必须是私有链路：
+             *
+             * child.Y 只能被 parent.A 使用。
+             *
+             * 如果还被其他 cell 输入或 module output 使用，
+             * rewrite 会改变可观察的中间值，因此拒绝优化。
+             */
+            auto h3_intermediate_is_private =
+                [&](RTLIL::Cell *child,
+                    RTLIL::Cell *parent)
+                    -> bool
+            {
+                RTLIL::SigSpec y =
+                    h3_sigmap(
+                        child->getPort(ID::Y));
+
+                h3_prepare_users();
+                bool saw_expected_parent = false;
+                for (auto bit : y) {
+                    if (h3_output_bits.count(bit) || h3_preserved_bits.count(bit)) return false;
+                    auto it = h3_users.find(bit);
+                    if (it == h3_users.end()) continue;
+                    for (auto &user : it->second) {
+                        if (user.first != parent || user.second != ID::A) return false;
+                        saw_expected_parent = true;
+                    }
+                }
+                return saw_expected_parent && h3_sigmap(parent->getPort(ID::A)) == y;
+            };
+
+
+            /*
+             * 创建 1-bit $not。
+             */
+            auto h3_make_not =
+                [&](RTLIL::SigSpec input)
+                    -> RTLIL::SigSpec
+            {
+                RTLIL::Wire *wire =
+                    module->addWire(
+                        NEW_ID,
+                        1);
+
+                RTLIL::Cell *cell =
+                    module->addCell(
+                        NEW_ID,
+                        ID($not));
+
+                cell->setParam(
+                    ID::A_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::A_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::Y_WIDTH,
+                    1);
+
+                cell->setPort(
+                    ID::A,
+                    input);
+
+                cell->setPort(
+                    ID::Y,
+                    RTLIL::SigSpec(wire));
+
+                return RTLIL::SigSpec(wire);
+            };
+
+
+            /*
+             * 创建 1-bit $and。
+             */
+            auto h3_make_and =
+                [&](RTLIL::SigSpec lhs,
+                    RTLIL::SigSpec rhs)
+                    -> RTLIL::SigSpec
+            {
+                RTLIL::Wire *wire =
+                    module->addWire(
+                        NEW_ID,
+                        1);
+
+                RTLIL::Cell *cell =
+                    module->addCell(
+                        NEW_ID,
+                        ID($and));
+
+                cell->setParam(
+                    ID::A_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::B_SIGNED,
+                    0);
+
+                cell->setParam(
+                    ID::A_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::B_WIDTH,
+                    1);
+
+                cell->setParam(
+                    ID::Y_WIDTH,
+                    1);
+
+                cell->setPort(
+                    ID::A,
+                    lhs);
+
+                cell->setPort(
+                    ID::B,
+                    rhs);
+
+                cell->setPort(
+                    ID::Y,
+                    RTLIL::SigSpec(wire));
+
+                return RTLIL::SigSpec(wire);
+            };
+
+
+            pool<RTLIL::Cell *> h3_removed;
+            for (auto start : h3_muxes)
+            {
+                if (h3_removed.count(start)) continue;
+                /*
+                 * 只从最高优先级、最靠近输出的一层开始，
+                 * 防止同一条链重复报告。
+                 */
+                if (h3_has_parent(start))
+                    continue;
+
+                int width =
+                    start->getParam(ID::WIDTH).as_int();
+
+                std::vector<RTLIL::Cell *> chain;
+                std::vector<RTLIL::SigBit> selectors;
+                std::vector<RTLIL::Cell *> visited;
+
+                bool valid = true;
+                RTLIL::Cell *current = start;
+
+                while (current != nullptr)
+                {
+                    bool repeated_cell = false;
+
+                    for (auto old_cell : visited)
+                        if (old_cell == current)
+                            repeated_cell = true;
+
+                    if (repeated_cell)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    visited.push_back(current);
+                    chain.push_back(current);
+
+
+                    RTLIL::SigSpec sel =
+                        h3_sigmap(
+                            current->getPort(ID::S));
+
+                    if (GetSize(sel) != 1)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    bool repeated_selector = false;
+
+                    for (auto old_sel : selectors)
+                        if (old_sel == sel[0])
+                            repeated_selector = true;
+
+                    if (repeated_selector)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    selectors.push_back(sel[0]);
+
+
+                    RTLIL::SigSpec a =
+                        h3_sigmap(
+                            current->getPort(ID::A));
+
+                    bool ambiguous = false;
+
+                    RTLIL::Cell *child =
+                        h3_find_child(
+                            a,
+                            width,
+                            ambiguous);
+
+                    if (ambiguous)
+                    {
+                        valid = false;
+                        break;
+                    }
+
+                    /*
+                     * 找不到下一层，说明到达链底。
+                     */
+                    if (child == nullptr)
+                    {
+                        if (!a.is_fully_const())
+                            valid = false;
+
+                        break;
+                    }
+
+                    current = child;
+                }
+
+
+                if (!valid)
+                    continue;
+
+                if (chain.size() < 3)
+                    continue;
+
+
+                log("\n");
+                total_h3_candidates++;
+
+                log(
+                    "H3 PRIORITY MUX CHAIN CANDIDATE\n");
+
+                log(
+                    "  width       : %d\n",
+                    width);
+
+                log(
+                    "  depth       : %zu\n",
+                    chain.size());
+
+                log(
+                    "  priority    : high -> low\n");
+
+                for (size_t k = 0;
+                     k < chain.size();
+                     k++)
+                {
+                    log(
+                        "    [%zu] %s\n",
+                        k,
+                        log_id(chain[k]));
+                }
+
+
+                /*
+                 * ==================================================
+                 * H3 Stage 2
+                 *
+                 * Safety check:
+                 * 所有中间 Y 都必须只服务于上一层 A。
+                 * ==================================================
+                 */
+                bool private_chain = true;
+
+                for (size_t k = 1;
+                     k < chain.size();
+                     k++)
+                {
+                    if (!h3_intermediate_is_private(
+                            chain[k],
+                            chain[k - 1]))
+                    {
+                        private_chain = false;
+                        break;
+                    }
+                }
+
+                if (!private_chain)
+                {
+                    log(
+                        "H3 PRIORITY MUX CHAIN SKIPPED"
+                        " (shared intermediate Y)\n");
+
+                    continue;
+                }
+
+
+                /*
+                 * 保存原 selector。
+                 *
+                 * chain 顺序：
+                 *
+                 *   [0] highest priority
+                 *   [1] next
+                 *   ...
+                 *   [N-1] lowest priority
+                 */
+                std::vector<RTLIL::SigSpec>
+                    original_selectors;
+
+                for (auto mux : chain)
+                {
+                    original_selectors.push_back(
+                        h3_sigmap(
+                            mux->getPort(ID::S)));
+                }
+
+
+                /*
+                 * highest selector 保持原样。
+                 *
+                 * effective[0] = s0
+                 *
+                 * 后续：
+                 *
+                 * effective[1] =
+                 *     ~s0 & s1
+                 *
+                 * effective[2] =
+                 *     ~s0 & ~s1 & s2
+                 *
+                 * ...
+                 */
+                RTLIL::SigSpec data, select;
+                RTLIL::SigSpec base = chain.back()->getPort(ID::A);
+                RTLIL::SigSpec prefix = h3_make_not(original_selectors[0]);
+                for (size_t k = 0; k < chain.size(); k++) {
+                    data.append(chain[k]->getPort(ID::B));
+                    select.append(k == 0 ? original_selectors[0] :
+                                  h3_make_and(prefix, original_selectors[k]));
+                    if (k > 0 && k + 1 < chain.size())
+                        prefix = h3_make_and(prefix, h3_make_not(original_selectors[k]));
+                }
+                if (base.is_fully_zero()) {
+                    // The zero default contributes no data term. Construct
+                    // only the exclusive products; no default-enable tree.
+                    RTLIL::SigSpec accum;
+                    for (int k = 0; k < GetSize(select); k++) {
+                        RTLIL::SigSpec mask;
+                        for (int bit = 0; bit < width; bit++) mask.append(select[k]);
+                        auto term = module->addWire(NEW_ID, width);
+                        module->addAnd(NEW_ID, data.extract(k * width, width), mask, term);
+                        if (k == 0) accum = RTLIL::SigSpec(term);
+                        else {
+                            auto sum = module->addWire(NEW_ID, width);
+                            module->addOr(NEW_ID, accum, term, sum);
+                            accum = RTLIL::SigSpec(sum);
+                        }
+                    }
+                    module->connect(start->getPort(ID::Y), accum);
+                    h3_removed.insert(start);
+                } else {
+                    start->type = ID($pmux);
+                    start->setParam(ID::S_WIDTH, GetSize(select));
+                    start->setPort(ID::A, base);
+                    start->setPort(ID::B, data);
+                    start->setPort(ID::S, select);
+                }
+                for (size_t k = 1; k < chain.size(); k++)
+                    h3_removed.insert(chain[k]);
+
+                total_h3_rebuilt++;
+                h3_users_ready = false;
+
+                log(
+                    "H3 PRIORITY MUX CHAIN REBUILT\n");
+
+                log(
+                    "  width       : %d\n",
+                    width);
+
+                log(
+                    "  depth       : %zu\n",
+                    chain.size());
+
+                log(
+                    "  transform   : priority -> mutually-exclusive selectors\n");
+            }
+for (auto cell : h3_removed) module->remove(cell);
+return {total_h3_candidates,total_h3_rebuilt};
+}
+
 struct PmuxOptPass : public Pass
 {
     PmuxOptPass()
@@ -863,7 +1622,8 @@ struct PmuxOptPass : public Pass
     void help() override
     {
         log("\n");
-        log("    pmux_opt [-lut] [selection]\n");
+        log("    pmux_opt [-arith | -lut] [selection]\n");
+        log("    -arith: mutually exclusive arithmetic sharing before coarse PMUX rewrites.\n");
         log("    -lut: bounded LUT4 factorization after ABC9 (7.1).\n");
         log("\n");
         log("Detect shared-selector $pmux groups and optimize\n");
@@ -881,6 +1641,12 @@ struct PmuxOptPass : public Pass
         std::vector<std::string> args,
         RTLIL::Design *design) override
     {
+        if (args.size() > 1 && args[1] == "-arith") {
+            extra_args(args, 2, design);
+            log_header(design, "Executing PMUX_OPT arithmetic sharing.\n");
+            optimize_arithmetic_share(design);
+            return;
+        }
         if (args.size() > 1 && args[1] == "-lut") {
             extra_args(args, 2, design);
             log_header(design, "Executing PMUX_OPT local LUT optimization (7.1).\n");
@@ -2200,7 +2966,7 @@ if (pattern_d_candidates > 0)
                                 selector_index,
                                 1));
 
-                    
+
                     if (selector_bit.size() != 1 ||
                         multi_driver_bits.count(
                             selector_bit.as_bit()))
@@ -3728,497 +4494,9 @@ if (pattern_e_candidates > 0)
          * ==================================================
          */
         {
-            std::vector<RTLIL::Cell *> h3_muxes;
-
-            for (auto cell : module->cells())
-            {
-                if (cell->type != ID($mux))
-                    continue;
-
-                int width =
-                    cell->getParam(ID::WIDTH).as_int();
-
-                const RTLIL::SigSpec &a = cell->getPort(ID::A);
-
-                const RTLIL::SigSpec &b = cell->getPort(ID::B);
-
-                const RTLIL::SigSpec &sel = cell->getPort(ID::S);
-
-                const RTLIL::SigSpec &y = cell->getPort(ID::Y);
-
-                if (width <= 0)
-                    continue;
-
-                if (GetSize(a) != width ||
-                    GetSize(b) != width ||
-                    GetSize(y) != width ||
-                    GetSize(sel) != 1)
-                    continue;
-
-                h3_muxes.push_back(cell);
-            }
-
-            // 5.1 requires depth >= 3. SigMap preserves signal widths, so
-            // the existing port-shape filter needs no canonicalization.
-            // This is the last analysis in the module; skip it when no
-            // three-cell chain can exist, before building the full map.
-            if (h3_muxes.size() < 3)
-                continue;
-
-            SigMap h3_sigmap(module);
-
-            // A/Y do not change during 5.1. Index exact canonical vectors;
-            // preserve all drivers so ambiguous child matches still reject.
-            dict<RTLIL::SigSpec, std::vector<RTLIL::Cell *>> h3_by_a, h3_by_y;
-            for (auto cell : h3_muxes) {
-                h3_by_a[h3_sigmap(cell->getPort(ID::A))].push_back(cell);
-                h3_by_y[h3_sigmap(cell->getPort(ID::Y))].push_back(cell);
-            }
-
-            /*
-             * 当前 mux 的 Y 如果接到另一个 mux 的 A，
-             * 那它就不是整条链最靠近输出的一层。
-             */
-            auto h3_has_parent =
-                [&](RTLIL::Cell *cell) -> bool
-            {
-                RTLIL::SigSpec y =
-                    h3_sigmap(
-                        cell->getPort(ID::Y));
-
-                auto it = h3_by_a.find(y);
-                if (it != h3_by_a.end())
-                    for (auto other : it->second)
-                        if (other != cell)
-                            return true;
-
-                return false;
-            };
-
-
-            /*
-             * 查找某个 A 是否来自另一个同宽 mux 的 Y。
-             */
-            auto h3_find_child =
-                [&](const RTLIL::SigSpec &a,
-                    int width,
-                    bool &ambiguous)
-                    -> RTLIL::Cell *
-            {
-                ambiguous = false;
-                if (GetSize(a) != width) return nullptr;
-                auto it = h3_by_y.find(a);
-                if (it == h3_by_y.end()) return nullptr;
-                ambiguous = it->second.size() > 1;
-                return ambiguous ? nullptr : it->second.front();
-            };
-
-
-
-            // Build input users only when a chain reaches the privacy check.
-            // Invalidate after a rewrite because selector ports and new gates
-            // change consumers. Canonical bit keys retain partial overlaps.
-            using H3User = std::pair<RTLIL::Cell *, RTLIL::IdString>;
-            dict<RTLIL::SigBit, pool<H3User>> h3_users;
-            pool<RTLIL::SigBit> h3_output_bits;
-            bool h3_users_ready = false;
-            auto h3_prepare_users = [&]() {
-                if (h3_users_ready) return;
-                h3_users.clear();
-                h3_output_bits.clear();
-                for (auto cell : module->cells())
-                    for (auto &port : cell->connections()) if (cell->input(port.first))
-                        for (auto bit : h3_sigmap(port.second))
-                            h3_users[bit].insert(H3User(cell, port.first));
-                for (auto wire : module->wires()) if (wire->port_output)
-                    for (auto bit : h3_sigmap(RTLIL::SigSpec(wire))) h3_output_bits.insert(bit);
-                h3_users_ready = true;
-            };
-
-
-            /*
-             * 中间 mux 的 Y 必须是私有链路：
-             *
-             * child.Y 只能被 parent.A 使用。
-             *
-             * 如果还被其他 cell 输入或 module output 使用，
-             * rewrite 会改变可观察的中间值，因此拒绝优化。
-             */
-            auto h3_intermediate_is_private =
-                [&](RTLIL::Cell *child,
-                    RTLIL::Cell *parent)
-                    -> bool
-            {
-                RTLIL::SigSpec y =
-                    h3_sigmap(
-                        child->getPort(ID::Y));
-
-                h3_prepare_users();
-                bool saw_expected_parent = false;
-                for (auto bit : y) {
-                    if (h3_output_bits.count(bit)) return false;
-                    auto it = h3_users.find(bit);
-                    if (it == h3_users.end()) continue;
-                    for (auto &user : it->second) {
-                        if (user.first != parent || user.second != ID::A) return false;
-                        saw_expected_parent = true;
-                    }
-                }
-                return saw_expected_parent && h3_sigmap(parent->getPort(ID::A)) == y;
-            };
-
-
-            /*
-             * 创建 1-bit $not。
-             */
-            auto h3_make_not =
-                [&](RTLIL::SigSpec input)
-                    -> RTLIL::SigSpec
-            {
-                RTLIL::Wire *wire =
-                    module->addWire(
-                        NEW_ID,
-                        1);
-
-                RTLIL::Cell *cell =
-                    module->addCell(
-                        NEW_ID,
-                        ID($not));
-
-                cell->setParam(
-                    ID::A_SIGNED,
-                    0);
-
-                cell->setParam(
-                    ID::A_WIDTH,
-                    1);
-
-                cell->setParam(
-                    ID::Y_WIDTH,
-                    1);
-
-                cell->setPort(
-                    ID::A,
-                    input);
-
-                cell->setPort(
-                    ID::Y,
-                    RTLIL::SigSpec(wire));
-
-                return RTLIL::SigSpec(wire);
-            };
-
-
-            /*
-             * 创建 1-bit $and。
-             */
-            auto h3_make_and =
-                [&](RTLIL::SigSpec lhs,
-                    RTLIL::SigSpec rhs)
-                    -> RTLIL::SigSpec
-            {
-                RTLIL::Wire *wire =
-                    module->addWire(
-                        NEW_ID,
-                        1);
-
-                RTLIL::Cell *cell =
-                    module->addCell(
-                        NEW_ID,
-                        ID($and));
-
-                cell->setParam(
-                    ID::A_SIGNED,
-                    0);
-
-                cell->setParam(
-                    ID::B_SIGNED,
-                    0);
-
-                cell->setParam(
-                    ID::A_WIDTH,
-                    1);
-
-                cell->setParam(
-                    ID::B_WIDTH,
-                    1);
-
-                cell->setParam(
-                    ID::Y_WIDTH,
-                    1);
-
-                cell->setPort(
-                    ID::A,
-                    lhs);
-
-                cell->setPort(
-                    ID::B,
-                    rhs);
-
-                cell->setPort(
-                    ID::Y,
-                    RTLIL::SigSpec(wire));
-
-                return RTLIL::SigSpec(wire);
-            };
-
-
-            for (auto start : h3_muxes)
-            {
-                /*
-                 * 只从最高优先级、最靠近输出的一层开始，
-                 * 防止同一条链重复报告。
-                 */
-                if (h3_has_parent(start))
-                    continue;
-
-                int width =
-                    start->getParam(ID::WIDTH).as_int();
-
-                std::vector<RTLIL::Cell *> chain;
-                std::vector<RTLIL::SigBit> selectors;
-                std::vector<RTLIL::Cell *> visited;
-
-                bool valid = true;
-                RTLIL::Cell *current = start;
-
-                while (current != nullptr)
-                {
-                    bool repeated_cell = false;
-
-                    for (auto old_cell : visited)
-                        if (old_cell == current)
-                            repeated_cell = true;
-
-                    if (repeated_cell)
-                    {
-                        valid = false;
-                        break;
-                    }
-
-                    visited.push_back(current);
-                    chain.push_back(current);
-
-
-                    RTLIL::SigSpec sel =
-                        h3_sigmap(
-                            current->getPort(ID::S));
-
-                    if (GetSize(sel) != 1)
-                    {
-                        valid = false;
-                        break;
-                    }
-
-                    bool repeated_selector = false;
-
-                    for (auto old_sel : selectors)
-                        if (old_sel == sel[0])
-                            repeated_selector = true;
-
-                    if (repeated_selector)
-                    {
-                        valid = false;
-                        break;
-                    }
-
-                    selectors.push_back(sel[0]);
-
-
-                    RTLIL::SigSpec a =
-                        h3_sigmap(
-                            current->getPort(ID::A));
-
-                    bool ambiguous = false;
-
-                    RTLIL::Cell *child =
-                        h3_find_child(
-                            a,
-                            width,
-                            ambiguous);
-
-                    if (ambiguous)
-                    {
-                        valid = false;
-                        break;
-                    }
-
-                    /*
-                     * 找不到下一层，说明到达链底。
-                     */
-                    if (child == nullptr)
-                    {
-                        if (!a.is_fully_const())
-                            valid = false;
-
-                        break;
-                    }
-
-                    current = child;
-                }
-
-
-                if (!valid)
-                    continue;
-
-                if (chain.size() < 3)
-                    continue;
-
-
-                log("\n");
-                total_h3_candidates++;
-
-                log(
-                    "H3 PRIORITY MUX CHAIN CANDIDATE\n");
-
-                log(
-                    "  width       : %d\n",
-                    width);
-
-                log(
-                    "  depth       : %zu\n",
-                    chain.size());
-
-                log(
-                    "  priority    : high -> low\n");
-
-                for (size_t k = 0;
-                     k < chain.size();
-                     k++)
-                {
-                    log(
-                        "    [%zu] %s\n",
-                        k,
-                        log_id(chain[k]));
-                }
-
-
-                /*
-                 * ==================================================
-                 * H3 Stage 2
-                 *
-                 * Safety check:
-                 * 所有中间 Y 都必须只服务于上一层 A。
-                 * ==================================================
-                 */
-                bool private_chain = true;
-
-                for (size_t k = 1;
-                     k < chain.size();
-                     k++)
-                {
-                    if (!h3_intermediate_is_private(
-                            chain[k],
-                            chain[k - 1]))
-                    {
-                        private_chain = false;
-                        break;
-                    }
-                }
-
-                if (!private_chain)
-                {
-                    log(
-                        "H3 PRIORITY MUX CHAIN SKIPPED"
-                        " (shared intermediate Y)\n");
-
-                    continue;
-                }
-
-
-                /*
-                 * 保存原 selector。
-                 *
-                 * chain 顺序：
-                 *
-                 *   [0] highest priority
-                 *   [1] next
-                 *   ...
-                 *   [N-1] lowest priority
-                 */
-                std::vector<RTLIL::SigSpec>
-                    original_selectors;
-
-                for (auto mux : chain)
-                {
-                    original_selectors.push_back(
-                        h3_sigmap(
-                            mux->getPort(ID::S)));
-                }
-
-
-                /*
-                 * highest selector 保持原样。
-                 *
-                 * effective[0] = s0
-                 *
-                 * 后续：
-                 *
-                 * effective[1] =
-                 *     ~s0 & s1
-                 *
-                 * effective[2] =
-                 *     ~s0 & ~s1 & s2
-                 *
-                 * ...
-                 */
-                RTLIL::SigSpec prefix =
-                    h3_make_not(
-                        original_selectors[0]);
-
-                for (size_t k = 1;
-                     k < chain.size();
-                     k++)
-                {
-                    RTLIL::SigSpec effective =
-                        h3_make_and(
-                            prefix,
-                            original_selectors[k]);
-
-                    /*
-                     * 只修改 S。
-                     *
-                     * A / B / Y 完全保持不动。
-                     */
-                    chain[k]->setPort(
-                        ID::S,
-                        effective);
-
-
-                    /*
-                     * 最后一层后面不再需要 prefix。
-                     */
-                    if (k + 1 < chain.size())
-                    {
-                        RTLIL::SigSpec not_sel =
-                            h3_make_not(
-                                original_selectors[k]);
-
-                        prefix =
-                            h3_make_and(
-                                prefix,
-                                not_sel);
-                    }
-                }
-
-
-                total_h3_rebuilt++;
-                h3_users_ready = false;
-
-                log(
-                    "H3 PRIORITY MUX CHAIN REBUILT\n");
-
-                log(
-                    "  width       : %d\n",
-                    width);
-
-                log(
-                    "  depth       : %zu\n",
-                    chain.size());
-
-                log(
-                    "  transform   : priority -> mutually-exclusive selectors\n");
-            }
+            auto result = optimize_priority_mux(module);
+            total_h3_candidates += result.first;
+            total_h3_rebuilt += result.second;
         }
 
         }
