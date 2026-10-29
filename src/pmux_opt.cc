@@ -1364,27 +1364,21 @@ int total_h3_candidates=0,total_h3_rebuilt=0;
                     start->getParam(ID::WIDTH).as_int();
 
                 std::vector<RTLIL::Cell *> chain;
-                std::vector<RTLIL::SigBit> selectors;
-                std::vector<RTLIL::Cell *> visited;
+                pool<RTLIL::SigBit> selectors;
+                pool<RTLIL::Cell *> visited;
 
                 bool valid = true;
                 RTLIL::Cell *current = start;
 
                 while (current != nullptr)
                 {
-                    bool repeated_cell = false;
-
-                    for (auto old_cell : visited)
-                        if (old_cell == current)
-                            repeated_cell = true;
-
-                    if (repeated_cell)
+                    if (!visited.insert(current).second)
                     {
                         valid = false;
                         break;
                     }
 
-                    visited.push_back(current);
+
                     chain.push_back(current);
 
 
@@ -1398,19 +1392,13 @@ int total_h3_candidates=0,total_h3_rebuilt=0;
                         break;
                     }
 
-                    bool repeated_selector = false;
-
-                    for (auto old_sel : selectors)
-                        if (old_sel == sel[0])
-                            repeated_selector = true;
-
-                    if (repeated_selector)
+                    if (!selectors.insert(sel[0]).second)
                     {
                         valid = false;
                         break;
                     }
 
-                    selectors.push_back(sel[0]);
+
 
 
                     RTLIL::SigSpec a =

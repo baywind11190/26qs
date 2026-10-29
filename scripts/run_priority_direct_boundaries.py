@@ -11,9 +11,11 @@ def run(text,p):
  with p.with_suffix('.log').open('w') as log: subprocess.run([a.candidate,'-Q','-s',str(ys)],stdout=log,stderr=subprocess.STDOUT,check=True)
 run(f'read_verilog {rtl}\nproc\nwrite_json {a.out}/base.json\n',a.out/'prepare')
 base=json.loads((a.out/'base.json').read_text()); results={}; failures=[]
-for name in ['plain','keep_module','keep_cell','keep_wire','init_wire','partial_selection','shared_output','alias_keep']:
+for name in ['plain','keep_module','keep_cell','keep_wire','init_wire','partial_selection','shared_output','alias_keep','repeat_selector','cycle']:
  des=copy.deepcopy(base); m=des['modules']['top']; sel=''
  bottom=next(c for c in m['cells'].values() if c['connections']['A']==['0']*4)
+ if name=='repeat_selector':bottom['connections']['S']=m['ports']['s']['bits'][2:3]
+ if name=='cycle':bottom['connections']['A']=m['netnames']['mid']['bits']
  if name=='keep_module':m['attributes']['keep']='1'
  if name=='keep_cell':bottom['attributes']['keep']='1'
  if name in ['keep_wire','init_wire']:m['netnames']['low']['attributes']['keep' if name=='keep_wire' else 'init']='1' if name=='keep_wire' else '0000'
