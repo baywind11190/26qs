@@ -1,0 +1,7 @@
+{
+  "scope": "one independent static review of decoded-PMUX order change; no builds or tests by reviewer",
+  "critical": [],
+  "important": [],
+  "minor": [],
+  "limitation": "score counts shared bit-mux DAG nodes, emitter creates one vector-mux tree; proxy is not a mapped-area guarantee"
+}

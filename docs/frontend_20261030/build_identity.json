@@ -1,0 +1,7 @@
+{
+  "candidate": "/home/fpga/eda/pmux-rom-validation-20261010/build/yosys.decoder_order_20261030",
+  "sha256": "06f0c2838bca3c56fa818eeb9f8ac0a967e689d5c55cc31017ba444d420a7680",
+  "source_sha256": "a9d41c5c00da71109c26a837d369f9e1aba43c6cd9713ab52eb3f8ecd9e250ad",
+  "yosys_base": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+  "scope": "development base; not the newly specified C145 revision"
+}

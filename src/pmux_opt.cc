@@ -53,6 +53,8 @@
 #include <set>
 #include <array>
 #include <cstdint>
+#include <map>
+#include <tuple>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -187,18 +189,47 @@ static int optimize_decoded_pmux(RTLIL::Design *design)
             }
             if (!valid)
                 continue;
-            // A fixed ordering for every design: the original low address bit
-            // is the root, higher address bits select within its subtrees.
+            // At most three decoder bits: compare the <=6 variable orders
+            // using only shared one-bit mux nodes, then emit one selected tree.
+            // No synthesis, LUT rewriting, or reachability assumptions here.
+            std::vector<int> order, best_order;
+            for (int bit = 0; bit < GetSize(control); bit++) order.push_back(bit);
+            best_order = order;
+            dict<RTLIL::SigBit, int> leaf_ids;
+            for (auto &entry : table)
+                for (auto bit : entry)
+                    if (!leaf_ids.count(bit)) leaf_ids[bit] = GetSize(leaf_ids);
+            int best_cost = -1;
+            do {
+                std::map<std::tuple<int, int, int>, int> nodes;
+                std::function<int(int, int, int)> score = [&](int depth, int address, int output) -> int {
+                    if (depth == GetSize(control)) return leaf_ids.at(table[address][output]);
+                    int bit = order[depth];
+                    int low = score(depth + 1, address, output);
+                    int high = score(depth + 1, address | (1 << bit), output);
+                    if (low == high) return low;
+                    auto key = std::make_tuple(bit, low, high);
+                    auto found = nodes.find(key);
+                    if (found != nodes.end()) return found->second;
+                    int id = GetSize(leaf_ids) + GetSize(nodes);
+                    nodes.emplace(key, id);
+                    return id;
+                };
+                for (int output = 0; output < width; output++) score(0, 0, output);
+                if (best_cost < 0 || GetSize(nodes) < best_cost) {
+                    best_cost = GetSize(nodes);
+                    best_order = order;
+                }
+            } while (std::next_permutation(order.begin(), order.end()));
             std::function<RTLIL::SigSpec(int, int)> build = [&](int depth, int address) -> RTLIL::SigSpec {
-                if (depth == GetSize(control))
-                    return table[address];
+                if (depth == GetSize(control)) return table[address];
+                int bit = best_order[depth];
                 RTLIL::SigSpec low = build(depth + 1, address);
-                RTLIL::SigSpec high = build(depth + 1, address | (1 << depth));
-                if (low == high)
-                    return low;
+                RTLIL::SigSpec high = build(depth + 1, address | (1 << bit));
+                if (low == high) return low;
                 RTLIL::SigSpec result = depth == 0 ? cell->getPort(ID::Y) :
                     RTLIL::SigSpec(module->addWire(NEW_ID, width));
-                module->addMux(NEW_ID, low, high, control.extract(depth, 1), result);
+                module->addMux(NEW_ID, low, high, control.extract(bit, 1), result);
                 return result;
             };
             RTLIL::SigSpec result = build(0, 0);

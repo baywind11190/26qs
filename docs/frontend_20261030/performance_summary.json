@@ -1,0 +1,11 @@
+{
+  "average_area_reduction_percent": 20.01000051799338,
+  "max_final_time_percent": 3.9591458794595358,
+  "max_first_memory_percent": 2.4826344224337493,
+  "all_cases_no_logic_increase": true,
+  "all_cases_time_pass": true,
+  "all_cases_memory_pass": true,
+  "runs": 38,
+  "scope": "one Linux development batch",
+  "passed": true
+}

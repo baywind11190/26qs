@@ -1,0 +1,272 @@
+{
+  "test1": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 472,
+        "wall_ms": 169.86484900000676,
+        "peak_kib": 45448,
+        "logic": 288,
+        "dff": 222
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 477,
+        "wall_ms": 139.16556399999536,
+        "peak_kib": 45448,
+        "logic": 182,
+        "dff": 222
+      }
+    ],
+    "initial_time_percent": -18.07277090035866,
+    "final_time_percent": -18.07277090035866,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 36.80555555555556,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test2": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 482,
+        "wall_ms": 61.29039800001124,
+        "peak_kib": 45448,
+        "logic": 25,
+        "dff": 0
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 485,
+        "wall_ms": 61.03125300001011,
+        "peak_kib": 45448,
+        "logic": 16,
+        "dff": 0
+      }
+    ],
+    "initial_time_percent": -0.42281500603256195,
+    "final_time_percent": -0.42281500603256195,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 36.0,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test3": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 488,
+        "wall_ms": 65.18604999999411,
+        "peak_kib": 45448,
+        "logic": 13,
+        "dff": 17
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 491,
+        "wall_ms": 64.38362700001221,
+        "peak_kib": 45448,
+        "logic": 9,
+        "dff": 12
+      }
+    ],
+    "initial_time_percent": -1.230973498136445,
+    "final_time_percent": -1.230973498136445,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 30.76923076923077,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test4": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 494,
+        "wall_ms": 75.46771600000568,
+        "peak_kib": 45448,
+        "logic": 36,
+        "dff": 10
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 497,
+        "wall_ms": 74.28166100000055,
+        "peak_kib": 45448,
+        "logic": 36,
+        "dff": 10
+      }
+    ],
+    "initial_time_percent": -1.5716057976433717,
+    "final_time_percent": -1.5716057976433717,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 0.0,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case01_balanced": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 500,
+        "wall_ms": 206.91555099999448,
+        "peak_kib": 45448,
+        "logic": 426,
+        "dff": 12
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 507,
+        "wall_ms": 184.80187600000875,
+        "peak_kib": 45448,
+        "logic": 382,
+        "dff": 12
+      }
+    ],
+    "initial_time_percent": -10.68729483748968,
+    "final_time_percent": -10.68729483748968,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 10.328638497652587,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case02_pipeline": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 514,
+        "wall_ms": 231.79735099999732,
+        "peak_kib": 45448,
+        "logic": 450,
+        "dff": 24
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 523,
+        "wall_ms": 210.61265000000162,
+        "peak_kib": 45448,
+        "logic": 379,
+        "dff": 24
+      }
+    ],
+    "initial_time_percent": -9.139319715519933,
+    "final_time_percent": -9.139319715519933,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 15.777777777777779,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case03_crossbar": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 533,
+        "wall_ms": 200.55988400000047,
+        "peak_kib": 45448,
+        "logic": 408,
+        "dff": 10
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 540,
+        "wall_ms": 183.62398300000393,
+        "peak_kib": 45448,
+        "logic": 274,
+        "dff": 10
+      }
+    ],
+    "initial_time_percent": -8.444311325986053,
+    "final_time_percent": -8.444311325986053,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 32.84313725490197,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case04_feedback": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 545,
+        "wall_ms": 176.7412810000053,
+        "peak_kib": 45448,
+        "logic": 368,
+        "dff": 16
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 552,
+        "wall_ms": 169.3257469999878,
+        "peak_kib": 45448,
+        "logic": 339,
+        "dff": 16
+      }
+    ],
+    "initial_time_percent": -4.195700041360039,
+    "final_time_percent": -4.195700041360039,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 7.880434782608692,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case05_nested": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 559,
+        "wall_ms": 189.50522699999794,
+        "peak_kib": 45448,
+        "logic": 413,
+        "dff": 12
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 566,
+        "wall_ms": 187.8305949999941,
+        "peak_kib": 45448,
+        "logic": 373,
+        "dff": 12
+      }
+    ],
+    "initial_time_percent": -0.8836864431205682,
+    "final_time_percent": -0.8836864431205682,
+    "initial_memory_percent": 0.0,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 9.685230024213077,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  }
+}

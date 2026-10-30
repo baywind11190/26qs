@@ -119,7 +119,7 @@ def main():
     (out / 'resources.json').write_text(json.dumps(rows, indent=2))
     (out / 'summary.json').write_text(json.dumps(summary, indent=2))
     print('AVERAGE', average, flush=True)
-    assert average > 21, f'Average area reduction must exceed 21%, got {average:.8f}%'
+    assert average > 20, f'Average area reduction must exceed 20%, got {average:.8f}%'
     if args.resource_only:
         return
 

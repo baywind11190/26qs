@@ -1,0 +1,18 @@
+{
+  "positive": "PASS",
+  "positive_3bit": "PASS",
+  "dependent_selector": "PASS",
+  "keep_cell": "PASS",
+  "keep_module": "PASS",
+  "keep_output": "PASS",
+  "init_output": "PASS",
+  "duplicate_selector": "PASS",
+  "unknown_default": "PASS",
+  "signed_compare": "PASS",
+  "decoder_keep": "PASS",
+  "multiple_driver": "PASS",
+  "unknown_cell_touching_output": "PASS",
+  "output_is_input": "PASS",
+  "partial_unselected": "PASS",
+  "positive_all_inputs_equivalence": "PASS"
+}

@@ -1,0 +1,22 @@
+{
+  "goal20_red": {
+    "average_area_reduction_percent": 19.764902478777696,
+    "all_cases_no_logic_increase": true,
+    "case_count": 9
+  },
+  "decoded_pair_nine": {
+    "average_area_reduction_percent": 19.792626891796925,
+    "all_cases_no_logic_increase": true,
+    "case_count": 9
+  },
+  "lowbit_nine": {
+    "average_area_reduction_percent": 19.74796791616144,
+    "all_cases_no_logic_increase": true,
+    "case_count": 9
+  },
+  "decoder_order_nine": {
+    "average_area_reduction_percent": 20.01000051799338,
+    "all_cases_no_logic_increase": true,
+    "case_count": 9
+  }
+}
