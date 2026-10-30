@@ -50,10 +50,11 @@ class IntegratorTests(unittest.TestCase):
                 text = synth.read_bytes()
                 self.assertEqual(text.count(b'pmux_opt -arith'), 1)
                 self.assertEqual(text.count(b'run("pmux_opt")'), 1)
-                self.assertEqual(text.count(b'pmux_opt -lut'), 1)
-                self.assertIn(('run("autoname");' + newline +
-                               '            run("clean");' + newline +
-                               '            run("pmux_opt -lut");').encode(), text)
+                self.assertEqual(text.count(b'pmux_opt -lut'), 0)
+                original_flow = text.decode().replace(
+                    '            run("pmux_opt -arith");' + newline, '').replace(
+                    '            run("pmux_opt");' + newline, '')
+                self.assertEqual(original_flow, SYNTH.replace('\n', newline))
                 self.assertEqual(cmake.read_bytes().count(b'yosys_pass(pmux_opt'), 1)
                 self.assertEqual((root / 'passes/opt/pmux_opt.cc').read_bytes(),
                                  (ROOT / 'src/pmux_opt.cc').read_bytes())
@@ -64,6 +65,39 @@ class IntegratorTests(unittest.TestCase):
                 again = self.invoke(root)
                 self.assertEqual(again.returncode, 0, again.stderr)
                 self.assertEqual(synth.read_bytes(), text)
+
+    def test_migrate_old_complete_integration_preserves_original_flow(self):
+        for newline in ('\n', '\r\n'):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                synth, cmake = self.make_source(root, newline)
+                old = SYNTH.replace('            run("wreduce");',
+                    '            run("pmux_opt -arith");\n            run("pmux_opt");\n            run("wreduce");')
+                old = old.replace('            run("autoname");\n            run("clean");',
+                    '            run("autoname");\n            run("clean");\n            run("pmux_opt -lut");')
+                synth.write_bytes(old.replace('\n', newline).encode())
+                result = self.invoke(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual = synth.read_bytes().decode()
+                self.assertNotIn('pmux_opt -lut', actual)
+                stripped = actual.replace('            run("pmux_opt -arith");' + newline, '').replace(
+                    '            run("pmux_opt");' + newline, '')
+                self.assertEqual(stripped, SYNTH.replace('\n', newline))
+                before = synth.read_bytes()
+                self.assertEqual(self.invoke(root).returncode, 0)
+                self.assertEqual(synth.read_bytes(), before)
+
+    def test_partial_integration_rejected_without_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            synth, cmake = self.make_source(root, '\n')
+            synth.write_text(SYNTH.replace('            run("wreduce");',
+                             '            run("pmux_opt");\n            run("wreduce");'))
+            before = synth.read_bytes(), cmake.read_bytes()
+            result = self.invoke(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((synth.read_bytes(), cmake.read_bytes()), before)
+            self.assertFalse((root / 'passes/opt/pmux_opt.cc').exists())
 
     def test_existing_pass_requires_explicit_replacement(self):
         with tempfile.TemporaryDirectory() as folder:

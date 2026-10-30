@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Install the stable PMUX pass into an unmodified Yosys 0.69 source tree.
+"""Install the frontend-only PMUX pass into a Yosys 0.69 source tree.
 
 The equivalent unified diff is yosys_0_69_stable_pmux.patch. This installer
-also accepts Windows checkouts whose C++ sources use CRLF line endings.
+also accepts CRLF sources and migrates the former complete three-call integration.
+The retired post-ABC LUT mode is not installed.
 """
 
 import argparse
@@ -41,12 +42,18 @@ def prepare_synth(path: Path) -> bytes:
     source = original.decode("utf-8")
     markers = ('run("pmux_opt -arith");', 'run("pmux_opt");', 'run("pmux_opt -lut");')
     counts = [source.count(marker) for marker in markers]
-    if counts == [1, 1, 1]:
+    if counts == [1, 1, 0]:
         return original
+    if counts == [1, 1, 1]:
+        # Retire exactly the old complete post-ABC call; preserve all other lines.
+        lines = source.splitlines(keepends=True)
+        removed = [line for line in lines if line.strip() == markers[2]]
+        if len(removed) != 1:
+            raise ValueError(f"Cannot safely retire the old LUT call in {path}")
+        return "".join(line for line in lines if line.strip() != markers[2]).encode("utf-8")
     if counts != [0, 0, 0]:
         raise ValueError(f"Partial or repeated PMUX integration in {path}: {counts}")
     source = insert_in_stage(source, "coarse", 'run("wreduce");', ("pmux_opt -arith", "pmux_opt"))
-    source = insert_in_stage(source, "map_luts", 'run("clean");', ("pmux_opt -lut",))
     return source.encode("utf-8")
 
 
@@ -89,7 +96,7 @@ def main() -> None:
         cmake.write_bytes(cmake_bytes)
     if not target.exists() or target.read_bytes() != source_bytes:
         target.write_bytes(source_bytes)
-    print(f"Stable PMUX integration ready in {root}")
+    print(f"Frontend-only PMUX integration ready in {root}")
 
 
 if __name__ == "__main__":

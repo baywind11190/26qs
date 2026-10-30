@@ -9,14 +9,6 @@
  			run("wreduce");
  			run("peepopt");
  			run("opt_clean");
-@@ -268,6 +270,7 @@
- 			run("opt -fast");
- 			run("autoname");
- 			run("clean");
-+			run("pmux_opt -lut");
- 		}
- 
- 		if (check_label("map_cells")) {
 --- a/passes/opt/CMakeLists.txt
 +++ b/passes/opt/CMakeLists.txt
 @@ -91,3 +91,7 @@
