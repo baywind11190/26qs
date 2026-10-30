@@ -1192,6 +1192,33 @@ int total_h3_candidates=0,total_h3_rebuilt=0;
                  *
                  * ...
                  */
+                // Experimental two-entry priority groups. Preserve high-to-low order.
+                if (chain.back()->getPort(ID::A).is_fully_zero() && chain.size() >= 4) {
+                    RTLIL::SigSpec accum = RTLIL::Const(0, width);
+                    for (int end = int(chain.size()); end > 0; end -= 2) {
+                        int begin = std::max(0, end - 2);
+                        auto high_s = original_selectors[begin];
+                        RTLIL::SigSpec high_mask;
+                        for (int bit = 0; bit < width; bit++) high_mask.append(high_s);
+                        auto group = module->And(NEW_ID, chain[begin]->getPort(ID::B), high_mask);
+                        RTLIL::SigSpec any = high_s;
+                        if (begin + 1 < end) {
+                            auto low_s = original_selectors[begin + 1];
+                            auto exclusive = module->And(NEW_ID, module->Not(NEW_ID, high_s), low_s);
+                            RTLIL::SigSpec low_mask;
+                            for (int bit = 0; bit < width; bit++) low_mask.append(exclusive);
+                            auto term = module->And(NEW_ID, chain[begin + 1]->getPort(ID::B), low_mask);
+                            group = module->Or(NEW_ID, group, term);
+                            any = module->Or(NEW_ID, high_s, low_s);
+                        }
+                        accum = module->Mux(NEW_ID, accum, group, any);
+                    }
+                    module->connect(start->getPort(ID::Y), accum);
+                    for (auto mux : chain) h3_removed.insert(mux);
+                    total_h3_rebuilt++;
+                    h3_users_ready = false;
+                    continue;
+                }
                 RTLIL::SigSpec data, select;
                 RTLIL::SigSpec base = chain.back()->getPort(ID::A);
                 RTLIL::SigSpec prefix = h3_make_not(original_selectors[0]);

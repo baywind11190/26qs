@@ -1,0 +1,42 @@
+{
+  "plain": {
+    "pmux": 1,
+    "expected": 1
+  },
+  "keep_module": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "keep_cell": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "keep_wire": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "init_wire": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "partial_selection": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "shared_output": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "alias_keep": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "repeat_selector": {
+    "pmux": 0,
+    "expected": 0
+  },
+  "cycle": {
+    "pmux": 0,
+    "expected": 0
+  }
+}

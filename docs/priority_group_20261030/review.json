@@ -1,0 +1,11 @@
+{
+  "scope": "one independent static review; no reviewer builds/tests",
+  "critical": [],
+  "important": [],
+  "minor": [],
+  "notes": [
+    "priority and odd groups correct",
+    "deferred deletion and user cache invalidation preserved",
+    "existing selection/keep/init/private-chain guards unchanged"
+  ]
+}

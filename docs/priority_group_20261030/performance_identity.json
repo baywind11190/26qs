@@ -1,0 +1,21 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "measurement": "wall clock; post-exec VmHWM main address-space peak RSS; same execution",
+  "warmup_policy": "one initial phase, baseline test1 ten times; no per-case repeated warmup",
+  "time_policy": "initial baseline then candidate; if >5% and both <10s, five paired repeats and ratio of means",
+  "memory_policy": "first measurement only; no replacement by repeats",
+  "binaries": {
+    "baseline": {
+      "path": "/home/fpga/eda/pmux-rom-validation-20261010/build/yosys.baseline",
+      "sha256": "20f0365797121dda2d07b4d2c091e033728f6394d674de103f9950f655459c06"
+    },
+    "candidate": {
+      "path": "/home/fpga/eda/pmux-rom-validation-20261010/build/yosys.priority_group_20261030",
+      "sha256": "337bec62edb646e3ec9e595d27bc7138eaa3fdf7686710573c9ae18cde10df4a"
+    },
+    "peak_preload": {
+      "path": "/home/fpga/fpga/pmux-test2-5-1-9f89a/results/frontend_scope_20261030/main_peak_linux.so",
+      "sha256": "02453308bb5b3fc3ba1fc482873c823e0028c9f362f6b158ea94a8c17b24f6f8"
+    }
+  }
+}

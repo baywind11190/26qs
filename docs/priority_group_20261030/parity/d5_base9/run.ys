@@ -1,0 +1,14 @@
+read_verilog /home/fpga/fpga/pmux-test2-5-1-9f89a/results/priority_group_20261030/parity/d5_base9/fixture.v
+proc
+write_rtlil /home/fpga/fpga/pmux-test2-5-1-9f89a/results/priority_group_20261030/parity/d5_base9/before.il
+pmux_opt
+write_rtlil /home/fpga/fpga/pmux-test2-5-1-9f89a/results/priority_group_20261030/parity/d5_base9/after.il
+design -reset
+read_rtlil /home/fpga/fpga/pmux-test2-5-1-9f89a/results/priority_group_20261030/parity/d5_base9/before.il
+rename top gold
+read_rtlil /home/fpga/fpga/pmux-test2-5-1-9f89a/results/priority_group_20261030/parity/d5_base9/after.il
+rename top gate
+equiv_make gold gate equiv
+hierarchy -top equiv
+equiv_simple
+equiv_status -assert
