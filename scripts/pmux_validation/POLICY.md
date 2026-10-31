@@ -72,7 +72,8 @@
 ## 功能证明：原生EQY与零初态
 
 - 当前策略eqy-zero-init-r1；18条主链c4a_rtl_opt_mapped/c4b_rtl_base_mapped分别从原始RTL独立对比本轮首次两侧post_abc.il。链名兼容保留；输入SHA-256必须匹配正式产物，不能复用旧PASS。
-- 仅在证明副本展开模型后补未定义FF初值0，保留明确初值、复位、时钟使能及组合X/Z，不将外部输入钉0。不修改评分综合输入。逐项审计变更仅init属性，保存前后副本与哈希。
+- 综合流程在 `read_verilog -sv` 后、首次 `synth_intel` 前依次执行 `proc` 和 `setundef -zero -init`，在优化前固定未定义寄存器的零初态，使初态随综合变换传播；原始RTL文件保持不变。V9预热、首次测量及条件复核统一使用 `gen_builtin_formal_ys()` 生成的脚本，baseline/optimized仅切换可执行程序；EQY使用首次测量产生的post_abc.il，不另行综合。
+- 证明副本仍在展开模型后补未定义FF初值0，保留明确初值、复位、时钟使能及组合X/Z，不将外部输入钉0。逐项审计变更仅init属性，保存前后副本与哈希；这些仅改init属性及保留组合X/Z的保证限于证明副本处理，不用于描述综合前的 `setundef -zero -init`。
 - 使用内建$lut语义和现有dffeas-v3支持配置；power_up∈{low,high}、prn=1、asdata/aload/sclr/sload=0、clrn/ena存在；未知单元/参数/端口和不支持配置记录MODEL_UNSUPPORTED并阻断，不删条件强行证明。
 - 完整运行原生EQY，保存其最终status和日志；不以eqy -m后的手工汇总替代最终PASS，不改生成证明策略。实际make/bash/grep/yosys路径及运行闭包冻结，防止PATH落到旧工具。
 - 原生策略使用的实际假设须经前提SAT探针核验，不能以矛盾假设的空洞证明通过。退出0、EQY最终PASS、分区/断言覆盖完整、日志无错误、init审计通过及前提SAT共同判定。

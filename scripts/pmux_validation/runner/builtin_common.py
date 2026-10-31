@@ -95,6 +95,8 @@ def select_binaries(builtin_cfg) -> dict:
 def gen_builtin_formal_ys(rtl, top):
     """Full synthesis with a post-ABC checkpoint before vendor cell mapping."""
     return (f"read_verilog -sv {rtl}\n"
+            "proc\n"
+            "setundef -zero -init\n"
             f"synth_intel -family {SYNTH_FAMILY} -top {top} -run begin:map_cells\n"
             "write_rtlil post_abc.il\n"
             "tee -o post_abc_stat.json stat -json\n"
