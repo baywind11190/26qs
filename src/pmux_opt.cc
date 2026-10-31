@@ -387,7 +387,7 @@ struct EnableFeedback
             GetSize(c->getPort(ID::Q)) != width || GetSize(c->getPort(ID::CLK)) != 1 ||
             GetSize(c->getPort(ID::EN)) != 1) return false;
         for (auto b : sigmap(c->getPort(ID::Q)))
-            if (!b.wire || multiple.count(b) || init(b) != State::Sx) return false;
+            if (!b.wire || multiple.count(b) || (init(b) != State::Sx && init(b) != State::S0)) return false;
         std::vector<SigBit> fs;
         if (!factors(c->getPort(ID::EN)[0], fs)) return false;
         bool found = false;

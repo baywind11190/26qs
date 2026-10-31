@@ -1,0 +1,20 @@
+{
+  "test1/baseline": "PASS native EQY and checked induction",
+  "test1/candidate": "PASS native EQY and checked induction",
+  "test2/baseline": "PASS native EQY and checked induction",
+  "test2/candidate": "PASS native EQY and checked induction",
+  "test3/baseline": "PASS native EQY and checked induction",
+  "test3/candidate": "PASS native EQY and checked induction",
+  "test4/baseline": "PASS native EQY and checked induction",
+  "test4/candidate": "PASS native EQY and checked induction",
+  "pmux_case01_balanced/baseline": "PASS native EQY and checked induction",
+  "pmux_case01_balanced/candidate": "PASS native EQY and checked induction",
+  "pmux_case02_pipeline/baseline": "PASS native EQY and checked induction",
+  "pmux_case02_pipeline/candidate": "PASS native EQY and checked induction",
+  "pmux_case03_crossbar/baseline": "PASS native EQY and checked induction",
+  "pmux_case03_crossbar/candidate": "PASS native EQY and checked induction",
+  "pmux_case04_feedback/baseline": "PASS native EQY and checked induction",
+  "pmux_case04_feedback/candidate": "PASS native EQY and checked induction",
+  "pmux_case05_nested/baseline": "PASS native EQY and checked induction",
+  "pmux_case05_nested/candidate": "PASS native EQY and checked induction"
+}

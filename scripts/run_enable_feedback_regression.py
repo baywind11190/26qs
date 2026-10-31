@@ -29,14 +29,15 @@ def flow(rtl, top, dest):
         f'synth_intel -family cycloneiv -top {top} -run map_cells:',
         f'write_rtlil {dest}/mapped.il', f'tee -o {dest}/stat.json stat -json']) + '\n'
 
-def prove(rtl, top, gate, dest, negative=False, model=None):
+def prove(rtl, top, gate, dest, negative=False, model=None, zero_init=False):
+    gold_init = 'zinit -all\n' if zero_init else ''
     cfg = dest.with_suffix('.eqy')
     gate_read = (f'read_verilog {model}\n' if model else '') + f'read_rtlil {gate}\nhierarchy -check -top {top}\nflatten\n'
     cfg.write_text(f'''[gold]
 read_verilog -sv {rtl}
 hierarchy -top {top}
 proc
-memory_map
+{gold_init}memory_map
 opt
 async2sync
 formalff -clk2ff

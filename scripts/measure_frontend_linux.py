@@ -37,7 +37,7 @@ def main():
     for top,rtl in cases:
         folder=out/top; folder.mkdir(); folders[top]=folder
         script=folder/'flow.ys'
-        script.write_text(f'read_verilog -sv {rtl}\nsynth_intel -family cycloneiv -top {top}\ntee -o {folder}/stat.json stat -json\n')
+        script.write_text(f'read_verilog -sv {rtl}\nhierarchy -top {top}\nproc\nzinit -all\nsynth_intel -family cycloneiv -top {top}\ntee -o {folder}/stat.json stat -json\n')
         scripts[top]=script
     def file_hash(path):
         digest=hashlib.sha256()

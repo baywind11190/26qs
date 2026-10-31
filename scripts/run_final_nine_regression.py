@@ -69,7 +69,7 @@ def negative_control(helper, candidate, out):
     run_yosys(candidate, script, folder / 'convert.log')
     rtl = ROOT / f'tests/official_new5/{top}.v'
     helper.prove(rtl, top, folder / 'negative.il', folder / 'formal',
-                 negative=True, model=MODEL)
+                 negative=True, model=MODEL, zero_init=True)
     (folder / 'result.json').write_text(json.dumps({'base_case_counterexample': True}, indent=2))
 
 
@@ -92,7 +92,7 @@ def main():
             folder.mkdir(parents=True)
             script = folder / 'flow.ys'
             script.write_text(
-                f'read_verilog -sv {rtl}\n'
+                f'read_verilog -sv {rtl}\nhierarchy -top {top}\nproc\nzinit -all\n'
                 f'synth_intel -family cycloneiv -top {top} -run begin:map_cells\n'
                 f'select {top}\n'
                 f'write_rtlil -selected {folder}/post_abc.il\n'
@@ -128,12 +128,15 @@ def main():
     spec.loader.exec_module(helper)
     formal = {}
     for top, rtl in cases():
-        folder = out / top / 'candidate'
-        check_gate_model(folder / 'post_abc.json', top)
-        helper.prove(rtl, top, folder / 'post_abc.il', folder / 'formal', model=MODEL)
-        formal[top] = 'PASS actual induction'
-        (out / 'formal.json').write_text(json.dumps(formal, indent=2))
-        print('FORMAL', top, formal[top], flush=True)
+        for label in ('baseline', 'candidate'):
+            folder = out / top / label
+            check_gate_model(folder / 'post_abc.json', top)
+            helper.prove(rtl, top, folder / 'post_abc.il', folder / 'formal', model=MODEL, zero_init=True)
+            native = (folder / 'formal.log').read_text()
+            assert 'PASS' in native and 'FAIL' not in native, (top, label)
+            formal[top + '/' + label] = 'PASS native EQY and actual induction'
+            (out / 'formal.json').write_text(json.dumps(formal, indent=2))
+            print('FORMAL', top, label, formal[top + '/' + label], flush=True)
     negative_control(helper, candidate, out)
     print('NEGATIVE actual base-case counterexample detected', flush=True)
 

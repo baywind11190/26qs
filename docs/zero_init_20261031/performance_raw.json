@@ -1,0 +1,272 @@
+{
+  "test1": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 424,
+        "wall_ms": 164.16131399998335,
+        "peak_kib": 30128,
+        "logic": 288,
+        "dff": 222
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 429,
+        "wall_ms": 144.6785180000063,
+        "peak_kib": 25476,
+        "logic": 182,
+        "dff": 222
+      }
+    ],
+    "initial_time_percent": -11.868079954561662,
+    "final_time_percent": -11.868079954561662,
+    "initial_memory_percent": -15.440785979819438,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 36.80555555555556,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test2": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 434,
+        "wall_ms": 60.368944999993346,
+        "peak_kib": 25172,
+        "logic": 25,
+        "dff": 0
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 437,
+        "wall_ms": 61.81276800001001,
+        "peak_kib": 21592,
+        "logic": 15,
+        "dff": 0
+      }
+    ],
+    "initial_time_percent": 2.391665118575159,
+    "final_time_percent": 2.391665118575159,
+    "initial_memory_percent": -14.222151597012555,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 40.0,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test3": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 440,
+        "wall_ms": 71.82932399999231,
+        "peak_kib": 25472,
+        "logic": 13,
+        "dff": 17
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 443,
+        "wall_ms": 68.70017699998243,
+        "peak_kib": 22088,
+        "logic": 9,
+        "dff": 14
+      }
+    ],
+    "initial_time_percent": -4.35636426149606,
+    "final_time_percent": -4.35636426149606,
+    "initial_memory_percent": -13.285175879396983,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 30.76923076923077,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "test4": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 446,
+        "wall_ms": 84.40349199997854,
+        "peak_kib": 25684,
+        "logic": 36,
+        "dff": 10
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 449,
+        "wall_ms": 83.03378899998393,
+        "peak_kib": 22684,
+        "logic": 36,
+        "dff": 10
+      }
+    ],
+    "initial_time_percent": -1.62280371053245,
+    "final_time_percent": -1.62280371053245,
+    "initial_memory_percent": -11.680423610029589,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 0.0,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case01_balanced": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 452,
+        "wall_ms": 190.87903599998413,
+        "peak_kib": 31496,
+        "logic": 426,
+        "dff": 12
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 459,
+        "wall_ms": 196.4436380000052,
+        "peak_kib": 28888,
+        "logic": 382,
+        "dff": 12
+      }
+    ],
+    "initial_time_percent": 2.9152504730910023,
+    "final_time_percent": 2.9152504730910023,
+    "initial_memory_percent": -8.280416560833126,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 10.328638497652587,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case02_pipeline": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 466,
+        "wall_ms": 222.00668499999665,
+        "peak_kib": 30712,
+        "logic": 448,
+        "dff": 24
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 475,
+        "wall_ms": 212.3998449999931,
+        "peak_kib": 27908,
+        "logic": 379,
+        "dff": 24
+      }
+    ],
+    "initial_time_percent": -4.327275099848327,
+    "final_time_percent": -4.327275099848327,
+    "initial_memory_percent": -9.129981766084915,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 15.40178571428571,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case03_crossbar": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 482,
+        "wall_ms": 197.17949500000032,
+        "peak_kib": 30292,
+        "logic": 398,
+        "dff": 10
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 489,
+        "wall_ms": 156.15690699999618,
+        "peak_kib": 25764,
+        "logic": 273,
+        "dff": 10
+      }
+    ],
+    "initial_time_percent": -20.80469269890567,
+    "final_time_percent": -20.80469269890567,
+    "initial_memory_percent": -14.947841014129148,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 31.407035175879393,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case04_feedback": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 494,
+        "wall_ms": 174.55433999998604,
+        "peak_kib": 29476,
+        "logic": 367,
+        "dff": 16
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 501,
+        "wall_ms": 166.02711499999145,
+        "peak_kib": 26184,
+        "logic": 340,
+        "dff": 16
+      }
+    ],
+    "initial_time_percent": -4.885140638723318,
+    "final_time_percent": -4.885140638723318,
+    "initial_memory_percent": -11.168408196498847,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 7.356948228882832,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  },
+  "pmux_case05_nested": {
+    "raw": [
+      {
+        "label": "baseline",
+        "trial": 10,
+        "pid": 508,
+        "wall_ms": 181.83456900001715,
+        "peak_kib": 30356,
+        "logic": 413,
+        "dff": 12
+      },
+      {
+        "label": "candidate",
+        "trial": 10,
+        "pid": 515,
+        "wall_ms": 184.390661000009,
+        "peak_kib": 27320,
+        "logic": 373,
+        "dff": 12
+      }
+    ],
+    "initial_time_percent": 1.4057239028028912,
+    "final_time_percent": 1.4057239028028912,
+    "initial_memory_percent": -10.001317696666224,
+    "five_pair_time_recheck": false,
+    "area_reduction_percent": 9.685230024213077,
+    "no_logic_increase": true,
+    "time_pass": true,
+    "memory_pass": true
+  }
+}
