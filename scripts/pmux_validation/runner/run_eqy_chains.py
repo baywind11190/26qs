@@ -31,6 +31,7 @@ import result_layout as L
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import function_common as F
+import native_eqy as N
 import integration_profiles as I
 
 import official_suite as S
@@ -498,6 +499,32 @@ def main():
                     eqy_job.mkdir(parents=True)
                 if managed:
                     M.check_paths([eqy_job / 'config.eqy', eqy_job / 'work', eqy_job / 'setup.log'])
+                if N.enabled(C.CONTEXT):
+                    if args.input_mode != 'builtin' or cname not in I.CHAINS:
+                        raise ValueError('Native zero-init strategy requires independent builtin c4 chains')
+                    side = 'optimized' if cname == I.CHAINS[0] else 'baseline'
+                    native = N.run_chain(rtl_side_prelude(rtl, top),
+                        net_side_prelude_mapped(sides[(side, 'mapped')], top, form_model),
+                        top, eqy_job, yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
+                    if managed:
+                        path_audit = N.audit_workspace(eqy_job / 'work', native)
+                        N.save(eqy_job / 'path_audit.json', path_audit)
+                    row = dict(native, case=case_id, chain=cname,
+                        rc=0 if native['state'] == 'PASS' else 2,
+                        method='native_eqy', strategy_version=N.VERSION,
+                        model_version=F.MODEL_VERSION, input_mode=args.input_mode,
+                        formal_netlist_stage='post_abc', verified=native['state']=='PASS',
+                        partitions_total=native.get('partitions_total',0),
+                        partitions_pass=native.get('partitions_pass',0),
+                        partition_states=native.get('partition_states',{}),
+                        probes_noDF_all_sat=None, df_probes_unsat=None, merged=None,
+                        frozen_round=str(frozen) if frozen else None, evidence=C.rel(cdir))
+                    rows.append(row)
+                    N.save(cdir / 'summary.json', row)
+                    if eqy_job != cdir and (eqy_job / 'config.eqy').is_file():
+                        shutil.copyfile(eqy_job / 'config.eqy', cdir / 'config.eqy')
+                    print('{} {}: {}'.format(top, cname, row['state']), flush=True)
+                    continue
                 (eqy_job / 'config.eqy').write_text(cfg_text)
                 if workspace or managed:
                     shutil.copyfile(eqy_job / 'config.eqy', cdir / 'config.eqy')
@@ -613,7 +640,7 @@ def main():
         {"chain_set": args.chains, "chains": sorted(selected),
          "input_mode": args.input_mode,
                        "formal_netlist_stage": "post_abc" if args.input_mode == "builtin" else "legacy_mapped",
-         "strategy_version": F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION},
+         "strategy_version": N.VERSION if N.enabled(C.CONTEXT) else F.STRATEGY_VERSION, "model_version": F.MODEL_VERSION},
         ensure_ascii=False, indent=2) + "\n")
     (out / "hash_manifest.json").write_text(json.dumps(hash_map, ensure_ascii=False, indent=2) + "\n")
     print("结果目录: {}".format(C.rel(out)))

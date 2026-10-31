@@ -194,10 +194,21 @@ def validate_performance_policy(cfg):
         raise ValueError('v9 fixed measurement policy mismatch')
 
 
+def verify_runtime_closure(cfg):
+    """Verify each frozen runtime dependency before planning or executing."""
+    closure = cfg.get('runtime_closure', [])
+    for spec in closure:
+        path = Path(spec.get('path', ''))
+        if not path.is_file() or digest(path) != spec.get('sha256'):
+            raise ValueError('Runtime closure missing or identity mismatch: ' + str(path))
+    return closure
+
+
 def preflight(commit, config_path=None, integration_profile='p3'):
     config_path = Path(config_path).resolve() if config_path else CONFIG_PATH
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     L.result_parent(cfg)
+    verify_runtime_closure(cfg)
     import eqy_workspace as EW
     if cfg.get('performance_scheme') != SAME_RUN_SCHEME:
         raise ValueError('V8 is retired; use the V9 configuration')
@@ -256,7 +267,10 @@ def preflight(commit, config_path=None, integration_profile='p3'):
     patch = None
     if git(repo, 'ls-tree', '--name-only', sha, '--', I.PATCH_PATH):
         patch = subprocess.check_output(['git', '-C', str(repo), 'show', sha + ':' + I.PATCH_PATH])
-    I.configure(cfg, integration_profile, patch)
+    stable_patch = None
+    if git(repo, 'ls-tree', '--name-only', sha, '--', I.ARITH_PATCH_PATH):
+        stable_patch = subprocess.check_output(['git', '-C', str(repo), 'show', sha + ':' + I.ARITH_PATCH_PATH])
+    I.configure(cfg, integration_profile, patch, stable_patch)
     # 本流程构建单个独立翻译单元；新的本地源码依赖需要审核构建方式。
     includes = re.findall(rb'^\s*#\s*include\s*"([^"\n]+)"', source, re.M)
     for inc in includes:
@@ -361,8 +375,13 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
         opt["has_pmux_opt"] = ("No such command" not in out) and ("pmux_opt" in out)
         if rc != 0 or not opt["has_pmux_opt"]:
             missing.append("优化版 yosys 未包含内置 pmux_opt pass（help 检查失败）")
-        if I.identity(cfg) == I.LOCAL_ID and '-lut' not in out:
+        if I.has_lut(I.identity(cfg)) and '-lut' not in out:
             missing.append('优化版 yosys 缺少 pmux_opt -lut 支持')
+        if I.has_arith(I.identity(cfg)) and '-arith' not in out:
+            missing.append('优化版 yosys 缺少 pmux_opt -arith 支持')
+    if I.has_arith(I.identity(cfg)):
+        from arith_probe import verify_probe
+        missing.extend(verify_probe(b.get('arith_probe'),b.get('optimized',{}).get('binary_sha256')))
     for side in ("baseline", "optimized"):
         spec = b.get(side) or {}
         src = Path(spec.get("src_repo", ""))
@@ -406,12 +425,12 @@ def check_builtin_evidence(cfg, run_identity=True, source_sha256=None):
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 missing.append(str(exc))
         if side == "optimized":
-            if I.identity(cfg) == I.LOCAL_ID:
+            if I.requires_evidence(I.identity(cfg)):
                 from prepare_builtin import insert_integration
                 try:
                     cmake = (src / 'passes/opt/CMakeLists.txt').read_text(encoding='utf-8')
                     synth = (src / 'techlibs/intel/synth_intel.cc').read_text(encoding='utf-8')
-                    new_cmake, new_synth, already = insert_integration(cmake, synth, I.LOCAL_ID)
+                    new_cmake, new_synth, already = insert_integration(cmake, synth, I.identity(cfg))
                     if not already or (new_cmake, new_synth) != (cmake, synth):
                         raise ValueError('7.1 integration source is incomplete')
                 except (OSError, ValueError, RuntimeError) as exc:
@@ -568,8 +587,8 @@ def make_round(cfg, source, label, mode, *, collect_tools_env=True):
     normalized_inputs = normalize_text_tree(tree)
     (tree / "src").mkdir()
     (tree / "src/pmux_opt.cc").write_bytes(source)
-    if I.identity(cfg) == I.LOCAL_ID:
-        patch_path = tree / I.PATCH_PATH
+    if I.requires_evidence(I.identity(cfg)):
+        patch_path = tree / cfg['integration_patch']['path']
         patch_path.parent.mkdir(parents=True, exist_ok=True)
         patch_path.write_bytes(cfg['integration_patch']['text'].encode('utf-8'))
         if digest(patch_path) != cfg['integration_patch']['sha256']:
@@ -642,6 +661,8 @@ def execute(root, name, cmd, stages, timeout=10800):
 def selfcheck_fingerprints(cfg, runner_dir):
     """自检证据指纹：关键工具、套件输入、本轮代码/配置。任一变化即失效。"""
     return {
+        "integration_id": I.identity(cfg),
+        "integration_patch_sha256": (cfg.get("integration_patch") or {}).get("sha256"),
         "eqy_workspace_version": cfg.get('eqy_workspace_version'),
         "eqy_work_root": cfg.get('eqy_work_root'),
         "eqy_path_limit": cfg.get('eqy_path_limit'),
@@ -658,6 +679,8 @@ def selfcheck_fingerprints(cfg, runner_dir):
         "wall_time_method": cfg.get("wall_time_method"),
         "runtime_patch": None,
         "flow_version": cfg["flow_version"],
+        "flow_revision": cfg.get("flow_revision"),
+        "runtime_closure": cfg.get("runtime_closure", []),
         "model_version": cfg.get("model_version"),
         "strategy_version": cfg.get("strategy_version"),
         "baseline_yosys_sha256": (cfg.get("builtin",{}).get("baseline",{}).get("binary_sha256") or cfg["tools"]["yosys"]["sha256"]),
@@ -691,10 +714,13 @@ def cache_entry_valid(cache, stage, fingerprints):
         try:
             summary = json.loads(path.read_text(encoding='utf-8'))
             expected = json.loads((Path(entry['evidence_root']) / L.SELFCHECK / 'assets/checks.json').read_text(encoding='utf-8'))['checks']
+            expected_names = {c['name'] for c in expected}
+            if fingerprints.get('strategy_version') == 'eqy-zero-init-r1':
+                expected_names.add('native_premises_unsat_gate')
             names = [c.get('name') for c in summary.get('cases', [])]
             return (path.is_file() and digest(path) == proof.get('sha256')
                     and summary.get('selfcheck_ok') is True and bool(summary.get('cases'))
-                    and len(names) == len(expected) and set(names) == {c['name'] for c in expected}
+                    and len(names) == len(expected_names) and set(names) == expected_names
                     and all(c.get('ok') is True for c in summary['cases'])
                     and EW.verify_archive(Path(entry['evidence_root'])).get('ok') is True)
         except (OSError, ValueError, KeyError):
@@ -778,6 +804,8 @@ def hash_round(root):
 
 def run_builtin(cfg, source, label, build_cache_dir=None):
     """One formal round, with unconditional managed-EQY archival before reporting."""
+    if cfg.get('flow_revision') == 'v9-official1030-r1' and I.has_lut(I.identity(cfg)):
+        raise ValueError('Official 1030 run rejects backend LUT integration profiles')
     root = make_round(cfg, source, label, mode="builtin", collect_tools_env=False)
     print("ROUND=" + str(root), flush=True)
     meta = root / L.META
@@ -800,6 +828,9 @@ def run_builtin(cfg, source, label, build_cache_dir=None):
             failure = ('build', exc)
             return 3
         cfg["builtin"] = prep["builtin"]
+        if I.has_arith(I.identity(cfg)):
+            from arith_probe import freeze_probe
+            cfg['builtin']['arith_probe'] = freeze_probe(cfg['builtin'].get('arith_probe'), root)
         cfg["builtin_prepare"] = prep["record"]
         configure_windows_runtime(cfg)
         save(root / "validation_context.json", cfg)
@@ -866,7 +897,7 @@ def main():
     ap.add_argument("--label", default=None)
     ap.add_argument("--config", default=None,
                     help="指定 Windows V9 配置；默认 config.windows.v9.json")
-    ap.add_argument('--integration-profile', choices=['p3', 'p3-local-lut'], default='p3',
+    ap.add_argument('--integration-profile', choices=['p3', 'p3-local-lut', 'p3-arith-local-lut', 'p3-arith'], default='p3',
                     help='包含已登记7.1补丁的提交必须选择 p3-local-lut')
     ap.add_argument('--mode', choices=['builtin'], default='builtin',
                     help='Windows V9 内置套件验收')
@@ -896,7 +927,7 @@ def main():
             workspace_plan = EW.plan_workspace(cfg, round_name, workspace_checks(cfg))
         print(json.dumps({k: cfg.get(k) for k in ["target_commit", "source_sha256", "flow_version",
               "suite_version", "model_version", "strategy_version", "suite_manifest_sha256",
-              "performance_pairs", "performance_scheme", "tool_data_checked", "integration_profile", "integration_patch"]},
+              "performance_pairs", "performance_scheme", "tool_data_checked", "integration_profile", "integration_patch", "expected_pmux_calls"]},
               ensure_ascii=False, indent=2))
         print(json.dumps({'mode_default': 'builtin', 'builtin_plan': plan,
                           'eqy_workspace_plan': workspace_plan,

@@ -158,10 +158,12 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
             except (OSError, ValueError, KeyError) as exc:
                 formal_ok = False
                 eqy_evidence_errors.append(case + '/' + side + ': ' + str(exc))
-    integration_errors = I.evidence_errors(root, ctx) if I.identity(ctx) == I.LOCAL_ID else []
+    integration_errors = I.evidence_errors(root, ctx) if I.requires_evidence(I.identity(ctx)) else []
     gates['原始RTL功能证明与同次postABC哈希绑定'] = formal_ok and not integration_errors
     gates['墙钟与峰值完整并满足绝对限值'] = len(judgments) == n and {j['case'] for j in judgments} == set(CASES) and all(j['valid'] and j['limit_ok'] for j in judgments)
     gates['逐例墙钟与内存不超过5%'] = len(judgments) == n and {j['case'] for j in judgments} == set(CASES) and all(j['pass'] for j in judgments)
+    if ctx.get('flow_revision') == 'v9-official1030-r1':
+        gates['1030禁止后端LUT集成'] = not I.has_lut(I.identity(ctx))
     complete = all(gates.values())
     status = 'BUILTIN_SUITE_LOCAL_ACCEPTANCE_COMPLETE' if complete else 'NEEDS_REVIEW'
     formal_state = 'PASS' if formal_ok else 'NOT_RUN' if not chains else 'FAIL'
@@ -212,6 +214,8 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
         f"工程套件验证：**{manifest['verification_verdict']}**；执行状态：`{status}`。",
         f"- 正式综合：预计{expected_runs}次，发起请求{ledger.get('attempted_runs', 0)}次，确认启动Yosys {ledger.get('started_runs', 0)}次，测量有效完成{ledger.get('completed_runs', 0)}次。",
         f"- 算法提交：`{ctx.get('target_commit')}`；算法源码 SHA-256：`{ctx.get('source_sha256')}`。",
+        f"- 集成方式：`{ctx.get('integration_profile')}`；身份：`{I.identity(ctx)}`；算术探针：`{(ctx.get('builtin', {}).get('arith_probe') or {}).get('ok', 'NOT_APPLICABLE')}`。",
+        f"- 优化侧逐例调用计数（arith/普通/LUT）：`{[(c.get('case'), [(c.get('sides', {}).get('optimized', {}).get('integration_calls') or {}).get(k) for k in ('arith_count', 'early_count', 'lut_count')]) for c in fc.get('cases', [])]}`。",
         f"- 规则原文：`{(ctx.get('policy_source') or {}).get('path')}`；SHA-256：`{(ctx.get('policy_source') or {}).get('sha256')}`。",
         f"- 已获得{n}例面积缩减率算术平均：{value(mean)}%；全部清单用例均纳入本轮。",
         '- 原版逐例预热10次；首次先原版全部后优化版全部；触发例另跑5组原版→优化版，仅相对时间取分侧均值。构建、自检和EQY另计。', '',
@@ -248,9 +252,10 @@ def build_report(root, output_root=None, chain_attempt='run01', stages_override=
         f"- 正式结果存在超过1.15倍的时间或内存：{any(j.get('any_over_15pct') for j in judgments)}。",
         f'- 原始RTL的{expected_runs}条证明链全部通过且绑定本次网表：{formal_ok}。',
         f'- 取消的独立完整/分段资源对照为 NOT_RUN；采用脚本阶段边界及这{expected_runs}次日志核对，不把它写成独立对照PASS。',
-        '- 时间为 Windows PowerShell 5.1 Measure-Command 的墙钟经过时间，保存原始 TimeSpan.Ticks 和 TotalMilliseconds；不是累计CPU时间。时间包含RTL读取、ABC9、7.1后的中间网表导出、厂商映射、最终网表/stat写出和退出收尾，也包含退出调试观测与本机请求/响应包装开销，未扣除。PowerShell及worker初始化、构建、EQY、事后分析不计入。',
+        '- 时间为 Windows PowerShell 5.1 Measure-Command 的墙钟经过时间，保存原始 TimeSpan.Ticks 和 TotalMilliseconds；不是累计CPU时间。时间包含RTL读取、ABC9清理命名后的中间网表导出、厂商映射、最终网表/stat写出和退出收尾，也包含退出调试观测与本机请求/响应包装开销，未扣除。PowerShell及worker初始化、构建、EQY、事后分析不计入。',
         '- 内存为同一Yosys主进程在 EXIT_PROCESS_DEBUG_EVENT 中、ContinueDebugEvent 放行前读取的系统累计 PeakWorkingSetSize；原始单位字节，MiB=字节/1024²；不加ABC或进程树。调试可能影响运行与内存布局。',
-        '- 第133行要求同次测时间与内存；调试退出事件接口仍是本地实现。第132行明确不足1秒的复核；本地按用户指定扩展为首次原版小于10秒，1—10秒逐例标为用户扩展，不声称官方认可。内存与60秒/2GiB绝对检查使用首次数据；2GiB为沿用本地解释。5%～15%不推算分数。',
+        '- C147已明确1—10秒区间的复核；C148的预热一批90次按用户确定的解释执行。同工具同次时间与内存指标已确认；调试退出事件接口仍为本地实现。内存与60秒/2GiB绝对检查使用首次数据；2GiB沿用本地解释。5%～15%不推算分数。',
+        '- C145涉及的官方基座dirty改动未公开，当前公开基座与该状态的一致性未核对。C149第一问未明确，不能据此宣称前端处理已获批准。',
         '- 原始测量先保存，功能证明完成后才作工程判定；FAIL、TIMEOUT、UNPROVEN等证明状态不记为PASS。',
         f'- 本报告覆盖当前清单{n}例；DFF仅记录，不作为数量不增门禁；逻辑、IO及其他硬件门禁保留。交付NOT_RUN，官方认可NOT_CLAIMED。', '', '## 检查项', '']
     lines += [f"- {'PASS' if passed else 'FAIL'}：{key}" for key, passed in gates.items()]

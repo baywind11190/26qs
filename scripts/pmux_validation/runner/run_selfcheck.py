@@ -21,9 +21,42 @@ import result_layout as L
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import p3_common as C
 import function_common as F
+import native_eqy as N
+import copy
 
 PROOF_TIMEOUT = 300
 PROBE_TIMEOUT = 120
+
+
+def run_native_premise_gate(reference, job):
+    """Exercise the real probe and joint gate with a known contradictory miter.
+
+    This tests non-vacuity detection, not preservation of arbitrary RTL assumes
+    by EQY's partitioner. The reference native proof and run.ys remain intact.
+    """
+    name = next(iter(reference['partitions']))
+    strategy = Path(job) / 'work/strategies' / name / 'simple'
+    guard = strategy / 'premise_gate_guard.v'
+    guard.write_text("module miter(input a); always @* assume(1'b0); endmodule\n", encoding='utf-8')
+    script = N.make_probe((strategy / 'run.ys').read_text(encoding='utf-8'))
+    lines = script.splitlines()
+    idx = next(i for i,l in enumerate(lines) if l.startswith('sat '))
+    lines[idx:idx] = ['delete miter', 'read_verilog -formal ' + guard.name, 'prep -top miter', 'chformal -lower']
+    probe = strategy / 'premise_gate.ys'
+    probe.write_text('\n'.join(lines)+'\n', encoding='utf-8')
+    log = strategy / 'premise_gate.log'
+    rc = F.run_yosys_script(probe, log, strategy, yosys=C.TOOL_YOSYS, timeout_s=PROBE_TIMEOUT)
+    result = F.classify_probe_result(log.read_text(errors='replace'), rc)
+    parts = copy.deepcopy(reference['partitions'])
+    parts[name]['probe'] = result
+    gated = N.aggregate(reference['native_rc'], reference['native_status'], reference['native_errors'], parts)
+    ok = (result['state'] == 'VALID' and result['verdict'] == 'PREMISES_UNSAT'
+          and gated['state'] == 'PREMISES_NOT_SAT')
+    detail = {'probe': result, 'joint_gate_state': gated['state'],
+              'scope': 'contradictory miter probe and joint gate; not user-assume preservation'}
+    N.save(Path(job) / 'premise_gate_summary.json', detail)
+    return {'name':'native_premises_unsat_gate','expect':'PREMISES_NOT_SAT','ok':ok,
+            'why':'' if ok else 'native premise UNSAT gate not met','state':gated['state'],'detail':detail}
 
 
 def build_cfg(check, gold, gate, model, top):
@@ -50,6 +83,15 @@ def run_check(check, gold, gate, model, d):
     if managed:
         import eqy_workspace as W
         W.check_paths([cfg, d / "work", d / "setup.log", gold, gate, model])
+    if N.enabled(getattr(C, 'CONTEXT', {})):
+        text = build_cfg(check, gold, gate, model, check['top'])
+        gold_lines = text.split('[gold]\n',1)[1].split('\n\n[gate]',1)[0].splitlines()
+        gate_lines = text.split('[gate]\n',1)[1].split('\n\n[strategy',1)[0].splitlines()
+        result = N.run_chain(gold_lines, gate_lines, check['top'], d,
+            yosys=C.TOOL_YOSYS, abc=C.EQY_ABC, eqy=C.TOOL_EQY)
+        if managed:
+            N.save(d / 'path_audit.json', N.audit_workspace(d / 'work', result))
+        return result
     cfg.write_text(build_cfg(check, gold, gate, model, check["top"]))
     work = F.eqy_workdir(d, "work")
     work.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +150,16 @@ def run_check(check, gold, gate, model, d):
 
 
 def judge(check, res):
+    if res.get('strategy_version') == N.VERSION:
+        parts = res.get('partitions') or {}
+        expect = check['expect']
+        if expect == 'REJECT':
+            ok = res['state'] == 'FAIL' and any(p['proof']['state']=='FAIL' for p in parts.values()) and res.get('premises_all_sat') is True
+        elif expect == 'PREMISE_UNSAT':
+            ok = res['state'] == 'PREMISES_NOT_SAT' and any(p['probe']['verdict']=='PREMISES_UNSAT' for p in parts.values())
+        else:
+            ok = res['state']=='PASS' and res.get('premises_all_sat') is True
+        return ok, '' if ok else 'native expect={} not met'.format(expect), res
     parts = res.get("partitions") or {}
     states = [p["proof"]["state"] for p in parts.values()]
     probes_noDF = [p["probes"]["noDF"]["verdict"] for p in parts.values()]
@@ -150,8 +202,9 @@ def main():
     model = C.SCRIPT_DIR / "form_cells_cycloneiv.v"
     summary = {"checks_version": json.loads((assets / "checks.json").read_text())
                .get("version"), "model_version": F.MODEL_VERSION,
-               "strategy_version": F.STRATEGY_VERSION, "cases": []}
+               "strategy_version": N.VERSION if N.enabled(C.CONTEXT) else F.STRATEGY_VERSION, "cases": []}
     hash_map = {}
+    native_reference = None
     managed = bool(getattr(C, "CONTEXT", {}).get("eqy_workspace"))
     if managed:
         import eqy_workspace as W
@@ -177,6 +230,8 @@ def main():
         try:
             res = run_check(check, gold, gate, model, d)
             ok, why, detail = judge(check, res)
+            if N.enabled(C.CONTEXT) and native_reference is None and res.get('state') == 'PASS':
+                native_reference = (res, d)
         except Exception as exc:  # 保留现场，不掩盖
             res, ok, why, detail = {"state": "EXCEPTION", "error": str(exc)}, False, "exception", {}
         case = {"name": name, "expect": check["expect"], "ok": ok, "why": why,
@@ -187,6 +242,17 @@ def main():
         print("{}: expect={} ok={}{}".format(name, check["expect"], ok,
                                              "" if not why else " ({})".format(why)))
 
+    if N.enabled(C.CONTEXT):
+        if native_reference is None:
+            gate = {'name':'native_premises_unsat_gate','ok':False,'state':'NOT_RUN',
+                    'why':'no valid native PASS reference'}
+        else:
+            try:
+                gate = run_native_premise_gate(*native_reference)
+            except Exception as exc:
+                gate = {'name':'native_premises_unsat_gate','ok':False,'state':'EXCEPTION','error':str(exc)}
+        summary['cases'].append(gate)
+        print('{}: ok={}'.format(gate['name'],gate['ok']))
     summary["selfcheck_ok"] = all(c["ok"] for c in summary["cases"])
     (base / "selfcheck_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n")

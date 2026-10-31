@@ -121,9 +121,9 @@ def cache_key(cfg, source_sha256):
         "platform": cfg.get("platform", sys.platform),
         "toolchain_dependency_sha256": cfg["builtin"].get("toolchain_dependency_sha256"),
     }
-    if I.identity(cfg) == I.LOCAL_ID:
+    if I.requires_evidence(I.identity(cfg)):
         patch = cfg.get('integration_patch') or {}
-        if patch.get('sha256') != I.PATCH_SHA256:
+        if patch.get('sha256') != I.patch_identity(I.identity(cfg))[1]:
             raise BuildError('Missing verified local LUT integration patch identity')
         key['integration_patch_sha256'] = patch['sha256']
     return key
@@ -148,6 +148,29 @@ def insert_integration(cmake_text, synth_text, integration_id=INTEGRATION_ID):
     - 含 pmux_opt 痕迹但非标准模板 → 报错（报告实际差异，不盲目替换）；
     - 锚点上下文不唯一/不存在 → 报错。
     """
+    if integration_id == I.TWO_CALL_ID:
+        anchor = 'yosys_pass(peepopt\n\tpeepopt.cc\n\t${PMGEN_peepopt_OUTPUT}\n)\n'
+        original_cmake = cmake_text.split('\nyosys_pass(pmux_opt', 1)[0]
+        if original_cmake.count(anchor) != 1 or not original_cmake.endswith(anchor):
+            raise BuildError('Two-call CMake integration anchor mismatch')
+    if I.has_arith(integration_id):
+        cb = '\nyosys_pass(pmux_opt\n\tpmux_opt.cc\n)\n'
+        ab = SYNTH_BLOCK.replace('run("pmux_opt");', 'run("pmux_opt -arith");\n\t\t\trun("pmux_opt");')
+        if 'pmux_opt' not in cmake_text and 'pmux_opt' not in synth_text:
+            if synth_text.count(SYNTH_ANCHOR) != 1 or synth_text.count(I.LUT_ANCHOR) != 1:
+                raise BuildError('Arithmetic integration anchor mismatch')
+            new_synth = synth_text.replace(SYNTH_ANCHOR, ab, 1)
+            if I.has_lut(integration_id):
+                new_synth = new_synth.replace(I.LUT_ANCHOR, I.LUT_BLOCK, 1)
+            return cmake_text + cb, new_synth, False
+        clean_c = cmake_text[:-len(cb)] if cmake_text.endswith(cb) else ''
+        clean_s = synth_text.replace(ab, SYNTH_ANCHOR, 1)
+        if I.has_lut(integration_id):
+            clean_s = clean_s.replace(I.LUT_BLOCK, I.LUT_ANCHOR, 1)
+        if (not clean_c or 'pmux_opt' in clean_c or 'pmux_opt' in clean_s
+                or clean_s.count(SYNTH_ANCHOR) != 1 or clean_s.count(I.LUT_ANCHOR) != 1):
+            raise BuildError('Partial, repeated or misplaced arithmetic integration')
+        return cmake_text, synth_text, True
     already = True
     if CMAKE_BLOCK in cmake_text:
         pass
@@ -194,8 +217,17 @@ def _check_integration_diff(diff_text, integration_id=INTEGRATION_ID):
     if '+\t\t\trun("pmux_opt");' not in diff_text:
         raise BuildError("集成 diff 缺少 synth_intel 插入内容")
     late = diff_text.count('+\t\t\trun("pmux_opt -lut");')
-    if late != (1 if integration_id == I.LOCAL_ID else 0):
+    if late != (1 if I.has_lut(integration_id) else 0):
         raise BuildError('Integration diff local LUT call mismatch')
+    arith = diff_text.count('+\t\t\trun("pmux_opt -arith");')
+    if arith != (1 if I.has_arith(integration_id) else 0):
+        raise BuildError('Integration diff arithmetic call mismatch')
+    if I.has_arith(integration_id):
+        additions = [s[1:] for s in diff_text.splitlines() if s.startswith('+') and not s.startswith('+++')]
+        deletions = [s for s in diff_text.splitlines() if s.startswith('-') and not s.startswith('---')]
+        expected = ['', 'yosys_pass(pmux_opt', '\tpmux_opt.cc', ')', '\t\t\trun("pmux_opt -arith");', '\t\t\trun("pmux_opt");'] + (['\t\t\trun("pmux_opt -lut");'] if I.has_lut(integration_id) else [])
+        if deletions or sorted(additions) != sorted(expected):
+            raise BuildError('Unexpected arithmetic integration diff changes')
     return hashlib.sha256(diff_text.encode()).hexdigest()
 
 
@@ -326,6 +358,9 @@ def verify_entry_files(entry, sides=("baseline", "optimized")):
             elif spec.get("algorithm_source_sha256") and \
                     _sha256_file(alg) != spec["algorithm_source_sha256"]:
                 reasons.append("算法源码与登记不符：%s" % alg)
+    if I.has_arith((entry.get('key') or {}).get('integration_id')):
+        from arith_probe import verify_probe
+        reasons.extend(verify_probe(((entry.get('verification') or {}).get('smoke') or {}).get('arith_probe'), (entry.get('optimized') or {}).get('binary_sha256')))
     return (not reasons), reasons
 
 
@@ -616,8 +651,10 @@ def _verify_binary(binary, need_pmux, expected_version, env=None, integration_id
             and "pmux_opt" in p2.stdout
         if not help_ok:
             raise BuildError("优化版缺少内置 pmux_opt pass（help 检查失败）")
-        if integration_id == I.LOCAL_ID and '-lut' not in p2.stdout:
+        if I.has_lut(integration_id) and '-lut' not in p2.stdout:
             raise BuildError('Optimized binary lacks pmux_opt -lut support')
+    if need_pmux and I.has_arith(integration_id) and '-arith' not in p2.stdout:
+        raise BuildError('Optimized binary lacks -arith support')
     return {"version": p.stdout.strip().splitlines()[0] if p.stdout.strip() else "",
             "version_ok": version_ok, "help_pmux_ok": help_ok}
 
@@ -645,14 +682,18 @@ def _smoke(build_dir, opt_binary, logs, cfg=None):
                      timeout=900, env=_build_env(cfg, [str(opt_binary.parent)]) if cfg else None)
     text = log.read_text(errors="replace")
     count = len(re.findall(r"\bExecuting\s+PMUX_OPT\b", text))
-    calls = I.check_calls(text, I.identity(cfg)) if cfg and I.identity(cfg) == I.LOCAL_ID else None
+    calls = I.check_calls(text, I.identity(cfg)) if cfg and I.requires_evidence(I.identity(cfg)) else None
     ok = rc == 0 and (calls['ok'] if calls else count == 1)
     if not ok:
         raise BuildError("冒烟验证失败（rc=%d，PMUX_OPT 次数=%d），日志 %s" % (rc, count, log))
     result = {"smoke_ok": True, "smoke_log": str(log)}
     if calls:
         result['integration_calls'] = calls
-        result['local_lut_probe'] = _local_lut_probe(build_dir, opt_binary, cfg)
+        if I.has_lut(I.identity(cfg)):
+            result['local_lut_probe'] = _local_lut_probe(build_dir, opt_binary, cfg)
+        if I.has_arith(I.identity(cfg)):
+            from arith_probe import run_probe
+            result['arith_probe'] = run_probe(build_dir, opt_binary, cfg, _run_logged, _build_env)
     return result
 
 
@@ -708,6 +749,7 @@ def _assemble_builtin_cfg(cfg, baseline_spec, opt_spec):
     """组装本轮有效 builtin 配置（用于 validation_context.json 与身份检查）。"""
     return {
         "integration_id": I.identity(cfg),
+        "arith_probe": opt_spec.get("arith_probe"),
         "baseline": {"path": baseline_spec["binary"], "src_repo": baseline_spec["src_dir"],
                      "src_commit": baseline_spec["src_commit"],
                      "binary_sha256": baseline_spec["binary_sha256"],
@@ -826,6 +868,8 @@ def _build_sides(cfg, source_bytes, source_sha256, cache_dir, *,
             if "optimized" in sides:
                 verification["smoke"] = _smoke(
                     build_dir, Path(entry["optimized"]["binary"]), logs, cfg=cfg)
+            if I.has_arith(I.identity(cfg)) and 'smoke' in verification:
+                entry['optimized']['arith_probe'] = verification['smoke']['arith_probe']
             entry["verification"] = verification
             entry["status"] = "READY"
         except Exception as exc:

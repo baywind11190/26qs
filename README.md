@@ -1,3 +1,21 @@
+# 最新V9轮次：f3f5f2a（2026-10-30）
+
+本轮FAIL / NEEDS_REVIEW。资源平均缩减20.454%，时间和内存PASS；功能15/18 PASS，test3优化侧及test4两侧FAIL（前提SAT，反例待复核）。90预热+18首次=108有效样本，无条件复核、无追加轮次。3988项哈希全部一致。
+
+[本轮主报告](D:/0026_qs_result/r/2026-10-30_2107_v9_f3f5f2a_r01/00_report.md)。下列已有轮次保持历史原文和原判定，不与本轮混算。
+
+---
+
+# 当前：V9已对齐1030答疑（2026-10-30）
+
+fd24aa7本轮 **FAIL / NEEDS_REVIEW**：功能15/18通过；资源平均缩减19.765%、内存通过；test2复核时间+5.651%。三条反例涉及初态/编码差异，尚不直接定性算法错误。118个有效样本，没有追加轮次。
+
+[正式报告](D:/0026_qs_result/r/2026-10-30_2047_v9_fd24aa7_r01/00_report.md) · [第24号实施与实测记录](D:/codex/02_嵌赛/验证流程版本更新说明/24_V9对齐1030答疑与fd24aa7验证记录_20261030.md) · [活动规则](D:/codex/0000_26qs/scripts/pmux_validation/POLICY.md)。公开基座0.69+24/d0e71cfb7，两调用p3-arith；官方dirty修改未公开。交付NOT_RUN，官方认可NOT_CLAIMED。
+
+以下原有进度段落保留为历史记录，不替代本次状态与活动规则。
+
+---
+
 # 当前活动版本：V9
 
 入口为[D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd](D:/codex/0000_26qs/scripts/pmux_validation/validate_windows_v9.cmd)，唯一规则见工程POLICY.md。V9结果根为D:/0026_qs_result，r/e/c/a分别保存轮次、短EQY现场、验证缓存和开发证据。V8入口已退役，以下保留V8历史原文和原判定，不作为当前操作指令。
@@ -56,3 +74,5 @@ V9改造与一次九例正式轮次已完成：**FAIL / NEEDS_REVIEW**。18条�
 | [旧版本说明](D:/codex/02_嵌赛/旧版本说明.md) | V7及以前的原文、原路径、日期和原判定索引 |
 
 2026-10-24清理仅限已授权清单内不再被V8使用的旧资产。历史说明收拢不改变原结论，现存V8证据和失败记录完整保留；后续普通流程不得自行删除轮次。历史证据原字节保留，旧路径通过 `results/_migrations/20261025_ascii_layout/manifest.json` 定位到新路径；新活动自检缓存从空状态开始，原1038来源缓存仅作历史记录。本次路径迁移未执行正式run。协作约束见本工程 [AGENTS.md](D:/codex/0000_26qs/AGENTS.md)。
+
+V9三调用集成：新增 `p3-arith-local-lut`，用于带完整算术共享集成补丁的提交；先plan后run。规则及调用/探针证据要求见 scripts/pmux_validation/POLICY.md。

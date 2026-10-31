@@ -102,8 +102,8 @@ def run_case(spec: dict, out_root: Path) -> dict:
             result['optimized_integration_calls'] = calls
         result[side + '_formal_netlist_description'] = (
             'after ABC9 and 7.1 local LUT, before map_cells'
-            if side == 'optimized' and I.identity(C.CONTEXT) == I.LOCAL_ID
-            else 'after ABC9, before map_cells')
+            if side == 'optimized' and I.has_lut(I.identity(C.CONTEXT))
+            else 'after ABC9 cleanup and autoname, before map_cells')
 
         result.update({
             "{}_split_full_resources_match".format(side): None if joint else True,

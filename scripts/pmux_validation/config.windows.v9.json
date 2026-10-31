@@ -4,23 +4,23 @@
   "suite_version": "official9-v1",
   "suite_manifest": "suite-official/manifest.json",
   "model_version": "dffeas-v3",
-  "strategy_version": "noDF-local-r1",
-  "selfcheck_version": "official-selfcheck-v9-warm-review",
+  "strategy_version": "eqy-zero-init-r1",
+  "selfcheck_version": "official-selfcheck-v9-zero-init-r1",
   "method_notes": {
     "model": "runner/form_cells_cycloneiv.v = 器件语义模型 v3（clrn 异步清零 / ena 时钟使能 / power_up 初值；与已核对实验模型逐字节相同）；支持配置由 runner/precheck_supported_config.py 强制阻断，未支持不静默建模。",
-    "strategy": "本地策略修正 noDF-local-r1：EQY setup（-m）生成的 run.ys 经严格转换仅删除恰一处 ' -set-def-formal'（保留 -set-init-undef/-set-def-inputs/-set-assumes/断言）；格式不符即停止。附前提探针（noDF 必需 SAT；DF 记录）。",
-    "test3": "先执行 EQY 分区证明并保存证明日志；保留整设计合并证明日志，最终按报告规则分别记录状态。",
-    "builtin_prepare": "V7复用的两侧Yosys 0.69均不含V6内部Job CPU计量补丁；原版无PMUX，优化版含PMUX算法与集成。两侧基础源码、编译器及公共构建参数见工具准备证据。",
+    "strategy": "eqy-zero-init-r1：仅补未定义FF初值0，证明副本init审计；完整原生EQY最终状态、分区覆盖及相同假设前提SAT联合判定。",
+    "test3": "EQY原生整设计合并，保留原输出和匹配点，depth16；每链总超时600秒。",
+    "builtin_prepare": "两侧采用公开d0e71cfb7/0.69+24及配套ABC，原版从独立新基座构建，候选从精确算法提交在新缓存隔离构建；旧工具保留。官方dirty修改未公开。",
     "performance": "Windows PowerShell 5.1 Measure-Command包含同次受调试的Yosys启动至退出及输出收尾；主进程峰值仅看yosys.exe。PowerShell和worker初始化、构建、自检、EQY及事后分析不计入。；v9-nodebugheap-r1：创建目标进程前强制_NO_DEBUG_HEAP=1，首次启动断点只读核验堆状态，失败即计量无效。",
     "formal_stage": "原始 RTL 对比 ABC9 后、map_cells 前 post_abc.il（$lut 阶段）；最终 mapped.il 用于器件资源统计。",
-    "v9": "原版每例预热10次；首次原版全部后优化全部；首次时间增幅>5%且原版<10秒另复核5对，仅相对时间取分侧均值；1—10秒为用户本地扩展，内存和绝对限值取首次。"
+    "v9": "九例每例原版预热10次一批90；首次原版全部后优化全部；>5%且原版<10秒复核5对；1—10秒已获C147许可；预热数量为用户采用的本地解释。"
   },
   "repo": "D:\\codex\\0000_26qs",
   "builtin": {
     "expected_version": "0.69",
-    "cache_dir": "D:/codex/0000_26qs/.tools/cache-v8",
-    "source_repo": "D:\\codex\\0000_26qs\\.tools\\yosys-source-lf",
-    "source_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+    "cache_dir": "D:/0026_qs_result/c/builtin_d0e71cfb7_arith",
+    "source_repo": "D:\\codex\\0000_26qs\\.tools\\yosys-source-d0e71cfb7",
+    "source_commit": "d0e71cfb7bcafe2b437f3edc1789b69e99ecd55a",
     "build_profile": {
       "cmake_build_type": "Release",
       "shared_libs": true,
@@ -38,12 +38,12 @@
     "toolchain_dependency_manifest": "D:\\codex\\0000_26qs\\.tools\\logs\\msys2-packages.txt",
     "toolchain_dependency_manifest_sha256": "62d395aba36a88299b00f34dbad8145352423b26009e98e1200ae27e15b7feb6",
     "baseline_reuse": {
-      "src_dir": "D:\\codex\\0000_26qs\\.tools\\yosys-source-lf",
-      "src_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
-      "binary": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys.exe",
-      "binary_sha256": "c71c744de978fc9f665d3702ea98259de9749ac03f8f13d4e80530445fd46dc2",
-      "abc": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-abc.exe",
-      "abc_sha256": "81e9ce920b799a5954de4adac70d73420f99bb4b62cfe53aeaed98e79e9b7770",
+      "src_dir": "D:\\codex\\0000_26qs\\.tools\\yosys-source-d0e71cfb7",
+      "src_commit": "d0e71cfb7bcafe2b437f3edc1789b69e99ecd55a",
+      "binary": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys.exe",
+      "binary_sha256": "1e677775ee38c5c328235cc155843bb0b55e372dcd3e4fc2a236e378dd124ca2",
+      "abc": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-abc.exe",
+      "abc_sha256": "59c7ea2399442241974fbcc38e643df34ec11433795ee15ae2cab538aabc88ef",
       "build_profile": {
         "cmake_build_type": "Release",
         "shared_libs": true,
@@ -59,75 +59,63 @@
       "passes/opt/CMakeLists.txt",
       "techlibs/intel/synth_intel.cc"
     ],
-    "note": "Baseline 复用登记与优化版 registry 均按 Windows p6 指纹核对；身份不符或缓存未命中则在隔离目录构建，失败留日志并停止。",
-    "toolchain_identity_manifest": "D:\\codex\\0000_26qs\\.tools\\manifests\\p6-windows-toolchain-identity.json",
-    "toolchain_identity_manifest_sha256": "1cda1114ed63d7fd73383b43a872881ba603f409042b8f8a86d0d05a41d4f319",
+    "note": "1030公开基座d0e71cfb7；旧工具保留，新候选与缓存隔离。",
+    "toolchain_identity_manifest": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\new_toolchain_identity.json",
+    "toolchain_identity_manifest_sha256": "53ce2ca9c48796408e83157f67f3b681c28ac18406ba71e3142cf83d2fe710a2",
     "toolchain_build_logs": [
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-baseline-lf-cmake-configure.log",
-        "name": "yosys-baseline-lf-cmake-configure.log",
-        "sha256": "048b6dcf722def72d2aab2321f5927ee8a3123d13404683eaa8e2052432b43c8"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\configure_baseline.log",
+        "name": "configure_baseline.log",
+        "sha256": "9f26172f37609beb864debf82d236fbef175820edae47b4fd33f6f3eeabc5162"
       },
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-baseline-lf-build.log",
-        "name": "yosys-baseline-lf-build.log",
-        "sha256": "41b497eb92cd55a3b2878c62ced0c60c02c920422302758018b00f61bf5bed9d"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\build_baseline.log",
+        "name": "build_baseline.log",
+        "sha256": "ae9ae0d85d98614435c6732fb8030384f3c71dd309e5e4b42d2405bae46ab209"
       },
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-baseline-lf-install.log",
-        "name": "yosys-baseline-lf-install.log",
-        "sha256": "177a31dbcbe9338da0c47a86e706f695446e8c170187bd94f74aeab04e1a43c0"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\install_baseline.log",
+        "name": "install_baseline.log",
+        "sha256": "a50316821acb51d507b69fbab8d9434cae219462b47f46fa2809094e45e0c2e3"
       },
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-optimized-lf-cmake-configure.log",
-        "name": "yosys-optimized-lf-cmake-configure.log",
-        "sha256": "993766ce8fd38ac8a4e703196a9ed9b5a40f2d9749a249ce55206fac2a0a444d"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\tagged_rebuild.log",
+        "name": "tagged_rebuild.log",
+        "sha256": "af429c5dd5deb9b902fee16a21f61e6388fe16a69ba66e024d72180449ffcdfb"
       },
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-optimized-lf-cmake-reconfigure.log",
-        "name": "yosys-optimized-lf-cmake-reconfigure.log",
-        "sha256": "a7a957b36af43261dfe2dd7bb08568f27ede6ccb1ca294f9c41ee8426931bd8e"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\eqy_build.log",
+        "name": "eqy_build.log",
+        "sha256": "f524700993ae75fa0b6d9ed8e139861dd1383c9386554ec3f7892261d7e55f5f"
       },
       {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-optimized-lf-build.log",
-        "name": "yosys-optimized-lf-build.log",
-        "sha256": "fc098e118db8b0df56fb2aba7975fda59a234df9afdf59f9a5536ff94be62898"
-      },
-      {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\yosys-optimized-lf-install.log",
-        "name": "yosys-optimized-lf-install.log",
-        "sha256": "97231e2e29eed68f6d9e99e0cca6ed14607ba33fd82dd4bce10bb163903bbd20"
-      },
-      {
-        "path": "D:\\codex\\0000_26qs\\.tools\\logs\\eqy-windows-build.log",
-        "name": "eqy-windows-build.log",
-        "sha256": "630c0e59c21e9352a0e325d54a01521abb3b532ac9a2f972601b2c1b7a03fce0"
+        "path": "D:\\0026_qs_result\\a\\20261030_official1030_154914\\eqy_tagged_install.log",
+        "name": "eqy_tagged_install.log",
+        "sha256": "f3fbbf03f8b577e50f2aef8a0f11bd8838831ada17596e3e89b3edadf5923173"
       }
     ],
-    "optimized_reference_registries": [
-      "D:\\codex\\0000_26qs\\.tools\\cache-v7\\registry\\20261022_180517_baa4d21.json"
-    ]
+    "optimized_reference_registries": []
   },
   "tools": {
     "yosys": {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys.exe",
-      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys.exe",
-      "sha256": "c71c744de978fc9f665d3702ea98259de9749ac03f8f13d4e80530445fd46dc2"
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys.exe",
+      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys.exe",
+      "sha256": "1e677775ee38c5c328235cc155843bb0b55e372dcd3e4fc2a236e378dd124ca2"
     },
     "yosys_config": {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-config",
-      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-config",
-      "sha256": "51ea730d353048ebc8ba364fecd6842b2f8018b1a0e518dd99608d755238d01e"
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-config",
+      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-config",
+      "sha256": "0f52b9f3cf292a064c7a052305916f7e6302758493f36f6456e7ba4beaefbc8b"
     },
     "abc": {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-abc.exe",
-      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\bin\\yosys-abc.exe",
-      "sha256": "81e9ce920b799a5954de4adac70d73420f99bb4b62cfe53aeaed98e79e9b7770"
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-abc.exe",
+      "realpath": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-abc.exe",
+      "sha256": "59c7ea2399442241974fbcc38e643df34ec11433795ee15ae2cab538aabc88ef"
     },
     "eqy": {
-      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install\\bin\\eqy.exe",
-      "realpath": "D:\\codex\\0000_26qs\\.tools\\eqy-install\\bin\\eqy.exe",
-      "sha256": "71cfb17fea328a26dc7c0329e337f83f639f0d6e70552ec38a4c4401d377fc4f",
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\bin\\eqy.exe",
+      "realpath": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\bin\\eqy.exe",
+      "sha256": "d0cc853d18f1c4c1dfef0a4620503b94dfc7fe3c29021162e7dc22439ec886c5",
       "version": "EQY v0.69"
     },
     "compiler": {
@@ -156,124 +144,124 @@
   },
   "tool_data": [
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\abc9_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\abc9_map.v",
       "sha256": "b960ea3290504de79a747d41947570902cb64ad285f3ddb16e006030a2cae7ec"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\abc9_model.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\abc9_model.v",
       "sha256": "21f332106384501759ca256e95ed30321ad5615610a66488731ca06e0b4722d2"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\abc9_unmap.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\abc9_unmap.v",
       "sha256": "c35d3b6378898cc53a0ffebf6982dfd8dce25d39c08696b9fc2140c1a60ed625"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\adff2dff.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\adff2dff.v",
       "sha256": "beb053280dc959be7be1e88592b2be5cc68f0d6ea5c577691e4fd17eea7ceaf2"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\cmp2lcu.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\cmp2lcu.v",
       "sha256": "dd41396c59636a27af5634276f826242644e0466c06ef91b309d33b956b3fdf2"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\cmp2lut.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\cmp2lut.v",
       "sha256": "f1abb22f2a305b98c6a1cd63f3ac53361d2307bd19c8f318275eb4e6d140fb4e"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\cmp2softlogic.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\cmp2softlogic.v",
       "sha256": "2230f0f7ef11b7c76ace1a68171da61d15fc13929b15ec09612048813b5a256b"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\dff2ff.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\dff2ff.v",
       "sha256": "cda7e5ad24b83525310e822d5dbc6dffe792a4b211a0fed9931cbb93460aa63c"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\gate2lut.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\gate2lut.v",
       "sha256": "8f910902e06758dc35e63d2c8caf927aad814e095e79b0c5dda00dd2973ef0bd"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\common\\altpll_bb.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\common\\altpll_bb.v",
       "sha256": "16a26a5eff0bd07ba8496086ea7347d3105182c9d04a8ba53093932d9b7162b8"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\common\\brams_m9k.txt",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\common\\brams_m9k.txt",
       "sha256": "b5d34e3dcf93104e6dfbdbe6e60ffe889925552626a36bbab6e804859d7a12fb"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\common\\brams_map_m9k.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\common\\brams_map_m9k.v",
       "sha256": "1bc752130c74deb007bcbceab89e3ad037243c5b7d1d0503afdbb2d7e2d8dd9f"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\common\\ff_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\common\\ff_map.v",
       "sha256": "6de068e4123712bae46a0cc1f7b88c728bfb2f0e0be52440930eec5c714d9491"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\common\\m9k_bb.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\common\\m9k_bb.v",
       "sha256": "51eb1b2b6dd5c970722cd4d7d1a83f89fe023db5ad579535584abdbacd4e6ad3"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cyclone10lp\\cells_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cyclone10lp\\cells_map.v",
       "sha256": "98ce4b53c837eb0c56eaf9b95d38ca890970c5bbcf55b17040b3097ce6d5e891"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cyclone10lp\\cells_sim.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cyclone10lp\\cells_sim.v",
       "sha256": "142ce722a9b82e46f4ef353eb179c119a91e874539f0f52fd89a4e2746ba6eb1"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cycloneiv\\cells_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cycloneiv\\cells_map.v",
       "sha256": "3cfe28ba08eb4f10e8307c284df75f3d6485c22b1a3bb9b32c8056c538a99ea7"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cycloneiv\\cells_sim.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cycloneiv\\cells_sim.v",
       "sha256": "e57a7edd4b8b0b482ce58475b10b33f71b9e996cc7dcc1a94f20c42fa27d0e20"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cycloneive\\cells_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cycloneive\\cells_map.v",
       "sha256": "14bf842cf0d4e5de734f701e6be76dd2112a9c3a65e13c359400bae9fbb89a99"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\cycloneive\\cells_sim.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\cycloneive\\cells_sim.v",
       "sha256": "d1f563a41bf1bb018646f073116a8e2d90850991bde15911a306df8cf0f73934"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\max10\\cells_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\max10\\cells_map.v",
       "sha256": "808add89ca062fbeeb12ae6ce7b806155c0d7348a7cfc4f266a5135bdbe7001d"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\max10\\cells_sim.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\max10\\cells_sim.v",
       "sha256": "4697649342a6ce74f98ba0b3da4c1fcc78e9bdfb79337f578d50ba03c00ff2cc"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\intel\\max10\\dsp_map.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\intel\\max10\\dsp_map.v",
       "sha256": "e0de76572eae1d131caf01254396e25b61a633b4d0218d1eabfdf1f5e5876bc2"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\mul2dsp.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\mul2dsp.v",
       "sha256": "81a976a44f2141267dc91b95837d8bd753f4274bef7a456328d39568a24c99bd"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\pmux2mux.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\pmux2mux.v",
       "sha256": "3fb31c0ed479d45648b97e674a57a35e4b76133ec8d67398d8907179a4f92fbf"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\simcells.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\simcells.v",
       "sha256": "63918d5fd356ffcda0780eccfa4304a9888603a5266bbc1c812bf5a9bdd65b3c"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\simlib.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\simlib.v",
       "sha256": "e79c08085225bdc6f52ce99f128328158009a33b8ea0c8c273011dfde370561d"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\smtmap.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\smtmap.v",
       "sha256": "0eaab0c3a5324dcc30d0503cc3a571f5d4fb13fea6fbc18151efb294ff799cac"
     },
     {
-      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline\\share\\yosys\\techmap.v",
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\share\\yosys\\techmap.v",
       "sha256": "9cae09999a99182452bd7a2b384bdf7508e0e8a745df7044a95dd0174665d847"
     }
   ],
-  "yosys_source": "D:\\codex\\0000_26qs\\.tools\\yosys-source-lf",
-  "yosys_src_commit": "9f75ca1f9834a39a863915b5dae0c7b1e33533bc",
+  "yosys_source": "D:\\codex\\0000_26qs\\.tools\\yosys-source-d0e71cfb7",
+  "yosys_src_commit": "d0e71cfb7bcafe2b437f3edc1789b69e99ecd55a",
   "tool_data_fourcase_filter": {
     "note": "Windows Yosys share/yosys 中的四例基础数据文件与 Intel 器件文件；按实际路径指纹核对。",
     "include_subpaths": [
@@ -298,7 +286,7 @@
     ]
   },
   "performance_scheme": "pmux-perf-warm10-initial-review5-same-run-v9",
-  "performance_order_note": "原版每例预热10次；首次原版全部后优化全部；首次时间增幅>5%且原版<10秒另复核5对，仅相对时间取分侧均值；1—10秒为用户本地扩展，内存和绝对限值取首次。",
+  "performance_order_note": "九例每例原版预热10次一批90；首次原版全部后优化全部；>5%且原版<10秒复核5对；1—10秒已获C147许可；预热数量为用户采用的本地解释。",
   "memory_metric": "yosys_peak_working_set_bytes",
   "formal_netlist_stage": "post_abc",
   "platform": "win32-msys2-mingw64",
@@ -318,6 +306,10 @@
     "git": {
       "path": "C:\\Program Files\\Git\\cmd\\git.exe",
       "sha256": "78211c7ed73988da93a6d8a33d47ec6187f464d7ea2a9a00c182bbd7a1ecf30f"
+    },
+    "grep": {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\grep.exe",
+      "sha256": "497202418334f8a48d9f34cd2e1b2c03c4f957e02304b613e10931c0457e8d4a"
     }
   },
   "memory_method_version": "windows-root-exit-event-v1",
@@ -348,11 +340,801 @@
   "results_root": "D:/0026_qs_result",
   "eqy_workspace_naming": "round-sha256-16-v1",
   "official_qa_source": {
-    "path": "D:\\codex\\02_嵌赛\\赛题说明\\FPGA创新大赛问题汇总 1027.xlsx",
-    "sha256": "dddf422c6945666f5e3548a8f582c363f3f3ab2051b88b7c7eb9251fd37a3c09",
+    "path": "D:\\codex\\02_嵌赛\\赛题说明\\FPGA创新大赛问题汇总1030.xlsx",
+    "sha256": "1bf803df152da9487d67102c79091b4cd8ba00d718f9d20349d5965b6368883b",
     "sheet": "Sheet1",
-    "range": "B130:C134"
+    "range": "B145:C152"
   },
   "measurement_revision": "v9-nodebugheap-r1",
-  "heap_policy": "windows-no-debug-heap-v1"
+  "heap_policy": "windows-no-debug-heap-v1",
+  "functional_strategy": "eqy-zero-init-r1",
+  "flow_revision": "v9-official1030-r1",
+  "official_base_identity": {
+    "commit": "d0e71cfb7bcafe2b437f3edc1789b69e99ecd55a",
+    "abc_commit": "1e3d9abd7934ee0376a9fd474655a85780069776",
+    "official_dirty_reproduced": false,
+    "limitation": "官方未公开dirty修改，采用公开提交。"
+  },
+  "runtime_closure": [
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\bin\\eqy-script.py",
+      "sha256": "71ee629e0b764590ef46f2628ab4badfc0519ccd662bd281ae5a3aae06df75b8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\bin\\eqy.exe",
+      "sha256": "d0cc853d18f1c4c1dfef0a4620503b94dfc7fe3c29021162e7dc22439ec886c5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\share\\yosys\\plugins\\eqy_combine.so",
+      "sha256": "de69241f9e04a24bb5ea9ebcf5ee80dad55dccacf132ae927994c5ebc41a3234"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\share\\yosys\\plugins\\eqy_partition.so",
+      "sha256": "de86171fc8e2a8ff569ede2c4ceaed106c961302be85feeba33f70fcda6c5759"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\share\\yosys\\plugins\\eqy_recode.so",
+      "sha256": "330bd93fae4b4aaa4445d880910255e8c5da7ff35fdeabe1b0fd13c5033b035c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\eqy-install-d0e71cfb7\\share\\yosys\\python3\\eqy_job.py",
+      "sha256": "7ad8857fa170ba804a086e91bd200487545f01006a705cad22a861c757fddcc0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-abc.exe",
+      "sha256": "59c7ea2399442241974fbcc38e643df34ec11433795ee15ae2cab538aabc88ef"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-config",
+      "sha256": "0f52b9f3cf292a064c7a052305916f7e6302758493f36f6456e7ba4beaefbc8b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-filterlib.exe",
+      "sha256": "8d7e997d4779c492a3ad75dcca9c3bbc9e67345bf9455f076caa252690a1c8bb"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-smtbmc.exe",
+      "sha256": "82e32acd48d9d4a2544f269d419e40c31b41be9057e0e6aba102b135f9447e27"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys-witness.exe",
+      "sha256": "c8017960831e225f06bd38195bb14745073cb2c7432170bd3f136bf17066cc77"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\install-baseline-d0e71cfb7\\bin\\yosys.exe",
+      "sha256": "1e677775ee38c5c328235cc155843bb0b55e372dcd3e4fc2a236e378dd124ca2"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\edit.dll",
+      "sha256": "f008f32074e52290ade0134a48928192afcf0adf91e4af6d9d9942555b66f7d0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libarchive-13.dll",
+      "sha256": "e4fcffb9e10cac802d01831b5a978b6dc662d576fa03351efdfc72ba8c99d6e4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libasprintf-0.dll",
+      "sha256": "317a714680dd0706c4f56c06fe23a6a9af2a7703120066845c7fd4a4e8841a5d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libatomic-1.dll",
+      "sha256": "ce5742247327854b3a8a6e3a0b8889ac406e33d6dafb416a3ba95d1d05607860"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libb2-1.dll",
+      "sha256": "77bab532b5421d6cdddb96c3ae9a4bde144eb481ccaf243336c9f8c690a50987"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libbrotlicommon.dll",
+      "sha256": "ca7bc06ead80259971badf2cd0bfc688db9154dad65f139f49a38b4be9976f97"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libbrotlidec.dll",
+      "sha256": "a142dc6cfa77cb907028aa9426f486f3d8de37855e8db2ae2894147908121881"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libbrotlienc.dll",
+      "sha256": "50c3aca8abcf0d5576f0b62dbd608be285246f8fd1b48ef87d58fa6b8b744e5f"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libbz2-1.dll",
+      "sha256": "a4fbb97c26662d2b8a80bf4597ed3effb69b12048b0cb1eef2c3f211e2e66673"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libcares-2.dll",
+      "sha256": "0acf48c38681e40d13288e9dc0215cbaed214e2458651328d1b78ea113066214"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libcharset-1.dll",
+      "sha256": "f4baaf8ed32747bf10e97c8ba1788221f8533d3e9b98db60832e33cc5b5af609"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libcppdap.dll",
+      "sha256": "e76cdf227329d56b4de2ee06970eef4cb51eb18f896b08969d18ff21912f4427"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libcrypto-3-x64.dll",
+      "sha256": "26c5c4804d14049dc50e7d1a7ba5fd479c1bcee3ae5c3942a7f069f5159a4745"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libcurl-4.dll",
+      "sha256": "61fbeddfa74a7a0a68db0d9a494bbe11502759e57a6eb31256d1ad6566ce0194"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libexpat-1.dll",
+      "sha256": "6ceb3dd8d285f9a1ab8b9682565591580864c1ca2dcc9470c75872caab8fd8b8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libffi-8.dll",
+      "sha256": "b649c515907436a3299326f83aea0e8d75c61853eb1609602603bbcb9b00b4db"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libformw6.dll",
+      "sha256": "979386840f43832b94ea2f1d3982cce97460a5d2bae8e02b1ab7adfbe9f4becc"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgcc_s_seh-1.dll",
+      "sha256": "6c6d3c746aa89b3a2f9f315923d58e92c2c294199d08dec78079ec4324022120"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgmock.dll",
+      "sha256": "d7e973292cead832591b9f53522198d612010c40de7c1643ecdcd336532401a4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgmock_main.dll",
+      "sha256": "a0b7c198f8306426bc6ff2aecc7c3f3abbd7042b42664a061bbc27ae84e27d38"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgmp-10.dll",
+      "sha256": "37248cda33845e7c5c35a574e57da762dd0a8268f0270d179f30a33746809681"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgmpxx-4.dll",
+      "sha256": "9a667d5dc4ca5a49d1d5fdbfa83866e0e04fbab1c304b49b67951498159a8246"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgnutls-30.dll",
+      "sha256": "aca67ef2c8429557e9ac3a02ad313e9fdad35a1416972a248f0a205f83d39fbd"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgnutls-openssl-27.dll",
+      "sha256": "6415be465e3ecb26d8fd1eb8f0b6f1bd47374301f5f6e91c86de018e2ae05805"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgnutlsxx-30.dll",
+      "sha256": "1ea13715e463fb5ed2d2e9ac227ed38fe3dcc7bcdc8eb692a4fdfc5f34bf231c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgomp-1.dll",
+      "sha256": "c2fdbc6932468a0e4277bac109091197d8452c6a8225a88633e5f23240460208"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgtest.dll",
+      "sha256": "40cd9ed0dc2c03113619910cc679b32cbd2b6f2f3d6ad14cbd054f2c69cde60d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libgtest_main.dll",
+      "sha256": "5c14632855ddd5fb35469aa648ac3d413fac84cd821c45a52ab2ebc3613c3df5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libhistory8.dll",
+      "sha256": "9e4958b70cc865d6e407334182a8f2cc76e9a82c6a00e708e58fa8eecb1a4a5f"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libhogweed-7.dll",
+      "sha256": "8a4785b98e5418c32035f570904f65360c89825358702954b53c77ee2df8c97d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libiconv-2.dll",
+      "sha256": "7a282a854e01be726c6cccfe46f548c716aa45b3014818468253aaa4efbcd067"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libidn2-0.dll",
+      "sha256": "9880b52651a0247640a2531d777380f7c35fac7efa7e3979b265ddcb78db8642"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libintl-8.dll",
+      "sha256": "0537c3dd2378218508ebe3cc416d72a99ee2d24ae1c5525e23458f32544ef861"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libisl-23.dll",
+      "sha256": "c00727a1d632a2c67fa90a06665c1759d73eb2d5137831986cafc014cbe2fa70"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libjsoncpp-27.dll",
+      "sha256": "40c5a2238b42a61b0de7be885c22e985f8ee63798acfa2d8c6111085e70e87f4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\liblz4.dll",
+      "sha256": "35f917274bca8f19677ba66f1b3cc3c83568c3249fc43215fc16e76439c8e856"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\liblzma-5.dll",
+      "sha256": "ccb6a179acf35e704b2ffd7f232677982c4856bd1dda1341713a27518cf97ce1"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libmenuw6.dll",
+      "sha256": "551196349e077814a660858b9ebd9efca01ee2cb64c897adb757a2d99575e1c5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libmpc-3.dll",
+      "sha256": "3a1d4c692c7a2af929ae043a2c88903304b84917bd84ca46bf75bb5389b11be8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libmpdec++-4.dll",
+      "sha256": "b5d9da28a3c8039397a267467a4fe18d9589155e173de980c65690313015fec8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libmpdec-4.dll",
+      "sha256": "878304e9055db6a493f767bed4ad6c62a15bdc610a88ec9bdeb8e7d35955f5a3"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libmpfr-6.dll",
+      "sha256": "ed5f7bdf777f0f6af00ba193ce4b04e12efa787245a946a631db736e49c0bb1a"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libncurses++w6.dll",
+      "sha256": "4de063a4b0a666b805612e1e33aa8351ba5b5d22d180fc2b5771a33d2b8146bc"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libncursesw6.dll",
+      "sha256": "946a84047652d337349d4880fdfe88e81d64dcd36d5b042b0a28d0b185be45c8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libnettle-9.dll",
+      "sha256": "208002d990684946c7923a87022bedea588fef8e31286598c08805e37be2a95a"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libnghttp2-14.dll",
+      "sha256": "25e6516899fd5021df8c67b92e9f7246249fb03bb7bdf56a08260a8dded06b00"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libnghttp3-9.dll",
+      "sha256": "f94b97f5f882e70c13c2f540e2bcb3da5f5bba0e2e40dcd784dd5ef65771f001"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libngtcp2-16.dll",
+      "sha256": "5df6354a4efbd5e797dc9ec3e0f38892a2ee89d759d781e91a0f14a70344a8f5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libngtcp2_crypto_gnutls-8.dll",
+      "sha256": "af923ac37a071e494765f8ebd88faac7a9b35bb3c74653e8082f88e116d32577"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libngtcp2_crypto_ossl-0.dll",
+      "sha256": "6fe49128e600120ef04937b69e6f9a2447f1293697d4b8aa4c239d7549bc913a"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libp11-kit-0.dll",
+      "sha256": "ada3949f3763db47a754eec56388f3305c41c259eb3bbae188a820fd01c5445b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpanelw6.dll",
+      "sha256": "9853f64f9bfa9134b45fef014353a11f35cd5d5bceb0bc7d6cedca91e2cb85f0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpcre2-16-0.dll",
+      "sha256": "510114569c1e7cdcccb9d9d502c69853f41d78785a6918cca35964cce7940a08"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpcre2-32-0.dll",
+      "sha256": "2b96ab757af6c647cab5b4250b3241fb4694e349a329a172ecb48e6a70edb50e"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpcre2-8-0.dll",
+      "sha256": "68a7cee2acc36d6a61d73f78825d17dfd32f8580f4bb1bc399134719518213d5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpcre2-posix-3.dll",
+      "sha256": "bc8195438a3fc637de63059cad78657df36dffa49bdf41d3e0f793b6793d7de3"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpkgconf-8.dll",
+      "sha256": "010b7f61ded66c1a1ffdc7664fcf1be81d86fcea6ec89c8222ca3fdbb019ca92"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpsl-5.dll",
+      "sha256": "b31fc70eda598a39b65fe2736d815518db0652d641346f75eac40c2a0499b058"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpython3.14.dll",
+      "sha256": "ab3d64d8965081bfd04ccd3cce06d6ee3b2feccf9b9cbbb76ed78db8f8a0cf57"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libpython3.dll",
+      "sha256": "bce403b4e70f4812c0dc2060d1212834933e91d066c9d3043021f886b4ea7ff3"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libquadmath-0.dll",
+      "sha256": "1984fcbdcba86c0904ba99e6f7eba9b81e694cfe11ba539b99787f685b9a29c0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libreadline8.dll",
+      "sha256": "f1429150c200fe44313e0b33fc8e853baf05a020cd652bf9e553fe96fe8da095"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\librhash.dll",
+      "sha256": "9a0207c1e78dddba6e56df2312cde36696a46d99780087494f76e33580dad5f8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libsqlite3-0.dll",
+      "sha256": "cc70f6965cc7abe3122ecec38981d08c608df2f2ffe423950b5a85e3a3b4ffed"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libssh2-1.dll",
+      "sha256": "a8e1cc06bfff6be779066c5dc34ce740ed0226dcb6f75f46d9c915aee19a21b1"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libssl-3-x64.dll",
+      "sha256": "a3ddb63a654e05844cf59d463c9557eed7ae675d59fd2c47f3415f5e1fc067f5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libstdc++-6.dll",
+      "sha256": "d3c73ba0b5489ccf74e7bef052734731c2e6ad68a817b59858ba0c76ddb6439b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libsystre-0.dll",
+      "sha256": "4bc4dae17267afec9f9812e88167980808848c10a255ccbda9ef4fd758897938"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libtasn1-6.dll",
+      "sha256": "95821132a7d4ea90f7c37540118ad1459809ff23162d6dc3d5600b15755a644b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libtermcap-0.dll",
+      "sha256": "0748f7bff78350980521d9648f47598067676d395551db6747092151e98e1c1d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libtre-5.dll",
+      "sha256": "5833b2b1f62b67d8b4b3881f1bc05f42b0dee1a9f10cef897cdf44d74d094fdf"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libunistring-5.dll",
+      "sha256": "b91e2850d3668d4931056a8f4d35783b8ec3eea3735485108a936a072cd16071"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libuv-1.dll",
+      "sha256": "fa977be01675477caae3c4ff069c7a8e553681ef911b15e061c46362d32e0e67"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libwinpthread-1.dll",
+      "sha256": "72bf8802de3a99d28f0bc2db9a11f281a9f9f3fa83dab2bc67e69fac3bd3d9c0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libxxhash.dll",
+      "sha256": "350044d51d1ecd18e57eccc73924aad8666c989e6f874dd7cd79f7153fb97915"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\libzstd.dll",
+      "sha256": "b95c223a9548a9ecf51377c962e0bc8f0c51eb0c6f67a296dbc885996f0dd40d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\tcl86.dll",
+      "sha256": "81fbd8536bbc4183ecaa0e9390f7f336c3c4d78b5445efaaa9325d706260037e"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\tk86.dll",
+      "sha256": "2b89a483af1f5919d9a12a925f56024e9cbb3d72aef2bcf5d06a778a7d45c8d5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\mingw64\\bin\\zlib1.dll",
+      "sha256": "93e9243a44c29200eeacaf9658efe2558581770e4b11ca4b500e18e424a6e3b5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\awk.exe",
+      "sha256": "f123d2c120b2ad2158aa8c69d8eeedf14c0d681e68ee76ff103e06ac49986200"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\bash.exe",
+      "sha256": "7b4dc5d6878aacdec5d09ca9c5d8e2b43b925a6bbf631873a24c692980b792b2"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\cat.exe",
+      "sha256": "f1b37048ee5c70fdc31dde509e562261c9b2d102d94c903393f55b45e883ef90"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\cygpath.exe",
+      "sha256": "177fae941486e72d0212679d6cc22a80c6b17ad2ae429c7e6ba30270d9ca2ee1"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\env.exe",
+      "sha256": "b5d80f13e6b4b422a8c22d32be9cc1f5fd9b482fc60008ed80e513a2fa938cdc"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\gawk.exe",
+      "sha256": "f123d2c120b2ad2158aa8c69d8eeedf14c0d681e68ee76ff103e06ac49986200"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\grep.exe",
+      "sha256": "497202418334f8a48d9f34cd2e1b2c03c4f957e02304b613e10931c0457e8d4a"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\make.exe",
+      "sha256": "91b7e155590d59db22e5eb0a3ffeec6350149f70f9ed2c242d133e584eb72fee"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-2.0.dll",
+      "sha256": "47d652c7cba30eb294eb7ee10bbfefdcc46342ddf47b4c09ad58a2185b36ad2c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-argp-0.dll",
+      "sha256": "32906e31dc6de6832f05e172ff918d01a3fc76ff649f2befe58f6a13982186a2"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-asn1-8.dll",
+      "sha256": "89495b8030be371850ec16746721fb7bf4acf0504a53341519f206f7733d798c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-asprintf-0.dll",
+      "sha256": "d8c1671d0d5859d4cf72bfe455f7a29f4ad3d8b5b50c0390d3bd97986408271d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-assuan-0.dll",
+      "sha256": "7117ee800333ff70bb39b405fc231fafa097ca466f0de10ff9d95e6f52feed02"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-assuan-9.dll",
+      "sha256": "3eaf1c57c85b1ca2303e7d9544c0a96507f483aae7ae5a1125dfde09bdb12b26"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-atomic-1.dll",
+      "sha256": "79685fbd51f8e9fe308acb20d361605741a0089998c82b3dc96c9bad3f17dad0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-blkid-1.dll",
+      "sha256": "a2557c57a0f09ec52daebd5ee51119020162c53368bd5a9f21d1f02c9c29beb1"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-brotlicommon-1.dll",
+      "sha256": "769019841c938fe47d8cb4943b4765dafd8ec351560c76cee000437e1e50b124"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-brotlidec-1.dll",
+      "sha256": "2b4cafb766fe438e428cfa8a552f3d6a79eec64cf6acafea22a7878c47e1dae5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-brotlienc-1.dll",
+      "sha256": "6de60ff05a32db44fe2c02efcd818b8a47ce3c0a5cf8bdeab1da25588146f072"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-bz2-1.dll",
+      "sha256": "1082896c71da5e62dfd8e421fba35fa3123e6e1e2782381c08258917117b51cd"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-cbor-0.14.dll",
+      "sha256": "fd254a210bfb5c25213963cbebf383853df9e1ae0829e49ed9ffb85e7197fac4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-charset-1.dll",
+      "sha256": "b70c0101b93d2c530fddbc0df1daab5fb1f723e59ca8e475f0ffb36c8c8befd9"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-com_err-1.dll",
+      "sha256": "1b00e1ac0329820d4b7d4762fdd428129feeefc64696c9c34e39edfb05489108"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-crypt-2.dll",
+      "sha256": "9a06bdbd7a934847bc0c50c3a19a7cf2b036a86ef9960fbe22984dd2ac18d608"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-crypto-3.dll",
+      "sha256": "beaf25e1763b13f1f18887af5223af9603dcb2928187ab24cbdf31aea681bd48"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-curl-4.dll",
+      "sha256": "410c2b0cd0dcfbbd38f244e3f393eb7928881ee3a46d867d978fb3fd3f6beeef"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-db-6.2.dll",
+      "sha256": "4e3f747aa66f3bdb73668801ea0d376cde048596e45590e30b9bce23cafb0354"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-db_cxx-6.2.dll",
+      "sha256": "caa1bad2378357b452646c8ab2c74c98e53bf6b955648108aaee01659bd164eb"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-edit-0.dll",
+      "sha256": "6ad9be6549cab3102a5a31905b15103173992e69fe517650395561e9ba9b9abb"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-expat-1.dll",
+      "sha256": "1822a3b5fb5bc33a40a48e339864fa90c3cf962fad481e03337eeb53c936b487"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-fdisk-1.dll",
+      "sha256": "a6932ffa4448a3337ee50fc1cb9f9ee5e05333ba6a250131a35cd46cc6c6e473"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ffi-8.dll",
+      "sha256": "345db0bd59c8bcf595c5c301ec75e52d6863f66c7abe899aaaeeb4d16f639597"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-fido2-1.dll",
+      "sha256": "b869eb80dfa985a1ae427e90332f2581c2d66bd92e4eaee9c2d7f7950d38a5a7"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-formw6.dll",
+      "sha256": "a246ce01a44b6e5303303f94b88319359228a38f5e7da4915b2b519eed18fe6b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gcc_s-seh-1.dll",
+      "sha256": "59b816ee2880c2140ac8d7726f59e4e7435e309f272a80fd590d3130215f77f5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gcrypt-20.dll",
+      "sha256": "0d21151b0cd93a64187177a0913c5a7b5d88941baea504bb96a35dfbde9fc070"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gdbm-6.dll",
+      "sha256": "64835aec02b4b5b648dc3e8a15d951816dce11ca0c8d439b1d3626af248f0d86"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gdbm_compat-4.dll",
+      "sha256": "48820d01556ffb64713903e646161f42b15588adc635b6834dbd4aaf5939fe21"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gettextlib-0-22-5.dll",
+      "sha256": "b7b455285fe867c05efeaa36ebec0b92927b68475ee46e1fce35ac67c2a6792f"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gettextpo-0.dll",
+      "sha256": "d83279b00bb6d00b4dee637dec281cf7bd8bbbaf2ea6d1bd19678b3399b5b526"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gettextsrc-0-22-5.dll",
+      "sha256": "202d9736e7d3ce0320d433e800e22c693b0c5e9f9cc0f222e92d59360cf5e5d5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gmp-10.dll",
+      "sha256": "e3d88ffc1bd3bb3bdda1d84f3f823e6f0f07c89dfd17e2d003c588f56dd80784"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gmpxx-4.dll",
+      "sha256": "36799daa9e54a8b77e76128763154a00f1d4f39014c78766c1a44d8ee24b72d4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gnutls-30.dll",
+      "sha256": "5f3019ca853a642a5d26b81661040f295cc11cfc588a43500fbcb2fbee7cc444"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gnutlsxx-30.dll",
+      "sha256": "27dcdeb9277f4052fb84f57817156a129db6c75536a9b7b4a25f57295333a597"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gomp-1.dll",
+      "sha256": "feb6ce94840808921e0f9491b12624a65c1bf8ef293c435b08d3d54ab538cc1b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gpg-error-0.dll",
+      "sha256": "a53ec385fd2133d39dd6074ee8262a6904d0c5f63ec30720e0d8acb1a75fd38c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-gssapi-3.dll",
+      "sha256": "a635477eafccbfc236f26884822341d386fb954fc8bd8cdaa70dc4e2a57e19e6"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-hcrypto-4.dll",
+      "sha256": "559f689505488253cbae0fd19fba8135b24591f55088a6fae6ae4bc658d89414"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-hdb-9.dll",
+      "sha256": "12ac68011e0062f4a65bdba023428270e05df78127021863c2e9cde3a39d9d35"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-heimbase-1.dll",
+      "sha256": "1a3e6c84b80aa6c8e935fa9af3f66a91eb96a3ddef661c8deff8235bef7a5ed9"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-heimntlm-0.dll",
+      "sha256": "830314394aaac34bfb4d70e57b0f32a8ebfe3cb40295b518a97541f7dae9a71f"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-history8.dll",
+      "sha256": "369215e1ad0f5006ceb70fa70676018792a9fb98fa03f90636c4e685e009b0db"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-hogweed-7.dll",
+      "sha256": "2251a9315fe79e2394514c370be7fe1cced7f09c4092e715f7e9325cde1f83af"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-hx509-5.dll",
+      "sha256": "b2b3a35263a0e776912e14e682c5720e8c844804b33182e29b709bd37d700cd4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-iconv-2.dll",
+      "sha256": "50012969ed96a5232220185d2fc1ac1e3abe5790f6b3027f4fc3c4cad3fd38f0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-idn2-0.dll",
+      "sha256": "0ddf7bd2b0a7dffe80e64460f1df168a6947115a0ef636506dded262dea95b32"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-intl-8.dll",
+      "sha256": "50f7de0c712d867ddca2c9eb8562ca6ee2d69e120e798ec6126ad29dd1ed5402"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-kadm5clnt-7.dll",
+      "sha256": "725b8ab6282f3c72fed075a5a7ee4ad1bf8477181987aecffc3b015bf1fa4d93"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-kadm5srv-8.dll",
+      "sha256": "3c49bea5af4ad8945173be7051eda1e05fbb76e929157d617df89ee987eaf2c4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-kafs-0.dll",
+      "sha256": "5e606d0703b1c229622bfde4dd91fc2b1e50f5934249dde1dd7d29af156871d0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-kdc-2.dll",
+      "sha256": "2680b2ea12f09e6c758ad681ef803fc7f3279a36402d697878296356dc1b9cde"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-krb5-26.dll",
+      "sha256": "8fe1dcfbfab620d013050ef38ff80792b37aa592e2a285e06543def1ac4fb480"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ksba-8.dll",
+      "sha256": "b5a2c2f6f130058b4af43c237a4faf3a1b617c91c85806b31f3066124647bc87"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-lastlog2-2.dll",
+      "sha256": "367cc25677dcc8c8e8bc4e693b367a9832613757b83af921f5ddc0fb075c3272"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-lz4-1.dll",
+      "sha256": "a67c703cf7b2585b294469050a5fd5edef50cce2a9f487f448f5cd7c8a447ce2"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-lzma-5.dll",
+      "sha256": "d143b2318af5234c78333070972d860b65333a54d1b4383258b989913eb353ae"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-magic-1.dll",
+      "sha256": "1b0ecf8674a9d74ebcf8e208231eaab7a25f906ae46ba055bad0a9241a386a10"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-menuw6.dll",
+      "sha256": "f3b4a368aed2914a5d0c66626f2502b0ef88d97e1ca16f318d53b34acec55129"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-mpfr-6.dll",
+      "sha256": "7be008ed823d8ce65a205669c44fd8ad56eee5838111101d29c6684f8eccc4f4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ncurses++w6.dll",
+      "sha256": "8755b5e3220272ba6fde2fe1a1ff8d594031f2b55ee44eb1f2494591136e491e"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ncursesw6.dll",
+      "sha256": "aef26ffbcd20ee5781c3a5e81265390494090e13561a13336d000d9d5f9a84cb"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-nettle-9.dll",
+      "sha256": "b030ad8190dbbde621b86dabae1c4ea642c0b7d31f962c432c1ab56763e3fbe9"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-nghttp2-14.dll",
+      "sha256": "8daa46e4f5c306b27bf9f6489e15ab562fc410c45e85fdf24e35638c8f3e5668"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-nghttp3-9.dll",
+      "sha256": "e32a3cb0356a45f80a89001a3f940e0a822bac6966dd66e3f7c556a62acde9c5"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ngtcp2-16.dll",
+      "sha256": "0fd91e32e8651aa7805bdb72a76c3361731fe76d78aae5c84cd3001ebd713c35"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ngtcp2_crypto_ossl-0.dll",
+      "sha256": "c888b9fd39ba83550a570bb89f39e3c6585f581438929cb953e743482f8bf6c4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ngtcp2_crypto_ossl.dll",
+      "sha256": "c888b9fd39ba83550a570bb89f39e3c6585f581438929cb953e743482f8bf6c4"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-npth-0.dll",
+      "sha256": "740e76727c26411d263788f175e4d12420a88079544bb690fd3a2f4d97f4845b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-otp-0.dll",
+      "sha256": "45bb6349cc2c8c12a7f2ed5dbb88373c17fe8ed032821fd6736ee7c9a8b538d0"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-p11-kit-0.dll",
+      "sha256": "81ce7611ead0408352c1b517b361e85920457485e82bdc4b649e70ebdb52de4d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-panelw6.dll",
+      "sha256": "5130de686b4abbbfbfe28b1deaf8399d6cb655a76555f0540430218236a8bb9e"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-pcre-1.dll",
+      "sha256": "a94b1a5ba095ac7ff81e138a1231e42e3a07391e85eeb86c3bb5c9245244597a"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-pcre2-8-0.dll",
+      "sha256": "709737df8708749e1615a8ed8a6459e54298b6e80ee57a8995371bf5765e951c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-perl5_42.dll",
+      "sha256": "2cdd7b49f785e6f47450f80d9de5bc6b218853ba07e7f4b9700f5820324d9d62"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-psl-5.dll",
+      "sha256": "448ee119002f63933e9ebf11dfc92f358e6f331763b6e60a1a0d2fa65a829f1b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-quadmath-0.dll",
+      "sha256": "7d4904d91caf7fd96a999296c743fce6f478d01851688cade69bead51100100c"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-readline8.dll",
+      "sha256": "0c7c38f1b76e087add0faca414659c3d25008a893dd4b185604a4183bb68132b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-roken-18.dll",
+      "sha256": "02a4d3196dbabf94a82a31fdbb6627b3294046a9aee2f69bbc53eea94bf92397"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-sl-0.dll",
+      "sha256": "b51e09f5dc23c8e4d7a0621d8118d86284f19e6406e974446d1c60617a2c97bc"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-smartcols-1.dll",
+      "sha256": "9247b54f38798eee161f0d2022528c18951632ee81e924d88707ebf12667d04e"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-sqlite3-0.dll",
+      "sha256": "fad59b1dda3ccf29fbb57b3656b6fcd95feda095735e17445b41d95c2c0aaddb"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ssh2-1.dll",
+      "sha256": "0a8d56768e78cd4df93a04a3458e2a27f10549f3d789ed2a8a4aa586dab13ee6"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ssl-3.dll",
+      "sha256": "3c007f34ec4ebf8ef2a50d6e52f0ca5cd2fff158db9d0dd5aa58c9693c0cea79"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-stdc++-6.dll",
+      "sha256": "be5745a191d1fa4813ac662f550bc48c568ee63915829a20ada4e1be7f625fdc"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-tasn1-6.dll",
+      "sha256": "57fb7c61d7eeb0c9b74a8b8673551a6fee5ec370f7fd05f0af82b537f355ee4b"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-ticw6.dll",
+      "sha256": "1ee7b84d87810aecc4372eb668915c5c2520bbe058043980c4e7b50fa14f2663"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-unistring-5.dll",
+      "sha256": "26c33b382c450da63158ea84d4b6cb1984eebbe4cd2d75351d53521167eb6209"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-uuid-1.dll",
+      "sha256": "c77dcf56e4bdc490ae56a0460273e05c91e16676e3b2c653a0eee5cb20be5c15"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-wind-0.dll",
+      "sha256": "60f934fc712dfcaa5399414430df8af1f2dcb231ffe1acaefe5386b2162b9d10"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-z.dll",
+      "sha256": "f548bb1632160282c3853415182d695c655d0eb7c12aa42a0538161898694b6f"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\msys-zstd-1.dll",
+      "sha256": "0ebf082dc73962688a14bd26465e05972a51a3ac5ef11fdf8cc71b93b89cea8d"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\sed.exe",
+      "sha256": "8d54e322dfc3faa60f0464691aba8634197406e53367aa8942409181c0808be8"
+    },
+    {
+      "path": "D:\\codex\\0000_26qs\\.tools\\msys64\\usr\\bin\\sh.exe",
+      "sha256": "7b4dc5d6878aacdec5d09ca9c5d8e2b43b925a6bbf631873a24c692980b792b2"
+    }
+  ]
 }

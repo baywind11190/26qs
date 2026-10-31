@@ -52,7 +52,7 @@ def schedule(context, phase='initial', recheck_cases=()):
 def recheck_decision(base_ticks, opt_ticks):
     judgment = compare(base_ticks, opt_ticks)
     required = judgment['wall_5pct'] == 'FAIL' and base_ticks < 100_000_000
-    scope = ('OFFICIAL_UNDER_1S' if base_ticks < 10_000_000 else 'USER_EXTENSION_1_TO_10S') if required else None
+    scope = ('OFFICIAL_UNDER_1S' if base_ticks < 10_000_000 else 'OFFICIAL_1_TO_10S') if required else None
     return dict(required=required, scope=scope)
 
 

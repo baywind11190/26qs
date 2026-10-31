@@ -57,8 +57,8 @@ class V9Tests(unittest.TestCase):
 
     def test_trigger_integer_boundaries_and_scope(self):
         for b,o,want,scope in [(100,105,False,None),(100,106,True,'OFFICIAL_UNDER_1S'),
-                (10_000_000,10_600_000,True,'USER_EXTENSION_1_TO_10S'),
-                (99_999_999,106_000_000,True,'USER_EXTENSION_1_TO_10S'),
+                (10_000_000,10_600_000,True,'OFFICIAL_1_TO_10S'),
+                (99_999_999,106_000_000,True,'OFFICIAL_1_TO_10S'),
                 (100_000_000,106_000_000,False,None)]:
             r=V.recheck_decision(b,o)
             self.assertEqual((r['required'],r['scope']),(want,scope))

@@ -110,6 +110,24 @@ def row_functional_ok(r):
     """
     if r.get("state") != "PASS" or r.get("rc") != 0 or r.get("verified") is not True:
         return False
+    if r.get('strategy_version') == 'eqy-zero-init-r1':
+        parts = r.get('partitions') or {}
+        audits = r.get('init_audits') or {}
+        return (r.get('method') == 'native_eqy' and r.get('native_rc') == 0
+                and r.get('native_status') == 'PASS' and r.get('native_errors') == []
+                and r.get('premises_all_sat') is True and r.get('coverage_ok') is True
+                and r.get('init_audit_ok') is True and set(audits) == {'gold', 'gate'}
+                and all(a.get('only_init_attributes_changed') is True
+                        and a.get('explicit_01_preserved') is True for a in audits.values())
+                and bool(parts) and r.get('partitions_total') == len(parts)
+                and r.get('partitions_pass') == len(parts)
+                and all(p.get('native_status') == 'PASS' and p.get('coverage_ok') is True
+                        and p.get('proof', {}).get('state') == 'PASS'
+                        and p.get('proof', {}).get('errors') == []
+                        and p.get('probe', {}).get('state') == 'VALID'
+                        and p.get('probe', {}).get('rc') == 0
+                        and p.get('probe', {}).get('verdict') == 'PREMISES_SAT'
+                        for p in parts.values()))
     if r.get("method") == "merged_miter":
         merged = r.get("merged") or {}
         return merged.get("probe") == "PREMISES_SAT" and merged.get("assert_cover_ok") is True

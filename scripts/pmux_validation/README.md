@@ -1,24 +1,38 @@
-# Windows原生V9验证
+# Windows原生V9验证（1030口径）
 
-唯一活动规则见[POLICY.md](POLICY.md)。入口validate_windows_v9.cmd；V8入口已退役，旧证据不改判。
+唯一活动规则为[POLICY.md](POLICY.md)，流程修订v9-official1030-r1。入口validate_windows_v9.cmd；V8入口退役，旧身份和历史证据保留原义。
 
-在Windows PowerShell、工程D:/codex/0000_26qs中执行：
+## 执行
+
+Windows PowerShell，工作目录D:/codex/0000_26qs。先运行只读plan，确认身份、九例、预计次数及blocked=[]，再按已获授权运行一次run：
 
 ```powershell
-& .\scripts\pmux_validation\validate_windows_v9.cmd plan 17f9361099dcda757c16bb81caa18ddb52d74c4e --integration-profile p3-local-lut
-& .\scripts\pmux_validation\validate_windows_v9.cmd run 17f9361099dcda757c16bb81caa18ddb52d74c4e --integration-profile p3-local-lut
+& .\scripts\pmux_validation\validate_windows_v9.cmd plan fd24aa7c8fd98ac4c8463d4a25b15af146ff7b57 --integration-profile p3-arith
+& .\scripts\pmux_validation\validate_windows_v9.cmd run fd24aa7c8fd98ac4c8463d4a25b15af146ff7b57 --integration-profile p3-arith
 ```
 
-plan只读，预期九例、预热90/首次18/最多复核90、blocked为空；有阻断则查具体字段，不启动run。run仅在已授权后使用，预期生成D:/0026_qs_result/r新轮次；指标FAIL也保留证据，不再次运行以筛选成绩。工具失败停止，不补样。
+plan不创建轮次或编译。身份/计量/证据故障时停止并查原始日志；有效指标FAIL仍完成规定步骤，不补样择优。
 
-预热逐例原版10次；首次原版全九例后优化版全九例。时间>5%且首次原版<10秒的case另复核5对，比较两侧平均时间；首次单独保留。官方不足1秒许可与用户1—10秒扩展分开标注。内存与绝对限值用首次；首次18网表用于EQY，复核网表逐份哈希/资源一致。
+## 新基座及集成
 
-目录：r轮次，e确定性短EQY现场，c验证缓存，a开发证据，均位于D:/0026_qs_result。原工具构建保留；旧V8缓存不作为V9合格证据。EQY归档必须逐文件核验，现场不自动清理。
+两侧共同采用官方公开d0e71cfb7bcafe2b437f3edc1789b69e99ecd55a（0.69+24），ABC子模块1e3d9abd7934ee0376a9fd474655a85780069776。官方dirty修改未公布，不声称逐字节复现。旧基座、安装、缓存和日志全部保留。新工具与缓存独立，工具及运行依赖闭包必须逐项匹配。
 
-开发检查：在本目录使用工程固定Python执行 `python3.exe -m unittest discover -p "test_*.py"`；失败先核对日志，不启动正式轮次。人工微型冒烟不得伪装官方case。
+p3-arith依次调用早期pmux_opt -arith、pmux_opt，不含ABC9后LUT重构。补丁、顺序、次数、导出边界及算术共享1/0私有探针均核验；旧三调用身份保留供追溯，1030活动run禁止后端LUT。
 
-DFF只记录；逐例逻辑不增、九例平均至少10%、IO/其他硬件不增保持。所有用例固定同一ABC9策略。安全软件状态只读记录，不自动关闭。交付包独立NOT_RUN；本地结果不代表官方认可。
+## 九例测量及功能证明
 
-## V9计量修订 v9-nodebugheap-r1
+全部九例使用默认参数和同一ABC9策略。测量开始前原版每例预热10次，一批90次；该数量为用户采用的本地解释。首次原版全部后优化版全部共18次；时间增幅>5%且原版<10秒的用例另复核5对，共108+10k次。C147确认1—10秒复核；恰好5%不触发，恰好10秒不复核。首次内存及绝对限值不被复核替代。
 
-目标进程启动前统一设置 `_NO_DEBUG_HEAP=1`；首次调试启动断点读取x64进程及NT堆标志，确认调试堆未开启。策略、修订、实际环境值与根PID绑定原始计量证据；缺失、不符或读取失败即计量无效，不回退。保持同次PowerShell墙钟与退出事件峰值内存，预热/首次/复核和5%/15%规则不变。旧自检指纹失效，历史轮次原判定保留。
+计量保持v9-nodebugheap-r1：同次Measure-Command墙钟与Yosys主进程退出事件PeakWorkingSetSize；启动前_NO_DEBUG_HEAP=1并核验，失败不回退。两侧方法相同，记录后台及安全软件状态，不自动关闭安全软件。
+
+首次18份post_abc作为原始RTL→两侧网表的独立功能输入，mapped用于资源。eqy-zero-init-r1仅补未定义FF初值0，保留显式初值、复位及组合X/Z；仅改证明副本并审计。完整原生EQY最终状态、分区/断言覆盖、前提SAT及日志联合判定，不能仅凭退出0。test3原生合并depth16，其余depth5，每链600秒。
+
+DFF仅记录；逐例逻辑不增、九例平均缩减至少10%、IO和其他硬件不增；功能、资源、时间和内存分别判定。C149第一问回答不明确，不宣称所有前端规则已获官方批准。
+
+## 结果与开发检查
+
+D:/0026_qs_result的r/e/c/a分别保存轮次、受管理短EQY现场、自检/构建缓存和开发证据。主报告00_report.md，归档逐文件核验，历史不改判不混算。
+
+在本验证目录以固定Python .tools/msys64/mingw64/bin/python3.exe及PYTHONUTF8=1运行unittest discover -p "test_*.py"。负对照应检出真实错误；人工微型冒烟不冒充官方case。
+
+本次不制作交付包，交付NOT_RUN。C152要求测试环境预装OSS CAD Suite并告知路径，后续交付单独核验。本地PASS不等于官方认可。
